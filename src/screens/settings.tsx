@@ -1,0 +1,178 @@
+import { COLOR_MODE_LABEL, CONFIG_PATH, POLL_INTERVAL_SECONDS } from "../config";
+import { padEnd } from "../lib/text";
+import { COLORS, PROVIDER_COLORS, THRESHOLDS } from "../theme";
+import { PROVIDER_IDS, STATUS_PRESENTATION, type ProviderId, type UsageSnapshot } from "../data/types";
+import type { AppState, OverviewMode } from "../state/app-state";
+import type { AppActions } from "../state/actions";
+import { Line, Rule, SplitLine, Spacer, keyHint, leftClick, type Segment } from "../components/primitives";
+import { toggleSegments } from "../components/toggle";
+import { MODE_OPTIONS } from "./overview";
+
+const LABEL_COLUMN = 14;
+const SETTING_LABEL_COLUMN = 22;
+const STATUS_COLUMN = 24;
+
+interface SettingsProps {
+  state: AppState;
+  snapshot: UsageSnapshot;
+  width: number;
+  actions: AppActions;
+}
+
+function ProviderRow({
+  id,
+  state,
+  snapshot,
+  width,
+  actions,
+}: SettingsProps & { id: ProviderId }) {
+  const connection = state.connections[id];
+  const meta = snapshot.providers[id].meta;
+  const status = STATUS_PRESENTATION[connection.status];
+  const isSelected = PROVIDER_IDS[state.settingsCursor] === id;
+  const background = isSelected ? COLORS.bgRowActive : undefined;
+
+  return (
+    <box
+      flexDirection="column"
+      flexShrink={0}
+      backgroundColor={background}
+      onMouseDown={leftClick(() => actions.selectProvider(id))}
+    >
+      <SplitLine
+        width={width}
+        background={background}
+        left={[
+          { text: isSelected ? "▶ " : "  ", color: COLORS.textGhost },
+          { text: "▎", color: PROVIDER_COLORS[id] },
+          {
+            text: meta.name,
+            color: connection.isEnabled ? COLORS.textBright : COLORS.textDim,
+            isBold: true,
+          },
+          { text: " ▏ ", color: COLORS.rule },
+          { text: meta.plan, color: COLORS.textFaint },
+        ]}
+        right={[
+          {
+            text: connection.isEnabled ? "[×] enabled" : "[ ] hidden",
+            color: connection.isEnabled ? COLORS.text : COLORS.textFaint,
+          },
+          { text: "   " },
+          {
+            text: padEnd(`${status.dot} ${status.label}`, STATUS_COLUMN),
+            color: connection.isEnabled ? status.color : COLORS.textFaint,
+          },
+        ]}
+      />
+      <SplitLine
+        width={width}
+        background={background}
+        left={[
+          { text: "   " },
+          { text: padEnd("credential", LABEL_COLUMN), color: COLORS.textFaint },
+          {
+            text: connection.credential || "— none stored —",
+            color: connection.credential ? COLORS.textMuted : COLORS.textFaint,
+          },
+        ]}
+        right={[{ text: connection.note, color: COLORS.textGhost }]}
+      />
+      <Line
+        background={background}
+        segments={[
+          { text: "   " },
+          { text: padEnd("reads from", LABEL_COLUMN), color: COLORS.textFaint },
+          { text: meta.source, color: COLORS.textDim },
+        ]}
+      />
+      <Rule width={width} color={COLORS.borderSoft} />
+    </box>
+  );
+}
+
+function modeToggleSegments(mode: OverviewMode, actions: AppActions): Segment[] {
+  return toggleSegments(MODE_OPTIONS, mode, COLORS.accent, (value) => actions.setMode(value));
+}
+
+function SettingLine({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
+  return (
+    <Line
+      segments={[
+        { text: padEnd(label, SETTING_LABEL_COLUMN), color: COLORS.textFaint },
+        { text: value, color: COLORS.text },
+        ...(hint ? [{ text: `  ${hint}`, color: COLORS.textGhost }] : []),
+      ]}
+    />
+  );
+}
+
+export function Settings(props: SettingsProps) {
+  const { state, width, actions } = props;
+
+  return (
+    <box flexDirection="column" flexShrink={0}>
+      <SplitLine
+        width={width}
+        left={[
+          { text: "settings", color: COLORS.textBright, isBold: true },
+          { text: " ▏ ", color: COLORS.rule },
+          { text: "providers, credentials, subscriptions", color: COLORS.textFaint },
+        ]}
+        right={[{ text: CONFIG_PATH, color: COLORS.textGhost }]}
+      />
+      <Spacer />
+      <SplitLine
+        width={width}
+        left={[{ text: "providers", color: COLORS.textDim }]}
+        right={[
+          ...keyHint("space", "show / hide"),
+          { text: "  " },
+          ...keyHint("↵", "cycle status"),
+          { text: "  " },
+          ...keyHint("p", "paste key"),
+          { text: "  " },
+          ...keyHint("d", "disconnect"),
+        ]}
+      />
+      <Rule width={width} />
+
+      {PROVIDER_IDS.map((id) => (
+        <ProviderRow key={id} id={id} {...props} />
+      ))}
+
+      <Spacer />
+      <Line segments={[{ text: "display", color: COLORS.textDim }]} />
+      <Rule width={width} />
+      <Line
+        segments={[
+          { text: padEnd("default overview mode", SETTING_LABEL_COLUMN), color: COLORS.textFaint },
+          ...modeToggleSegments(state.mode, actions),
+        ]}
+      />
+      <SettingLine label="poll interval" value={`${POLL_INTERVAL_SECONDS}s`} hint="r forces a refresh" />
+      <SettingLine
+        label="warn threshold"
+        value={`${THRESHOLDS.danger}%`}
+        hint="bars turn red past this"
+      />
+      <SettingLine
+        label="colors"
+        value={state.useSeverityColors ? "severity only" : COLOR_MODE_LABEL}
+        hint={state.useSeverityColors ? "per-provider brand available" : "severity-only available"}
+      />
+
+      <Spacer />
+      <Rule width={width} />
+      <Line segments={keyHint("o", "re-run the setup wizard", () => actions.openOnboarding())} />
+    </box>
+  );
+}

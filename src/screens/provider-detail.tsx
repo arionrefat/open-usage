@@ -1,0 +1,140 @@
+import { areaChart, formatTokens } from "../lib/chart";
+import { COLORS, PROVIDER_COLORS, PROVIDER_COLORS_DIM } from "../theme";
+import { STATUS_PRESENTATION, type ProviderId, type ProviderNotice, type UsageSnapshot } from "../data/types";
+import { isProviderLive, type AppState } from "../state/app-state";
+import type { DerivedState } from "../state/derive";
+import { DetailLimitMeter } from "../components/limit-meter";
+import { Chart, Line, Rule, SplitLine, Spacer, TripleLine } from "../components/primitives";
+
+interface ProviderDetailProps {
+  id: ProviderId;
+  state: AppState;
+  derived: DerivedState;
+  snapshot: UsageSnapshot;
+  width: number;
+  chartHeight: number;
+}
+
+function Notice({ notice, width }: { notice: ProviderNotice; width: number }) {
+  return (
+    <box
+      flexDirection="column"
+      flexShrink={0}
+      width={width}
+      border
+      borderColor={COLORS.borderPanel}
+      paddingLeft={1}
+      paddingRight={1}
+    >
+      <text>
+        {notice.icon ? <span fg={notice.iconColor ?? COLORS.info}>{`${notice.icon}  `}</span> : null}
+        {notice.segments.map((segment, index) => (
+          <span key={`notice-${index}`} fg={segment.isEmphasis ? COLORS.text : COLORS.textMuted}>
+            {segment.text}
+          </span>
+        ))}
+      </text>
+    </box>
+  );
+}
+
+function StaleBanner({ id, state, width }: { id: ProviderId; state: AppState; width: number }) {
+  const connection = state.connections[id];
+  const status = STATUS_PRESENTATION[connection.status];
+  return (
+    <box
+      flexDirection="column"
+      flexShrink={0}
+      width={width}
+      border
+      borderColor={COLORS.noticeBorder}
+      backgroundColor={COLORS.noticeBg}
+      paddingLeft={1}
+      paddingRight={1}
+    >
+      <Line
+        segments={[
+          { text: status.label, color: status.color, isBold: true },
+          { text: " ▏ ", color: COLORS.rule },
+          { text: `${connection.note} — figures below are the last values read`, color: COLORS.textSoft },
+        ]}
+      />
+    </box>
+  );
+}
+
+export function ProviderDetail({
+  id,
+  state,
+  derived,
+  snapshot,
+  width,
+  chartHeight,
+}: ProviderDetailProps) {
+  const provider = snapshot.providers[id];
+  const isStale = state.connections[id].isEnabled && !isProviderLive(state.connections[id]);
+  const limits = provider.limits.filter((limit) => !limit.isCardOnly);
+  const series = derived.series[id];
+
+  return (
+    <box flexDirection="column" flexShrink={0}>
+      <SplitLine
+        width={width}
+        left={[
+          { text: "▎", color: PROVIDER_COLORS[id] },
+          { text: provider.meta.name, color: COLORS.textBright, isBold: true },
+          { text: " ▏ ", color: COLORS.rule },
+          { text: provider.meta.planDetail, color: COLORS.textFaint },
+        ]}
+        right={[{ text: `source: ${provider.meta.source}`, color: COLORS.textGhost }]}
+      />
+      {isStale ? (
+        <>
+          <Spacer />
+          <StaleBanner id={id} state={state} width={width} />
+        </>
+      ) : null}
+      <Spacer />
+
+      {limits.map((limit, index) => (
+        <box key={limit.id} flexDirection="column" flexShrink={0}>
+          {index > 0 ? <Spacer /> : null}
+          <DetailLimitMeter
+            limit={limit}
+            width={width}
+            accentColor={PROVIDER_COLORS[id]}
+            useSeverityColors={state.useSeverityColors}
+          />
+        </box>
+      ))}
+
+      {provider.notice ? (
+        <>
+          <Spacer />
+          <Notice notice={provider.notice} width={width} />
+        </>
+      ) : null}
+
+      <Spacer />
+      <Line segments={[{ text: `tokens ${derived.rangeName}`, color: COLORS.textMuted, isBold: true }]} />
+      <Spacer />
+      <Chart
+        rows={areaChart(series, width, chartHeight, PROVIDER_COLORS[id], PROVIDER_COLORS_DIM[id])}
+      />
+      <Rule width={width} />
+      <TripleLine
+        width={width}
+        left={[{ text: derived.axis[0], color: COLORS.textGhost }]}
+        center={[{ text: `peak ${formatTokens(Math.max(0, ...series))}`, color: COLORS.textGhost }]}
+        right={[{ text: derived.axis[2], color: COLORS.textGhost }]}
+      />
+
+      {provider.detailFooter ? (
+        <>
+          <Spacer />
+          <Line width={width} segments={[{ text: provider.detailFooter, color: COLORS.textGhost }]} />
+        </>
+      ) : null}
+    </box>
+  );
+}

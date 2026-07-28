@@ -4,10 +4,16 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run --watch src/index.tsx"
+    "dev": "bun --watch src/index.tsx",
+    "limits": "bun src/index.tsx",
+    "preview": "bun scripts/preview.tsx",
+    "shot": "bun scripts/shot.tsx",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/react": "^19"
   },
   "peerDependencies": {
     "typescript": "^5"
