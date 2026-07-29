@@ -13,6 +13,10 @@ export interface AppActions {
   setScope(scope: ScopeKey): void;
   toggleScope(): void;
   selectProvider(id: ProviderId): void;
+  openProvider(id: ProviderId): void;
+  moveSelection(delta: number): void;
+  openSelected(): void;
+  cycleView(): void;
   refresh(): void;
   startFilter(): void;
   toggleHelp(): void;
@@ -22,5 +26,8 @@ export interface AppActions {
   onboardingPick(index: number): void;
   onboardingContinue(): void;
   onboardingFinish(): void;
+  settingsToggle(id: ProviderId): void;
+  settingsConnect(id: ProviderId): void;
+  settingsDisconnect(id: ProviderId): void;
   quit(): void;
 }

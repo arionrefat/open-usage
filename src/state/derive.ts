@@ -1,5 +1,5 @@
 import { sum } from "../lib/chart";
-import { COLORS } from "../theme";
+import { COLORS, THRESHOLDS } from "../theme";
 import {
   PROVIDER_IDS,
   STATUS_PRESENTATION,
@@ -14,7 +14,7 @@ const RANGE_NAMES: Record<RangeKey, string> = {
   "7d": "last 7 days",
   "30d": "last 30 days",
   month: "billing month",
-  all: "all time",
+  all: "all available history",
 };
 
 const RANGE_LABELS: Record<RangeKey, string> = {
@@ -25,30 +25,19 @@ const RANGE_LABELS: Record<RangeKey, string> = {
   all: "all",
 };
 
-/** How many trailing days each range covers; `today` is served hourly instead. */
-const RANGE_DAY_COUNTS: Record<RangeKey, number> = {
-  today: 24,
-  "7d": 7,
-  "30d": 30,
-  month: 27,
-  all: 30,
-};
-
 export interface DerivedState {
   /** Providers passing both the enabled flag and the current name filter. */
   visibleIds: ProviderId[];
-  isVisible: (id: ProviderId) => boolean;
   /** Enabled providers whose credential currently works. */
   liveIds: ProviderId[];
   enabledCount: number;
   /** Enabled but unusable — expired or missing credential. */
   disconnectedIds: ProviderId[];
-  /** Live providers at or past the danger threshold in the active scope. */
+  /** Live providers with any published limit at or past the danger threshold. */
   hotIds: ProviderId[];
   alertText: string;
   alertColor: string;
   series: Record<ProviderId, number[]>;
-  pointCount: number;
   totals: Record<ProviderId, number>;
   visibleTotal: number;
   axis: readonly [string, string, string];
@@ -61,8 +50,36 @@ export interface DerivedState {
   ranked: ProviderId[];
   worstId: ProviderId | null;
   bestId: ProviderId | null;
-  leadId: ProviderId | null;
   windowNote: string;
+}
+
+function dailyStartIndex(range: RangeKey, dates: string[]): number {
+  if (range === "7d") return Math.max(0, dates.length - 7);
+  if (range === "30d") return Math.max(0, dates.length - 30);
+  if (range === "month") {
+    const latestMonth = dates.at(-1)?.slice(0, 7);
+    const index = latestMonth ? dates.findIndex((date) => date.startsWith(latestMonth)) : -1;
+    return Math.max(0, index);
+  }
+  return 0;
+}
+
+function formatAxisDate(value: string | undefined): string {
+  if (!value) return "";
+  return new Date(`${value}T00:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function axisForDates(dates: string[]): [string, string, string] {
+  if (dates.length === 0) return ["", "", ""];
+  return [
+    formatAxisDate(dates[0]),
+    formatAxisDate(dates[Math.floor((dates.length - 1) / 2)]),
+    formatAxisDate(dates.at(-1)),
+  ];
 }
 
 export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedState {
@@ -73,17 +90,19 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
   const isVisible = (id: ProviderId) => state.connections[id].isEnabled && matchesFilter(id);
   const visibleIds = PROVIDER_IDS.filter(isVisible);
   const liveIds = PROVIDER_IDS.filter((id) => isProviderLive(state.connections[id]));
+  const visibleLiveIds = visibleIds.filter((id) => isProviderLive(state.connections[id]));
   const enabledCount = PROVIDER_IDS.filter((id) => state.connections[id].isEnabled).length;
   const disconnectedIds = PROVIDER_IDS.filter(
     (id) => state.connections[id].isEnabled && !isProviderLive(state.connections[id]),
   );
 
   const isHourly = state.range === "today";
-  const dayCount = RANGE_DAY_COUNTS[state.range];
+  const dailyStart = dailyStartIndex(state.range, snapshot.dailyDates);
+  const visibleDates = snapshot.dailyDates.slice(dailyStart);
   const series = Object.fromEntries(
     PROVIDER_IDS.map((id) => {
       const provider = snapshot.providers[id].series;
-      return [id, isHourly ? provider.hourly : provider.daily.slice(-dayCount)];
+      return [id, isHourly ? provider.hourly : provider.daily.slice(dailyStart)];
     }),
   ) as Record<ProviderId, number[]>;
 
@@ -94,13 +113,13 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
 
   const scopeConsumption = Object.fromEntries(
     PROVIDER_IDS.map((id) => {
-      const isLive = liveIds.includes(id);
+      const isLive = visibleLiveIds.includes(id);
       return [id, isLive ? (snapshot.providers[id].scopes[state.scope].percent ?? 0) : 0];
     }),
   ) as Record<ProviderId, number>;
-  const scopeTotal = PROVIDER_IDS.reduce((acc, id) => acc + scopeConsumption[id], 0);
+  const scopeTotal = visibleIds.reduce((acc, id) => acc + scopeConsumption[id], 0);
 
-  const ranked = liveIds
+  const ranked = visibleLiveIds
     .filter((id) => snapshot.providers[id].scopes[state.scope].percent !== null)
     .sort(
       (a, b) =>
@@ -108,16 +127,17 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
         (snapshot.providers[a].scopes[state.scope].percent ?? 0),
     );
 
-  const hotIds = ranked.filter((id) => (snapshot.providers[id].scopes[state.scope].percent ?? 0) >= 85);
+  const hotIds = liveIds.filter((id) =>
+    snapshot.providers[id].limits.some(
+      (limit) => limit.percent !== null && limit.percent >= THRESHOLDS.danger,
+    ),
+  );
   const alertCount = hotIds.length + disconnectedIds.length;
 
-  const leadId =
-    scopeTotal > 0
-      ? PROVIDER_IDS.reduce((best, id) => (scopeConsumption[id] > scopeConsumption[best] ? id : best))
-      : null;
-
   const windowNote =
-    liveIds.length === 0
+    visibleIds.length === 0 && query
+      ? `no providers match “${state.filterQuery.trim()}”`
+      : liveIds.length === 0
       ? "no live provider — 5 settings to enable one, or o to re-run setup"
       : disconnectedIds.length > 0
         ? disconnectedIds
@@ -127,7 +147,6 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
 
   return {
     visibleIds,
-    isVisible,
     liveIds,
     enabledCount,
     disconnectedIds,
@@ -147,10 +166,9 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
             ? COLORS.warn
             : COLORS.ok,
     series,
-    pointCount: isHourly ? 24 : dayCount,
     totals,
     visibleTotal,
-    axis: isHourly ? snapshot.hourlyAxis : snapshot.dailyAxis,
+    axis: isHourly ? snapshot.hourlyAxis : axisForDates(visibleDates),
     rangeName: RANGE_NAMES[state.range],
     rangeLabel: RANGE_LABELS[state.range],
     scopeConsumption,
@@ -158,7 +176,6 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
     ranked,
     worstId: ranked[0] ?? null,
     bestId: ranked.length > 0 ? (ranked[ranked.length - 1] ?? null) : null,
-    leadId,
     windowNote,
   };
 }

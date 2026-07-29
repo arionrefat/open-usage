@@ -1,9 +1,8 @@
-import { DONUT_INNER_RADIUS, donutChart } from "../lib/chart";
+import type { ChartRow } from "../lib/chart";
 import { buildMeter, emptyMeter } from "../lib/meter";
-import { padEnd, truncate } from "../lib/text";
-import { COLORS, PROVIDER_COLORS } from "../theme";
+import { columnWidth, padEnd, truncate } from "../lib/text";
+import { BLOCK_RAMP, COLORS, PROVIDER_COLORS, THRESHOLDS } from "../theme";
 import {
-  PROVIDER_IDS,
   STATUS_PRESENTATION,
   type ProviderId,
   type ScopeKey,
@@ -16,8 +15,8 @@ import { Chart, Line, Rule, SplitLine, Spacer, leftClick, type Segment } from ".
 import { toggleChip, toggleSegments, type ToggleOption } from "../components/toggle";
 
 const PERCENT_COLUMN = 7;
-const DONUT_MIN_CONTENT_WIDTH = 88;
-const DONUT_GAP = 4;
+const HISTOGRAM_MIN_CONTENT_WIDTH = 88;
+const HISTOGRAM_GAP = 4;
 
 interface OverviewSimpleProps {
   state: AppState;
@@ -101,7 +100,7 @@ function ProviderLegend({
           { text: "▎", color: PROVIDER_COLORS[id] },
           { text: name, color: COLORS.textBright, isBold: true },
         ]}
-        right={[{ text: `${entry.share} of all consumption`, color: COLORS.textGhost }]}
+        right={[{ text: `${entry.share} share of active limits`, color: COLORS.textGhost }]}
       />
       <Line
         segments={[
@@ -122,90 +121,127 @@ function ProviderLegend({
   );
 }
 
-const DONUT_MAX_WIDTH = 34;
-const DONUT_MIN_WIDTH = 22;
-/** Share of the content width the donut is allowed to take. */
-const DONUT_WIDTH_RATIO = 0.26;
-/**
- * Half-block rendering gives two samples per row, so a cell row spans two
- * sub-rows. A terminal cell is about twice as tall as it is wide, which makes
- * a sub-row roughly square — half the width in rows draws a true circle.
- */
-const DONUT_ASPECT = 0.5;
-/** Columns of clearance kept between the caption and the ring. */
-const CAPTION_MARGIN = 2;
+const HISTOGRAM_MAX_WIDTH = 34;
+const HISTOGRAM_MIN_WIDTH = 22;
+const HISTOGRAM_WIDTH_RATIO = 0.26;
+const HISTOGRAM_AXIS_WIDTH = 4;
+const HISTOGRAM_PLOT_HEIGHT = 10;
+const HISTOGRAM_BAR_MAX_WIDTH = 6;
 
-function donutSize(contentWidth: number): { width: number; height: number; holeWidth: number } {
-  const raw = Math.round(contentWidth * DONUT_WIDTH_RATIO);
-  const width = Math.max(DONUT_MIN_WIDTH, Math.min(DONUT_MAX_WIDTH, raw % 2 === 0 ? raw : raw + 1));
-  return {
-    width,
-    height: Math.round(width * DONUT_ASPECT),
-    // Derived from the ring itself so the two can never drift apart.
-    holeWidth: Math.floor(width * DONUT_INNER_RADIUS) - CAPTION_MARGIN,
-  };
+const HISTOGRAM_LABELS: Record<ProviderId, string> = {
+  cl: "claude",
+  cx: "codex",
+  go: "go",
+};
+
+function histogramWidth(contentWidth: number): number {
+  const raw = Math.round(contentWidth * HISTOGRAM_WIDTH_RATIO);
+  return Math.max(HISTOGRAM_MIN_WIDTH, Math.min(HISTOGRAM_MAX_WIDTH, raw));
 }
 
-function DonutSummary({
+function center(value: string, width: number): string {
+  const clipped = truncate(value, width);
+  const left = Math.floor((width - columnWidth(clipped)) / 2);
+  return `${" ".repeat(left)}${padEnd(clipped, width - left)}`;
+}
+
+function histogramRows(
+  entries: Array<{ id: ProviderId; percent: number | null }>,
+  width: number,
+): ChartRow[] {
+  const plotWidth = width - HISTOGRAM_AXIS_WIDTH;
+  const baseSlotWidth = Math.floor(plotWidth / entries.length);
+  const extraColumns = plotWidth % entries.length;
+  const slotWidths = entries.map((_, index) => baseSlotWidth + (index < extraColumns ? 1 : 0));
+  const rows: ChartRow[] = [];
+
+  for (let row = 0; row < HISTOGRAM_PLOT_HEIGHT; row++) {
+    const tick = row === 0 ? "100" : row === HISTOGRAM_PLOT_HEIGHT / 2 ? " 50" : "   ";
+    const segments: ChartRow["segments"] = [
+      { text: tick, color: COLORS.textGhost },
+      { text: tick.trim() ? "┤" : "│", color: COLORS.divider },
+    ];
+
+    entries.forEach((entry, index) => {
+      const slotWidth = slotWidths[index] ?? 0;
+      const barWidth = Math.max(1, Math.min(HISTOGRAM_BAR_MAX_WIDTH, slotWidth - 2));
+      const left = Math.floor((slotWidth - barWidth) / 2);
+      const right = slotWidth - barWidth - left;
+      const scaled = ((entry.percent ?? 0) / 100) * HISTOGRAM_PLOT_HEIGHT;
+      const level = scaled - (HISTOGRAM_PLOT_HEIGHT - row - 1);
+      const block =
+        entry.percent === null || level <= 0
+          ? " "
+          : level >= 1
+            ? "█"
+            : BLOCK_RAMP[Math.max(1, Math.min(8, Math.round(level * 8)))]!;
+
+      segments.push(
+        { text: " ".repeat(left), color: COLORS.bg },
+        {
+          text: block.repeat(barWidth),
+          color: entry.percent === null ? COLORS.track : PROVIDER_COLORS[entry.id],
+        },
+        { text: " ".repeat(right), color: COLORS.bg },
+      );
+    });
+    rows.push({ segments });
+  }
+
+  rows.push({
+    segments: [
+      { text: "  0└", color: COLORS.textGhost },
+      { text: "─".repeat(plotWidth), color: COLORS.divider },
+    ],
+  });
+  rows.push({
+    segments: [
+      { text: " ".repeat(HISTOGRAM_AXIS_WIDTH), color: COLORS.bg },
+      ...entries.map((entry, index) => ({
+        text: center(HISTOGRAM_LABELS[entry.id], slotWidths[index] ?? 0),
+        color: COLORS.textMuted,
+      })),
+    ],
+  });
+  rows.push({
+    segments: [
+      { text: " ".repeat(HISTOGRAM_AXIS_WIDTH), color: COLORS.bg },
+      ...entries.map((entry, index) => ({
+        text: center(entry.percent === null ? "—" : `${entry.percent}%`, slotWidths[index] ?? 0),
+        color: entry.percent === null ? COLORS.textFaint : PROVIDER_COLORS[entry.id],
+      })),
+    ],
+  });
+  return rows;
+}
+
+function HistogramSummary({
+  state,
   derived,
   snapshot,
-  size,
+  width,
 }: {
+  state: AppState;
   derived: DerivedState;
   snapshot: UsageSnapshot;
-  size: { width: number; height: number; holeWidth: number };
+  width: number;
 }) {
-  const rows = donutChart(
-    PROVIDER_IDS.map((id) => derived.scopeConsumption[id]),
-    PROVIDER_IDS.map((id) => PROVIDER_COLORS[id]),
-    size.width,
-    size.height,
-  );
-
-  const hasData = derived.scopeTotal > 0;
-  const leadId = derived.leadId;
-  const share =
-    hasData && leadId
-      ? `${Math.round((derived.scopeConsumption[leadId] / derived.scopeTotal) * 100)}%`
-      : "no data";
-  const holeWidth = size.holeWidth;
-
-  // Captions are laid out unpadded and centered so only their glyphs paint —
-  // padding them to the hole width would cut a rectangle out of the ring. The
-  // copy is kept short enough to fit the hole; truncation is the last resort.
-  const captions: Segment[] = [
-    {
-      text: share,
-      color: leadId && hasData ? PROVIDER_COLORS[leadId] : COLORS.textFaint,
-      isBold: true,
-    },
-    {
-      text: leadId && hasData ? snapshot.providers[leadId].meta.name : "nothing connected",
-      color: COLORS.text,
-    },
-    {
-      text: hasData ? "of all consumption" : "see settings",
-      color: COLORS.textGhost,
-    },
-  ].map((caption) => ({ ...caption, text: truncate(caption.text, holeWidth) }));
-
-  const captionTop = Math.floor((size.height - captions.length) / 2);
+  const entries = derived.visibleIds.map((id) => ({
+    id,
+    percent: isProviderLive(state.connections[id])
+      ? snapshot.providers[id].scopes[state.scope].percent
+      : null,
+  }));
 
   return (
-    <box flexDirection="column" flexShrink={0} width={size.width} height={size.height}>
-      <Chart rows={rows} />
-      <box
-        position="absolute"
-        top={captionTop}
-        left={0}
-        width={size.width}
-        flexDirection="column"
-        alignItems="center"
-      >
-        {captions.map((caption, index) => (
-          <Line key={`caption-${index}`} segments={[caption]} />
-        ))}
-      </box>
+    <box flexDirection="column" flexShrink={0} width={width}>
+      <SplitLine
+        width={width}
+        left={[{ text: "plan usage", color: COLORS.text, isBold: true }]}
+        right={[{ text: "%", color: COLORS.textGhost }]}
+      />
+      <Spacer />
+      <Chart rows={histogramRows(entries, width)} />
     </box>
   );
 }
@@ -218,9 +254,9 @@ export function OverviewSimple({
   scopeTitle,
   actions,
 }: OverviewSimpleProps) {
-  const showDonut = width >= DONUT_MIN_CONTENT_WIDTH;
-  const size = donutSize(width);
-  const legendWidth = showDonut ? width - size.width - DONUT_GAP : width;
+  const showHistogram = width >= HISTOGRAM_MIN_CONTENT_WIDTH && derived.visibleIds.length > 0;
+  const summaryWidth = histogramWidth(width);
+  const legendWidth = showHistogram ? width - summaryWidth - HISTOGRAM_GAP : width;
   const barWidth = Math.max(10, legendWidth - PERCENT_COLUMN);
 
   const worstId = derived.worstId;
@@ -239,17 +275,24 @@ export function OverviewSimple({
         right={[
           { text: scopeTitle, color: COLORS.textMuted, isBold: true },
           { text: " ▏ ", color: COLORS.rule },
-          { text: "share of limit consumed across providers", color: COLORS.textGhost },
+          { text: "relative usage across active plan limits", color: COLORS.textGhost },
         ]}
       />
       <Rule width={width} />
       <Spacer />
 
       <box flexDirection="row" flexShrink={0}>
-        {showDonut ? <DonutSummary derived={derived} snapshot={snapshot} size={size} /> : null}
-        {showDonut ? <box width={DONUT_GAP} flexShrink={0} /> : null}
+        {showHistogram ? (
+          <HistogramSummary
+            state={state}
+            derived={derived}
+            snapshot={snapshot}
+            width={summaryWidth}
+          />
+        ) : null}
+        {showHistogram ? <box width={HISTOGRAM_GAP} flexShrink={0} /> : null}
         <box flexDirection="column" flexShrink={0} width={legendWidth}>
-          {PROVIDER_IDS.map((id, index) => (
+          {derived.visibleIds.map((id, index) => (
             <box key={id} flexDirection="column" flexShrink={0}>
               {index > 0 ? <Spacer /> : null}
               <ProviderLegend
@@ -257,17 +300,25 @@ export function OverviewSimple({
                 name={snapshot.providers[id].meta.name}
                 entry={buildLegend(id, state, derived, snapshot, barWidth)}
                 width={legendWidth}
-                onSelect={() => actions.selectProvider(id)}
+                onSelect={() => actions.openProvider(id)}
               />
             </box>
           ))}
+          {derived.visibleIds.length === 0 ? (
+            <Line segments={[{ text: "no providers match the current filter", color: COLORS.textFaint }]} />
+          ) : null}
           <Spacer />
           <Rule width={legendWidth} />
           <Line
             segments={[
               {
                 text: "▲ ",
-                color: worstPercent >= 85 ? COLORS.danger : worstPercent >= 70 ? COLORS.warn : COLORS.textGhost,
+                 color:
+                   worstPercent >= THRESHOLDS.danger
+                     ? COLORS.danger
+                     : worstPercent >= THRESHOLDS.warn
+                       ? COLORS.warn
+                       : COLORS.textGhost,
               },
               {
                 text: worstId

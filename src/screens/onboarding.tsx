@@ -2,7 +2,7 @@ import { POLL_INTERVAL_SECONDS } from "../config";
 import { padEnd } from "../lib/text";
 import { COLORS, PROVIDER_COLORS } from "../theme";
 import { PROVIDER_IDS, STATUS_PRESENTATION, type ProviderId, type UsageSnapshot } from "../data/types";
-import type { AppState } from "../state/app-state";
+import { isProviderLive, type AppState } from "../state/app-state";
 import type { AppActions } from "../state/actions";
 import { KeyLegend } from "../components/chrome";
 import { Line, Rule, SplitLine, Spacer } from "../components/primitives";
@@ -88,6 +88,7 @@ function PickStep({ state, snapshot, width, actions }: OnboardingProps) {
           ["j/k", "move"],
           ["space", "toggle"],
           ["a", "select all"],
+          ["esc", "cancel"],
         ]}
         right={[
           {
@@ -107,7 +108,9 @@ function AuthStep({ state, snapshot, width, isCursorVisible }: OnboardingProps) 
   const picked = pickedProviders(state);
   const currentId = picked[Math.min(state.onboarding.index, Math.max(0, picked.length - 1))] ?? "cl";
   const meta = snapshot.providers[currentId].meta;
-  const fieldWidth = Math.min(CREDENTIAL_FIELD_WIDTH, width);
+  const fieldWidth = Math.max(1, Math.min(CREDENTIAL_FIELD_WIDTH, width));
+  const inputWidth = Math.max(0, fieldWidth - 5);
+  const maskedInput = "•".repeat(Math.min([...state.onboarding.typed].length, inputWidth));
 
   return (
     <box flexDirection="column" flexShrink={0}>
@@ -137,7 +140,7 @@ function AuthStep({ state, snapshot, width, isCursorVisible }: OnboardingProps) 
           background={COLORS.bgInput}
           segments={[
             { text: "▸ ", color: PROVIDER_COLORS[currentId], background: COLORS.bgInput },
-            { text: state.onboarding.typed, color: COLORS.text, background: COLORS.bgInput },
+            { text: maskedInput, color: COLORS.text, background: COLORS.bgInput },
             { text: isCursorVisible ? "█" : " ", color: COLORS.text, background: COLORS.bgInput },
           ]}
         />
@@ -145,8 +148,8 @@ function AuthStep({ state, snapshot, width, isCursorVisible }: OnboardingProps) 
       <Line
         segments={[
           {
-            text: "stored in your OS keychain — never written to the config file",
-            color: COLORS.textGhost,
+            text: state.onboarding.inputError ?? "masked in memory for this session",
+            color: state.onboarding.inputError ? COLORS.danger : COLORS.textGhost,
           },
         ]}
       />
@@ -165,7 +168,7 @@ function AuthStep({ state, snapshot, width, isCursorVisible }: OnboardingProps) 
 }
 
 function SummaryStep({ state, snapshot, width, actions }: OnboardingProps) {
-  const connectedCount = PROVIDER_IDS.filter((id) => state.connections[id].status === "active").length;
+  const connectedCount = PROVIDER_IDS.filter((id) => isProviderLive(state.connections[id])).length;
 
   return (
     <box flexDirection="column" flexShrink={0}>
@@ -189,15 +192,19 @@ function SummaryStep({ state, snapshot, width, actions }: OnboardingProps) {
       />
       <Spacer />
       {PROVIDER_IDS.map((id) => {
-        const status = STATUS_PRESENTATION[state.connections[id].status];
+        const connection = state.connections[id];
+        const status = STATUS_PRESENTATION[connection.status];
+        const statusLabel = connection.isEnabled ? status.label : "hidden";
+        const statusColor = connection.isEnabled ? status.color : COLORS.textFaint;
         return (
           <Line
             key={id}
+            width={width}
             segments={[
-              { text: padEnd(status.dot, 3), color: status.color },
+              { text: padEnd(connection.isEnabled ? status.dot : "○", 3), color: statusColor },
               { text: padEnd(snapshot.providers[id].meta.name, NAME_COLUMN), color: COLORS.text },
-              { text: padEnd(status.label, STATUS_COLUMN), color: status.color },
-              { text: state.connections[id].credential || "—", color: COLORS.textFaint },
+              { text: padEnd(statusLabel, STATUS_COLUMN), color: statusColor },
+              { text: connection.credential || "—", color: COLORS.textFaint },
             ]}
           />
         );
@@ -230,14 +237,16 @@ const ONBOARDING_PADDING = 4;
 
 export function Onboarding(props: OnboardingProps) {
   const { state } = props;
-  const width = Math.max(20, props.width - ONBOARDING_PADDING * 2);
+  const padding = props.width >= 32 ? ONBOARDING_PADDING : 1;
+  const width = Math.max(1, props.width - padding * 2 - 1);
 
   return (
-    <box
-      flexDirection="column"
-      flexShrink={0}
-      paddingLeft={ONBOARDING_PADDING}
-      paddingRight={ONBOARDING_PADDING}
+    <scrollbox
+      flexGrow={1}
+      scrollX={false}
+      contentOptions={{ flexDirection: "column" }}
+      paddingLeft={padding}
+      paddingRight={padding}
       paddingTop={1}
     >
       <SplitLine
@@ -253,6 +262,6 @@ export function Onboarding(props: OnboardingProps) {
       {state.onboarding.step === 0 ? <PickStep {...props} width={width} /> : null}
       {state.onboarding.step === 1 ? <AuthStep {...props} width={width} /> : null}
       {state.onboarding.step === 2 ? <SummaryStep {...props} width={width} /> : null}
-    </box>
+    </scrollbox>
   );
 }

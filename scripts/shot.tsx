@@ -9,10 +9,11 @@
 import { testRender } from "@opentui/react/test-utils";
 import { App } from "../src/app";
 import { mockUsageProvider } from "../src/data/mock-provider";
-import { VIEW_KEYS, type OverviewMode, type Screen, type ViewKey } from "../src/state/app-state";
+import { readFlags, startupFromFlags } from "../src/lib/args";
 
 const DEFAULT_WIDTH = 140;
 const DEFAULT_HEIGHT = 46;
+const INPUT_SETTLE_MS = 30;
 
 interface Rgba {
   r: number;
@@ -45,33 +46,13 @@ function toHex(color: Rgba): string {
   return `#${channel(color.r)}${channel(color.g)}${channel(color.b)}`;
 }
 
-function readFlags(spec: string): Map<string, string> {
-  const args = spec.split(/\s+/).filter(Boolean);
-  const flags = new Map<string, string>();
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (!arg?.startsWith("--")) continue;
-    const [name, inlineValue] = arg.slice(2).split("=", 2);
-    if (name) flags.set(name, inlineValue ?? args[++i] ?? "");
-  }
-  return flags;
-}
-
 async function capture(label: string, spec: string): Promise<Shot> {
-  const flags = readFlags(spec);
-  const view = flags.get("view");
-  const mode = flags.get("mode");
+  const flags = readFlags(spec.split(/\s+/).filter(Boolean));
 
   const setup = await testRender(
     <App
       provider={mockUsageProvider}
-      startup={{
-        screen: (flags.get("screen") === "onboarding" ? "onboarding" : "app") as Screen,
-        view: (VIEW_KEYS.includes(view as ViewKey) ? view : "overview") as ViewKey,
-        mode: (mode === "simple" ? "simple" : "detailed") as OverviewMode,
-        useSeverityColors: flags.has("severity-colors"),
-        isDailySplitVisible: !flags.has("no-daily-split"),
-      }}
+      startup={startupFromFlags(flags)}
     />,
     {
       width: Number(flags.get("width") ?? DEFAULT_WIDTH),
@@ -80,33 +61,42 @@ async function capture(label: string, spec: string): Promise<Shot> {
   );
 
   const settle = async () => {
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, INPUT_SETTLE_MS));
     await setup.flush();
   };
-  await settle();
-
-  for (const key of (flags.get("keys") ?? "").split(",").filter(Boolean)) {
-    if (key === "ENTER") setup.mockInput.pressEnter();
-    else if (key === "TAB") setup.mockInput.pressTab();
-    else if (key === "ESC") setup.mockInput.pressEscape();
-    else if (key === "SPACE") setup.mockInput.pressKey(" ");
-    else setup.mockInput.pressKey(key);
+  try {
     await settle();
-  }
 
-  const frame = setup.captureSpans();
-  const cells = frame.lines.map((line) => {
-    const row: Cell[] = [];
-    for (const span of line.spans) {
-      const fg = toHex(span.fg as unknown as Rgba);
-      const bg = toHex(span.bg as unknown as Rgba);
-      const bold = (span.attributes & 1) !== 0;
-      for (const ch of span.text) row.push({ ch, fg, bg, bold });
+    for (const key of (flags.get("keys") ?? "").split(",").filter(Boolean)) {
+      if (key === "ENTER") setup.mockInput.pressEnter();
+      else if (key === "TAB") setup.mockInput.pressTab();
+      else if (key === "ESC") setup.mockInput.pressEscape();
+      else if (key === "SPACE") setup.mockInput.pressKey(" ");
+      else setup.mockInput.pressKey(key);
+      await settle();
     }
-    return row;
-  });
 
-  return { label, note: spec, cols: frame.cols, rows: frame.rows, cells };
+    const frame = setup.captureSpans();
+    const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    const cells = frame.lines.map((line) => {
+      const row: Cell[] = [];
+      for (const span of line.spans) {
+        const fg = toHex(span.fg as unknown as Rgba);
+        const bg = toHex(span.bg as unknown as Rgba);
+        const bold = (span.attributes & 1) !== 0;
+        for (const { segment } of segmenter.segment(span.text)) {
+          const cellWidth = Math.max(1, Bun.stringWidth(segment));
+          row.push({ ch: segment, fg, bg, bold });
+          for (let column = 1; column < cellWidth; column++) row.push({ ch: "", fg, bg, bold });
+        }
+      }
+      return row;
+    });
+
+    return { label, note: spec, cols: frame.cols, rows: frame.rows, cells };
+  } finally {
+    setup.renderer.destroy();
+  }
 }
 
 // React's act() advisory is noise here — this harness drives real input.
@@ -152,7 +142,10 @@ const QUADS = {
 const LINES = {"\\u2500":"h","\\u2502":"v","\\u250c":"tl","\\u2510":"tr","\\u2514":"bl","\\u2518":"br"};
 for (const shot of SHOTS) {
   const heading = document.createElement("h2");
-  heading.innerHTML = shot.label + ' <small>' + shot.note + ' \\u00b7 ' + shot.cols + '\\u00d7' + shot.rows + '</small>';
+  heading.textContent = shot.label + ' ';
+  const details = document.createElement("small");
+  details.textContent = shot.note + ' \\u00b7 ' + shot.cols + '\\u00d7' + shot.rows;
+  heading.append(details);
   const canvas = document.createElement("canvas");
   canvas.width = shot.cols * CW;
   canvas.height = shot.rows * CH;
@@ -200,6 +193,6 @@ for (const shot of SHOTS) {
 }
 </script>`;
 
-await Bun.write(outPath, PAGE.replace("__SHOTS__", JSON.stringify(shots)));
+const serializedShots = JSON.stringify(shots).replaceAll("<", "\\u003c");
+await Bun.write(outPath, PAGE.replace("__SHOTS__", serializedShots));
 console.log(`wrote ${outPath}`);
-process.exit(0);

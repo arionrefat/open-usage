@@ -41,6 +41,11 @@ function Notice({ notice, width }: { notice: ProviderNotice; width: number }) {
 function StaleBanner({ id, state, width }: { id: ProviderId; state: AppState; width: number }) {
   const connection = state.connections[id];
   const status = STATUS_PRESENTATION[connection.status];
+  const label = connection.isEnabled ? status.label : "hidden in settings";
+  const color = connection.isEnabled ? status.color : COLORS.textFaint;
+  const note = connection.isEnabled
+    ? `${connection.note} — figures below are the last values read`
+    : "the credential is preserved — figures below are the last values read";
   return (
     <box
       flexDirection="column"
@@ -54,9 +59,9 @@ function StaleBanner({ id, state, width }: { id: ProviderId; state: AppState; wi
     >
       <Line
         segments={[
-          { text: status.label, color: status.color, isBold: true },
+          { text: label, color, isBold: true },
           { text: " ▏ ", color: COLORS.rule },
-          { text: `${connection.note} — figures below are the last values read`, color: COLORS.textSoft },
+          { text: note, color: COLORS.textSoft },
         ]}
       />
     </box>
@@ -72,7 +77,7 @@ export function ProviderDetail({
   chartHeight,
 }: ProviderDetailProps) {
   const provider = snapshot.providers[id];
-  const isStale = state.connections[id].isEnabled && !isProviderLive(state.connections[id]);
+  const isStale = !isProviderLive(state.connections[id]);
   const limits = provider.limits.filter((limit) => !limit.isCardOnly);
   const series = derived.series[id];
 

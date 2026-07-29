@@ -16,7 +16,6 @@ const META: Record<ProviderId, ProviderMeta> = {
     planDetail: "Max (20x) · anthropic oauth",
     requirement: "oauth login or ANTHROPIC_API_KEY",
     source: "~/.claude/usage.jsonl",
-    sampleCredential: "sk-ant-api03-•••••••••7b31",
   },
   cx: {
     id: "cx",
@@ -26,7 +25,6 @@ const META: Record<ProviderId, ProviderMeta> = {
     planDetail: "Plus · codex and work share one limit",
     requirement: "openai api key with usage.read",
     source: "platform.openai.com/usage",
-    sampleCredential: "sk-proj-•••••••••••4f2a",
   },
   go: {
     id: "go",
@@ -36,7 +34,6 @@ const META: Record<ProviderId, ProviderMeta> = {
     planDetail: "Go · subscribed",
     requirement: "opencode auth token",
     source: "opencode auth token",
-    sampleCredential: "oc_live_•••••••9d1c",
   },
 };
 
@@ -58,11 +55,15 @@ const HOURLY: Record<ProviderId, number[]> = {
   go: [0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 4, 3, 1, 2, 5, 6, 4, 3, 2, 0, 0, 0, 0, 0],
 };
 
+const DAILY_DATES = Array.from({ length: 30 }, (_, index) => {
+  const date = new Date(Date.UTC(2026, 5, 28 + index));
+  return date.toISOString().slice(0, 10);
+});
+
 const SNAPSHOT: UsageSnapshot = {
-  dayLabels: ["Tue 21", "Wed 22", "Thu 23", "Fri 24", "Sat 25", "Sun 26", "Mon 27"],
-  dayLabelOffset: 23,
+  dailyDates: DAILY_DATES,
   hourlyAxis: ["00:00", "12:00", "23:00"],
-  dailyAxis: ["Jun 28", "Jul 12", "Jul 27"],
+  fetchedAt: Date.now(),
   windowNote:
     "windows differ per provider — codex publishes one shared weekly pool, opencode go also caps monthly (91%, 6d 5h left)",
   providers: {
@@ -219,6 +220,23 @@ export const mockUsageProvider: UsageProvider = {
   listMeta: () => META,
   initialConnections: () => structuredClone(INITIAL_CONNECTIONS),
   readSnapshot: () => SNAPSHOT,
-  refresh: () => new Promise((resolve) => setTimeout(() => resolve(SNAPSHOT), REFRESH_LATENCY_MS)),
-  maskCredential: (raw) => (raw.length <= 10 ? raw : `${raw.slice(0, 7)}${"•".repeat(9)}${raw.slice(-4)}`),
+  refresh: (signal) =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => resolve({ ...SNAPSHOT, fetchedAt: Date.now() }),
+        REFRESH_LATENCY_MS,
+      );
+      signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          reject(signal.reason ?? new DOMException("Refresh aborted", "AbortError"));
+        },
+        { once: true },
+      );
+    }),
+  maskCredential: (raw) =>
+    raw.length <= 24
+      ? "•".repeat(raw.length)
+      : `${raw.slice(0, 4)}${"•".repeat(Math.min(9, raw.length - 8))}${raw.slice(-4)}`,
 };

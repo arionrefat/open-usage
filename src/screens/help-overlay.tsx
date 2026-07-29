@@ -30,9 +30,14 @@ interface HelpOverlayProps {
 }
 
 export function HelpOverlay({ width, height, onClose }: HelpOverlayProps) {
-  const panelWidth = Math.min(PANEL_WIDTH, width - 4);
-  const innerWidth = panelWidth - 4;
-  const panelHeight = KEYMAP.length + 8;
+  const margin = width >= 4 ? 2 : 0;
+  const panelWidth = Math.max(1, Math.min(PANEL_WIDTH, width - margin * 2));
+  const hasFrame = panelWidth >= 4;
+  const panelPadding = hasFrame ? 1 : 0;
+  const innerWidth = Math.max(1, panelWidth - (hasFrame ? 2 : 0) - panelPadding * 2);
+  const isNarrow = innerWidth < 32;
+  const contentHeight = KEYMAP.length * (isNarrow ? 2 : 1) + 8;
+  const panelHeight = Math.max(1, Math.min(contentHeight, height));
 
   return (
     <>
@@ -51,43 +56,62 @@ export function HelpOverlay({ width, height, onClose }: HelpOverlayProps) {
         top={Math.max(0, Math.floor((height - panelHeight) / 2))}
         left={Math.max(0, Math.floor((width - panelWidth) / 2))}
         width={panelWidth}
+        height={panelHeight}
         flexDirection="column"
-        border
+        border={hasFrame}
         borderColor={COLORS.borderPanel}
         backgroundColor={COLORS.bgChrome}
-        paddingLeft={1}
-        paddingRight={1}
+        paddingLeft={panelPadding}
+        paddingRight={panelPadding}
         zIndex={50}
       >
-        <SplitLine
-          width={innerWidth}
-          background={COLORS.bgChrome}
-          left={[{ text: "keymap", color: COLORS.textBright, isBold: true }]}
-          right={[{ text: "esc to close", color: COLORS.textGhost, onClick: onClose }]}
-        />
-        <Spacer />
-        {KEYMAP.map(([key, description]) => (
+        <scrollbox flexGrow={1} scrollX={false} contentOptions={{ flexDirection: "column" }}>
+          <SplitLine
+            width={innerWidth}
+            background={COLORS.bgChrome}
+            left={[{ text: "keymap", color: COLORS.textBright, isBold: true }]}
+            right={[{ text: "esc to close", color: COLORS.textGhost, onClick: onClose }]}
+          />
+          <Spacer />
+          {KEYMAP.map(([key, description]) => (
+            <box key={key} flexDirection="column" flexShrink={0}>
+              <Line
+                width={innerWidth}
+                background={COLORS.bgChrome}
+                segments={[
+                  {
+                    text: isNarrow ? key : padEnd(key, KEY_COLUMN),
+                    color: COLORS.accent,
+                    background: COLORS.bgChrome,
+                  },
+                  ...(isNarrow
+                    ? []
+                    : [{ text: description, color: COLORS.textMuted, background: COLORS.bgChrome }]),
+                ]}
+              />
+              {isNarrow ? (
+                <Line
+                  width={innerWidth}
+                  background={COLORS.bgChrome}
+                  segments={[{ text: description, color: COLORS.textMuted, background: COLORS.bgChrome }]}
+                />
+              ) : null}
+            </box>
+          ))}
+          <Spacer />
+          <Rule width={innerWidth} />
           <Line
-            key={key}
+            width={innerWidth}
             background={COLORS.bgChrome}
             segments={[
-              { text: padEnd(key, KEY_COLUMN), color: COLORS.accent, background: COLORS.bgChrome },
-              { text: description, color: COLORS.textMuted, background: COLORS.bgChrome },
+              {
+                text: `${APP_NAME} v${APP_VERSION} · @opentui/react · polls every ${POLL_INTERVAL_SECONDS}s`,
+                color: COLORS.textGhost,
+                background: COLORS.bgChrome,
+              },
             ]}
           />
-        ))}
-        <Spacer />
-        <Rule width={innerWidth} />
-        <Line
-          background={COLORS.bgChrome}
-          segments={[
-            {
-              text: `${APP_NAME} v${APP_VERSION} · @opentui/react · polls every ${POLL_INTERVAL_SECONDS}s`,
-              color: COLORS.textGhost,
-              background: COLORS.bgChrome,
-            },
-          ]}
-        />
+        </scrollbox>
       </box>
     </>
   );

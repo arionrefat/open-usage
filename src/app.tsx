@@ -1,17 +1,24 @@
 import type { KeyEvent } from "@opentui/core";
-import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { FilterBar, Header, StatusBar, Tabs } from "./components/chrome";
-import { APP_NAME } from "./config";
-import { PROVIDER_IDS, type ProviderId, type ScopeKey, type UsageProvider } from "./data/types";
+import { APP_NAME, POLL_INTERVAL_SECONDS } from "./config";
+import {
+  PROVIDER_IDS,
+  type ProviderId,
+  type ScopeKey,
+  type UsageProvider,
+  type UsageSnapshot,
+} from "./data/types";
 import { useBlink } from "./hooks/use-blink";
 import {
   VIEW_KEYS,
+  PROVIDER_VIEWS,
+  MAX_CREDENTIAL_LENGTH,
   createAppReducer,
   createInitialState,
   type AppStateOptions,
   type OverviewMode,
-  type ViewKey,
 } from "./state/app-state";
 import type { AppActions } from "./state/actions";
 import { deriveState } from "./state/derive";
@@ -27,12 +34,13 @@ const HORIZONTAL_PADDING = 2;
 const SCROLLBAR_WIDTH = 1;
 const SPINNER_INTERVAL_MS = 80;
 const SECOND_MS = 1000;
+const POLL_INTERVAL_MS = POLL_INTERVAL_SECONDS * SECOND_MS;
 const DETAIL_CHART_MAX_HEIGHT = 7;
 const DETAIL_CHART_MIN_HEIGHT = 4;
 /** Rows consumed by chrome plus a provider screen's non-chart content. */
 const DETAIL_CHROME_ROWS = 24;
 
-const DETAIL_VIEWS: Partial<Record<ViewKey, ProviderId>> = { claude: "cl", codex: "cx", go: "go" };
+const TEXT_DECODER = new TextDecoder();
 
 function printableChar(key: KeyEvent): string | null {
   const sequence = key.sequence;
@@ -51,14 +59,23 @@ export function App({ provider, startup }: AppProps) {
   const { width, height } = useTerminalDimensions();
   const meta = useMemo(() => provider.listMeta(), [provider]);
   const reducer = useMemo(() => createAppReducer(meta), [meta]);
+  const [snapshot, setSnapshot] = useState<UsageSnapshot>(() => provider.readSnapshot());
   const [state, dispatch] = useReducer(
     reducer,
-    { ...startup, connections: provider.initialConnections() },
-    createInitialState,
+    {
+      provider,
+      startup,
+      secondsSinceUpdate: Math.max(0, Math.floor((Date.now() - snapshot.fetchedAt) / SECOND_MS)),
+    },
+    ({ provider: initialProvider, startup: initialStartup, secondsSinceUpdate }) =>
+      createInitialState({
+        ...initialStartup,
+        secondsSinceUpdate,
+        connections: initialProvider.initialConnections(),
+      }),
   );
-  const snapshot = provider.readSnapshot();
   const derived = useMemo(() => deriveState(state, snapshot), [state, snapshot]);
-  const isRefreshingRef = useRef(false);
+  const refreshAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => dispatch({ type: "tick-second" }), SECOND_MS);
@@ -72,22 +89,52 @@ export function App({ provider, startup }: AppProps) {
   }, [state.isRefreshing]);
 
   const refresh = useCallback(() => {
-    if (isRefreshingRef.current) return;
-    isRefreshingRef.current = true;
+    if (refreshAbortRef.current) return;
+    const controller = new AbortController();
+    refreshAbortRef.current = controller;
     dispatch({ type: "refresh-start" });
-    void provider.refresh().finally(() => {
-      isRefreshingRef.current = false;
-      dispatch({ type: "refresh-finish" });
-    });
+    void Promise.resolve()
+      .then(() => provider.refresh(controller.signal))
+      .then((nextSnapshot) => {
+        if (controller.signal.aborted) return;
+        setSnapshot(nextSnapshot);
+        dispatch({
+          type: "refresh-success",
+          secondsSinceUpdate: Math.max(
+            0,
+            Math.floor((Date.now() - nextSnapshot.fetchedAt) / SECOND_MS),
+          ),
+        });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        const message = error instanceof Error ? error.message : "unknown provider error";
+        dispatch({ type: "refresh-failure", message });
+      })
+      .finally(() => {
+        if (refreshAbortRef.current === controller) refreshAbortRef.current = null;
+      });
   }, [provider]);
 
-  const quit = useCallback(() => {
+  useEffect(() => {
+    refresh();
+    const timer = setInterval(refresh, POLL_INTERVAL_MS);
+    return () => {
+      clearInterval(timer);
+      refreshAbortRef.current?.abort();
+      refreshAbortRef.current = null;
+    };
+  }, [refresh]);
+
+  const quit = useCallback((exitCode = 0) => {
     renderer.destroy();
-    const polled = PROVIDER_IDS.filter((id) => state.connections[id].isEnabled).length;
+    const polled = PROVIDER_IDS.filter(
+      (id) => state.connections[id].isEnabled && state.connections[id].status === "active",
+    ).length;
     process.stdout.write(
       `$ ${APP_NAME}\n  session ended · ${polled} providers polled · cached ${state.secondsSinceUpdate}s ago\n`,
     );
-    process.exit(0);
+    process.exitCode = exitCode;
   }, [renderer, state.connections, state.secondsSinceUpdate]);
 
   const actions = useMemo<AppActions>(
@@ -99,6 +146,10 @@ export function App({ provider, startup }: AppProps) {
       setScope: (scope: ScopeKey) => dispatch({ type: "set-scope", scope }),
       toggleScope: () => dispatch({ type: "toggle-scope" }),
       selectProvider: (id: ProviderId) => dispatch({ type: "select-provider", id }),
+      openProvider: (id: ProviderId) => dispatch({ type: "set-view", view: PROVIDER_VIEWS[id] }),
+      moveSelection: (delta: number) => dispatch({ type: "move-selection", delta }),
+      openSelected: () => dispatch({ type: "open-selected" }),
+      cycleView: () => dispatch({ type: "cycle-view" }),
       refresh,
       startFilter: () => dispatch({ type: "start-filter" }),
       toggleHelp: () => dispatch({ type: "toggle-help" }),
@@ -107,7 +158,10 @@ export function App({ provider, startup }: AppProps) {
       onboardingPick: (index: number) => dispatch({ type: "onboarding-pick", index }),
       onboardingContinue: () => dispatch({ type: "onboarding-begin-auth" }),
       onboardingFinish: () => dispatch({ type: "onboarding-finish" }),
-      quit,
+      settingsToggle: (id: ProviderId) => dispatch({ type: "settings-toggle-enabled", id }),
+      settingsConnect: (id: ProviderId) => dispatch({ type: "settings-connect", id }),
+      settingsDisconnect: (id: ProviderId) => dispatch({ type: "settings-disconnect", id }),
+      quit: () => quit(),
     }),
     [quit, refresh],
   );
@@ -123,6 +177,7 @@ export function App({ provider, startup }: AppProps) {
         else if (key.name === "space" || char === " " || char === "x") dispatch({ type: "onboarding-toggle" });
         else if (char === "a") dispatch({ type: "onboarding-select-all" });
         else if (key.name === "return") dispatch({ type: "onboarding-begin-auth" });
+        else if (key.name === "escape") dispatch({ type: "onboarding-cancel" });
         return;
       }
 
@@ -160,11 +215,11 @@ export function App({ provider, startup }: AppProps) {
       return true;
     }
     if (key.name === "return") {
-      dispatch({ type: "settings-cycle-status" });
+      dispatch({ type: "settings-connect" });
       return true;
     }
     if (char === "p") {
-      dispatch({ type: "settings-paste" });
+      dispatch({ type: "settings-connect" });
       return true;
     }
     if (char === "d") {
@@ -178,7 +233,7 @@ export function App({ provider, startup }: AppProps) {
     useCallback(
       (key: KeyEvent) => {
         if (key.ctrl && key.name === "c") {
-          quit();
+          quit(130);
           return;
         }
 
@@ -197,7 +252,8 @@ export function App({ provider, startup }: AppProps) {
         }
 
         if (state.isHelpOpen) {
-          dispatch({ type: "close-help" });
+          const char = printableChar(key);
+          if (key.name === "escape" || char === "?") dispatch({ type: "close-help" });
           return;
         }
 
@@ -234,13 +290,33 @@ export function App({ provider, startup }: AppProps) {
     ),
   );
 
-  const isCursorVisible = useBlink(state.screen === "onboarding" || state.isFiltering);
-  const contentWidth = Math.max(20, width - HORIZONTAL_PADDING * 2 - SCROLLBAR_WIDTH);
+  usePaste(
+    useCallback(
+      (event) => {
+        if (event.bytes.length > MAX_CREDENTIAL_LENGTH) {
+          dispatch({
+            type: "onboarding-input-error",
+            message: "credential exceeds the 16,384 byte paste limit",
+          });
+          event.preventDefault();
+          return;
+        }
+        dispatch({ type: "paste-input", text: TEXT_DECODER.decode(event.bytes) });
+        event.preventDefault();
+      },
+      [],
+    ),
+  );
+
+  const isCursorVisible = useBlink(
+    (state.screen === "onboarding" && state.onboarding.step === 1) || state.isFiltering,
+  );
+  const contentWidth = Math.max(1, width - HORIZONTAL_PADDING * 2 - SCROLLBAR_WIDTH);
   const detailChartHeight = Math.max(
     DETAIL_CHART_MIN_HEIGHT,
     Math.min(DETAIL_CHART_MAX_HEIGHT, height - DETAIL_CHROME_ROWS),
   );
-  const detailProviderId = DETAIL_VIEWS[state.view];
+  const detailProviderId = PROVIDER_IDS.find((id) => PROVIDER_VIEWS[id] === state.view);
 
   if (state.screen === "onboarding") {
     return (
@@ -268,8 +344,8 @@ export function App({ provider, startup }: AppProps) {
         <Header
           width={contentWidth}
           providerCount={`${derived.enabledCount} of ${PROVIDER_IDS.length} providers`}
-          alertText={derived.alertText}
-          alertColor={derived.alertColor}
+          alertText={state.refreshError ? "▲ refresh failed" : derived.alertText}
+          alertColor={state.refreshError ? COLORS.danger : derived.alertColor}
           updatedLabel={state.isRefreshing ? "now" : `${state.secondsSinceUpdate}s ago`}
           spinner={
             state.isRefreshing
@@ -338,7 +414,7 @@ export function App({ provider, startup }: AppProps) {
       </box>
 
       {state.isHelpOpen ? (
-        <HelpOverlay width={width} height={height} onClose={() => dispatch({ type: "close-help" })} />
+        <HelpOverlay width={width} height={height} onClose={actions.closeHelp} />
       ) : null}
     </box>
   );

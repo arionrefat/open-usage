@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
+import { act } from "react";
 import { App } from "./app";
 import { mockUsageProvider } from "./data/mock-provider";
 import { VIEW_KEYS, type OverviewMode, type ViewKey } from "./state/app-state";
@@ -16,10 +17,14 @@ async function renderRows(width: number, view: ViewKey, mode: OverviewMode): Pro
     />,
     { width, height: HEIGHT },
   );
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  await setup.flush();
-  // The captured frame ends with a trailing newline; drop the empty row it leaves.
-  return setup.captureCharFrame().replace(/\n$/, "").split("\n");
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await setup.flush();
+    // The captured frame ends with a trailing newline; drop the empty row it leaves.
+    return setup.captureCharFrame().replace(/\n$/, "").split("\n");
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
 }
 
 function rowContaining(rows: string[], needle: string): string {
@@ -61,13 +66,21 @@ describe("no adjacent groups collide", () => {
   }
 });
 
+test("simple overview uses a provider histogram", async () => {
+  const frame = (await renderRows(140, "overview", "simple")).join("\n");
+  expect(frame).toContain("plan usage");
+  expect(frame).toContain("100┤");
+  expect(frame).toContain("0└");
+  expect(frame).not.toContain("largest share");
+});
+
 describe("every view renders at every width", () => {
   for (const width of WIDTHS) {
     for (const view of VIEW_KEYS) {
       test(`${view} at ${width} columns`, async () => {
         const rows = await renderRows(width, view, "detailed");
         expect(rows.length).toBe(HEIGHT);
-        for (const row of rows) expect(row.length).toBeLessThanOrEqual(width);
+        for (const row of rows) expect(Bun.stringWidth(row)).toBeLessThanOrEqual(width);
       });
     }
   }

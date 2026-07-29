@@ -152,13 +152,21 @@ interface FilterBarProps {
 }
 
 export function FilterBar({ width, query, matchCount, isCursorVisible }: FilterBarProps) {
+  const queryBudget = Math.max(1, Math.floor(width * 0.6) - 4);
+  const queryChars = [...query];
+  const visibleQuery =
+    queryChars.length > queryBudget
+      ? queryBudget === 1
+        ? "…"
+        : `…${queryChars.slice(-(queryBudget - 1)).join("")}`
+      : query;
   return (
     <SplitLine
       width={width}
       background={COLORS.bgChrome}
       left={[
         { text: "/", color: COLORS.info },
-        { text: ` ${query}`, color: COLORS.text },
+        { text: ` ${visibleQuery}`, color: COLORS.text },
         { text: isCursorVisible ? "█" : " ", color: COLORS.text },
       ]}
       right={[
@@ -175,9 +183,9 @@ const SEPARATOR_WIDTH = 3;
 
 export function StatusBar({ width, actions }: { width: number; actions: AppActions }) {
   const hints: Array<[string, string, (() => void)?]> = [
-    ["j/k", "move"],
-    ["↵", "open"],
-    ["tab", "next view"],
+    ["j/k", "move", () => actions.moveSelection(1)],
+    ["↵", "open", () => actions.openSelected()],
+    ["tab", "next view", () => actions.cycleView()],
     ["m", "mode", () => actions.toggleMode()],
     ["w", "window", () => actions.toggleScope()],
     ["t", "range", () => actions.cycleRange()],

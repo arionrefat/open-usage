@@ -26,23 +26,26 @@ export function buildMeter(
   accentColor: string,
   useSeverityColors = false,
 ): Meter {
-  const clamped = Math.max(0, Math.min(100, percent));
-  const filled = Math.round((clamped / 100) * width);
-  const severity = severityColor(clamped);
+  const meterWidth = Math.max(0, Math.floor(width));
+  const value = Number.isFinite(percent) ? Math.max(0, percent) : 0;
+  const clamped = Math.min(100, value);
+  const filled = Math.round((clamped / 100) * meterWidth);
+  const severity = severityColor(value);
   return {
     fill: "█".repeat(filled),
-    track: "█".repeat(width - filled),
+    track: "█".repeat(meterWidth - filled),
     color: useSeverityColors ? (severity ?? COLORS.ok) : (severity ?? accentColor),
-    percentLabel: `${clamped}%`,
+    percentLabel: `${Math.round(value)}%`,
     percentColor: severity ?? accentColor,
   };
 }
 
 /** An empty meter, used when a provider publishes no cap or is disconnected. */
 export function emptyMeter(width: number): Meter {
+  const meterWidth = Math.max(0, Math.floor(width));
   return {
     fill: "",
-    track: "█".repeat(width),
+    track: "█".repeat(meterWidth),
     color: COLORS.track,
     percentLabel: "—",
     percentColor: COLORS.textDisabled,

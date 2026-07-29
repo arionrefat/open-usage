@@ -16,16 +16,17 @@ export function padStart(value: string, width: number): string {
   return diff > 0 ? " ".repeat(diff) + value : value;
 }
 
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
 /** Clips `value` to `width` columns, marking the cut with an ellipsis. */
 export function truncate(value: string, width: number): string {
   if (columnWidth(value) <= width) return value;
   if (width <= 0) return "";
   if (width === 1) return "…";
-  const chars = [...value];
   let kept = "";
-  for (const char of chars) {
-    if (columnWidth(kept + char) > width - 1) break;
-    kept += char;
+  for (const { segment } of GRAPHEME_SEGMENTER.segment(value)) {
+    if (columnWidth(kept + segment) > width - 1) break;
+    kept += segment;
   }
   return `${kept}…`;
 }

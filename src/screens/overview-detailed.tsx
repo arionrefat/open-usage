@@ -1,6 +1,6 @@
 import { formatTokens, sparkline, stackedBar, sum } from "../lib/chart";
 import { padEnd, padStart } from "../lib/text";
-import { COLORS, PROVIDER_COLORS } from "../theme";
+import { COLORS, PROVIDER_COLORS, THRESHOLDS } from "../theme";
 import { PROVIDER_IDS, STATUS_PRESENTATION, type ProviderId, type UsageSnapshot } from "../data/types";
 import { isProviderLive, type AppState } from "../state/app-state";
 import type { AppActions } from "../state/actions";
@@ -12,7 +12,7 @@ const CARD_MAX_WIDTH = 44;
 const CARD_GAP = 2;
 const DAY_LABEL_WIDTH = 9;
 const DAY_TOTAL_WIDTH = 8;
-const SESSION_TOKENS_PER_SESSION = 22;
+const MIN_COLUMN_WIDTH = 20;
 
 interface OverviewDetailedProps {
   state: AppState;
@@ -24,7 +24,16 @@ interface OverviewDetailedProps {
 
 function columnWidthFor(width: number, count: number): number {
   if (count <= 0) return width;
-  return Math.max(20, Math.min(CARD_MAX_WIDTH, Math.floor((width - CARD_GAP * (count - 1)) / count)));
+  if (width < MIN_COLUMN_WIDTH * count + CARD_GAP * (count - 1)) return width;
+  return Math.min(CARD_MAX_WIDTH, Math.floor((width - CARD_GAP * (count - 1)) / count));
+}
+
+function columnsStack(width: number, count: number): boolean {
+  return count > 1 && width < MIN_COLUMN_WIDTH * count + CARD_GAP * (count - 1);
+}
+
+function ColumnGap({ isStacked }: { isStacked: boolean }) {
+  return isStacked ? <Spacer /> : <box width={CARD_GAP} flexShrink={0} />;
 }
 
 function DisconnectedNotice({
@@ -130,6 +139,7 @@ function SummaryTrio({
   width,
 }: OverviewDetailedProps) {
   const column = columnWidthFor(width, 3);
+  const isStacked = columnsStack(width, 3);
   const worstId = derived.worstId;
   const bestId = derived.bestId;
   const worstPercent = worstId ? (snapshot.providers[worstId].scopes[state.scope].percent ?? 0) : 0;
@@ -138,13 +148,18 @@ function SummaryTrio({
   const isOverBudget = burn !== null && burn.projectedPercent > 100;
 
   return (
-    <box flexDirection="row" flexShrink={0}>
+    <box flexDirection={isStacked ? "column" : "row"} flexShrink={0}>
       <box flexDirection="column" flexShrink={0} width={column}>
         <Line
           segments={[
             {
               text: "▲ closest to running out",
-              color: worstPercent >= 85 ? COLORS.danger : worstPercent >= 70 ? COLORS.warn : COLORS.textGhost,
+               color:
+                 worstPercent >= THRESHOLDS.danger
+                   ? COLORS.danger
+                   : worstPercent >= THRESHOLDS.warn
+                     ? COLORS.warn
+                     : COLORS.textGhost,
               isBold: true,
             },
           ]}
@@ -166,7 +181,7 @@ function SummaryTrio({
           ]}
         />
       </box>
-      <box width={CARD_GAP} flexShrink={0} />
+      <ColumnGap isStacked={isStacked} />
       <box flexDirection="column" flexShrink={0} width={column}>
         <Line
           segments={[
@@ -198,7 +213,7 @@ function SummaryTrio({
           </>
         )}
       </box>
-      <box width={CARD_GAP} flexShrink={0} />
+      <ColumnGap isStacked={isStacked} />
       <box flexDirection="column" flexShrink={0} width={column}>
         <Line
           segments={[
@@ -228,6 +243,7 @@ function SummaryTrio({
 
 function UsageShare({ derived, snapshot, width }: OverviewDetailedProps) {
   const column = columnWidthFor(width, Math.max(1, derived.visibleIds.length));
+  const isStacked = columnsStack(width, derived.visibleIds.length);
   const total = derived.visibleTotal || 1;
 
   return (
@@ -240,12 +256,12 @@ function UsageShare({ derived, snapshot, width }: OverviewDetailedProps) {
         ]}
       />
       <Spacer />
-      <box flexDirection="row" flexShrink={0}>
+      <box flexDirection={isStacked ? "column" : "row"} flexShrink={0}>
         {derived.visibleIds.map((id, index) => {
           const tokens = derived.totals[id];
           return (
-            <box key={id} flexDirection="row" flexShrink={0}>
-              {index > 0 ? <box width={CARD_GAP} flexShrink={0} /> : null}
+            <box key={id} flexDirection={isStacked ? "column" : "row"} flexShrink={0}>
+              {index > 0 ? <ColumnGap isStacked={isStacked} /> : null}
               <box flexDirection="column" flexShrink={0} width={column}>
                 <Line
                   segments={[
@@ -257,11 +273,6 @@ function UsageShare({ derived, snapshot, width }: OverviewDetailedProps) {
                 <Line
                   segments={[
                     { text: `${formatTokens(tokens)} tokens`, color: COLORS.textGhost },
-                    { text: " · ", color: COLORS.rule },
-                    {
-                      text: `${Math.max(1, Math.round(tokens / SESSION_TOKENS_PER_SESSION))} sessions`,
-                      color: COLORS.textGhost,
-                    },
                   ]}
                 />
               </box>
@@ -275,6 +286,8 @@ function UsageShare({ derived, snapshot, width }: OverviewDetailedProps) {
 
 function DailySplit({ derived, snapshot, width }: OverviewDetailedProps) {
   const barWidth = Math.max(10, width - DAY_LABEL_WIDTH - DAY_TOTAL_WIDTH);
+  const dates = snapshot.dailyDates.slice(-7);
+  const dateOffset = snapshot.dailyDates.length - dates.length;
 
   return (
     <box flexDirection="column" flexShrink={0}>
@@ -286,15 +299,20 @@ function DailySplit({ derived, snapshot, width }: OverviewDetailedProps) {
         ]}
       />
       <Spacer />
-      {snapshot.dayLabels.map((label, index) => {
-        const dayIndex = snapshot.dayLabelOffset + index;
+      {dates.map((date, index) => {
+        const dayIndex = dateOffset + index;
+        const label = new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
+          weekday: "short",
+          day: "numeric",
+          timeZone: "UTC",
+        });
         const parts = derived.visibleIds.map((id) => ({
           value: snapshot.providers[id].series.daily[dayIndex] ?? 0,
           color: PROVIDER_COLORS[id],
         }));
         const dayTotal = sum(parts.map((part) => part.value));
         return (
-          <text key={label}>
+          <text key={date}>
             <span fg={COLORS.textFaint}>{padEnd(label, DAY_LABEL_WIDTH)}</span>
             {stackedBar(parts, barWidth).map((segment, segmentIndex) => (
               <span key={`seg-${segmentIndex}`} fg={segment.color}>
@@ -322,13 +340,14 @@ function DailySplit({ derived, snapshot, width }: OverviewDetailedProps) {
 export function OverviewDetailed(props: OverviewDetailedProps) {
   const { state, derived, snapshot, width } = props;
   const cardWidth = columnWidthFor(width, Math.max(1, derived.visibleIds.length));
+  const cardsStack = columnsStack(width, derived.visibleIds.length);
 
   return (
     <box flexDirection="column" flexShrink={0}>
-      <box flexDirection="row" flexShrink={0}>
+      <box flexDirection={cardsStack ? "column" : "row"} flexShrink={0}>
         {derived.visibleIds.map((id, index) => (
-          <box key={id} flexDirection="row" flexShrink={0}>
-            {index > 0 ? <box width={CARD_GAP} flexShrink={0} /> : null}
+          <box key={id} flexDirection={cardsStack ? "column" : "row"} flexShrink={0}>
+            {index > 0 ? <ColumnGap isStacked={cardsStack} /> : null}
             <ProviderCard
               id={id}
               state={state}

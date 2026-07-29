@@ -25,12 +25,10 @@ export interface ProviderMeta {
   requirement: string;
   /** Where limits are read from once connected. */
   source: string;
-  /** Placeholder credential used when a key is pasted from the keychain. */
-  sampleCredential: string;
 }
 
 export interface ProviderConnection {
-  /** false hides the provider everywhere without dropping its credential. */
+  /** false hides the provider from aggregate views without dropping its credential. */
   isEnabled: boolean;
   status: ConnectionStatus;
   /** Masked credential, or an empty string when nothing is stored. */
@@ -112,12 +110,10 @@ export interface ProviderUsage {
 
 export interface UsageSnapshot {
   providers: Record<ProviderId, ProviderUsage>;
-  /** Axis captions for the daily-split chart, oldest first. */
-  dayLabels: string[];
-  /** Index into `series.daily` that `dayLabels[0]` refers to. */
-  dayLabelOffset: number;
+  /** ISO dates aligned with every entry in `series.daily`, oldest first. */
+  dailyDates: string[];
   hourlyAxis: [string, string, string];
-  dailyAxis: [string, string, string];
+  fetchedAt: number;
   /** Explains why the per-provider windows are not directly comparable. */
   windowNote: string;
 }
@@ -131,8 +127,8 @@ export interface UsageProvider {
   listMeta(): Record<ProviderId, ProviderMeta>;
   initialConnections(): Record<ProviderId, ProviderConnection>;
   readSnapshot(): UsageSnapshot;
-  refresh(): Promise<UsageSnapshot>;
-  /** Masks a pasted secret for display; the raw value never leaves the adapter. */
+  refresh(signal?: AbortSignal): Promise<UsageSnapshot>;
+  /** Masks a pasted secret before it is retained for display. */
   maskCredential(raw: string): string;
 }
 

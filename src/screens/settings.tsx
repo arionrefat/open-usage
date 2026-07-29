@@ -1,4 +1,4 @@
-import { COLOR_MODE_LABEL, CONFIG_PATH, POLL_INTERVAL_SECONDS } from "../config";
+import { COLOR_MODE_LABEL, POLL_INTERVAL_SECONDS } from "../config";
 import { padEnd } from "../lib/text";
 import { COLORS, PROVIDER_COLORS, THRESHOLDS } from "../theme";
 import { PROVIDER_IDS, STATUS_PRESENTATION, type ProviderId, type UsageSnapshot } from "../data/types";
@@ -57,11 +57,13 @@ function ProviderRow({
           {
             text: connection.isEnabled ? "[×] enabled" : "[ ] hidden",
             color: connection.isEnabled ? COLORS.text : COLORS.textFaint,
+            onClick: () => actions.settingsToggle(id),
           },
           { text: "   " },
           {
             text: padEnd(`${status.dot} ${status.label}`, STATUS_COLUMN),
             color: connection.isEnabled ? status.color : COLORS.textFaint,
+            onClick: () => actions.settingsConnect(id),
           },
         ]}
       />
@@ -74,6 +76,7 @@ function ProviderRow({
           {
             text: connection.credential || "— none stored —",
             color: connection.credential ? COLORS.textMuted : COLORS.textFaint,
+            onClick: () => actions.settingsConnect(id),
           },
         ]}
         right={[{ text: connection.note, color: COLORS.textGhost }]}
@@ -117,6 +120,7 @@ function SettingLine({
 
 export function Settings(props: SettingsProps) {
   const { state, width, actions } = props;
+  const selectedId = PROVIDER_IDS[state.settingsCursor]!;
 
   return (
     <box flexDirection="column" flexShrink={0}>
@@ -127,20 +131,20 @@ export function Settings(props: SettingsProps) {
           { text: " ▏ ", color: COLORS.rule },
           { text: "providers, credentials, subscriptions", color: COLORS.textFaint },
         ]}
-        right={[{ text: CONFIG_PATH, color: COLORS.textGhost }]}
+        right={[{ text: "changes apply for this session", color: COLORS.textGhost }]}
       />
       <Spacer />
       <SplitLine
         width={width}
         left={[{ text: "providers", color: COLORS.textDim }]}
         right={[
-          ...keyHint("space", "show / hide"),
+          ...keyHint("space", "show / hide", () => actions.settingsToggle(selectedId)),
           { text: "  " },
-          ...keyHint("↵", "cycle status"),
+          ...keyHint("↵", "connect / replace", () => actions.settingsConnect(selectedId)),
           { text: "  " },
-          ...keyHint("p", "paste key"),
+          ...keyHint("p", "paste key", () => actions.settingsConnect(selectedId)),
           { text: "  " },
-          ...keyHint("d", "disconnect"),
+          ...keyHint("d", "disconnect", () => actions.settingsDisconnect(selectedId)),
         ]}
       />
       <Rule width={width} />
@@ -160,7 +164,7 @@ export function Settings(props: SettingsProps) {
       />
       <SettingLine label="poll interval" value={`${POLL_INTERVAL_SECONDS}s`} hint="r forces a refresh" />
       <SettingLine
-        label="warn threshold"
+        label="danger threshold"
         value={`${THRESHOLDS.danger}%`}
         hint="bars turn red past this"
       />

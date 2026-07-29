@@ -80,109 +80,11 @@ export function areaChart(
   return rows;
 }
 
-/**
- * Hole radius as a share of the ring's. Matches the design's CSS mask, whose
- * `transparent 45%` of a farthest-corner gradient resolves to 0.45 * √2.
- */
-export const DONUT_INNER_RADIUS = 0.636;
-
-/**
- * Quadrant glyphs indexed by a 4-bit mask of which sub-cells the foreground
- * paints: 1 upper-left, 2 upper-right, 4 lower-left, 8 lower-right.
- */
-const QUADRANT_GLYPHS = [
-  " ", "▘", "▝", "▀",
-  "▖", "▌", "▞", "▛",
-  "▗", "▚", "▐", "▜",
-  "▄", "▙", "▟", "█",
-] as const;
-
-/**
- * Folds four sub-cell colours into one cell. A cell carries only a foreground
- * and a background, so the two most common colours win and a rarer third — which
- * only arises where two slices meet — is drawn as the foreground.
- */
-function packQuadrants(samples: string[]): Cell {
-  const counts = new Map<string, number>();
-  for (const sample of samples) counts.set(sample, (counts.get(sample) ?? 0) + 1);
-  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([color]) => color);
-  const color = ranked[0] ?? COLORS.bg;
-  const background = ranked[1] ?? color;
-
-  let mask = 0;
-  samples.forEach((sample, index) => {
-    if (sample !== background) mask |= 1 << index;
-  });
-  return { char: QUADRANT_GLYPHS[mask] ?? " ", color, background };
-}
-
-/**
- * Character-cell donut chart. Each cell is sampled as a 2x2 grid and drawn with
- * a quadrant glyph, which halves the horizontal step of the ring's edge against
- * the one sample per column a half-block allows. `values` and `colors` are
- * index-aligned.
- */
-export function donutChart(
-  values: number[],
-  colors: string[],
-  width: number,
-  height: number,
-): ChartRow[] {
-  // Measured in half-cell widths, where a sub-cell is 1 unit wide and 2 tall.
-  const sampleColumns = width * 2;
-  const sampleRows = height * 2;
-  const centerX = (sampleColumns - 1) / 2;
-  const centerY = sampleRows - 1;
-  const radius = Math.min(centerX, centerY);
-  const total = values.reduce((a, b) => a + b, 0);
-
-  const cumulative: number[] = [];
-  let running = 0;
-  for (const value of values) {
-    running += value;
-    cumulative.push(running);
-  }
-
-  const sampleColor = (sampleX: number, sampleY: number): string => {
-    const nx = (sampleX - centerX) / radius;
-    const ny = (sampleY * 2 - centerY) / radius;
-    const distance = Math.sqrt(nx * nx + ny * ny);
-    if (distance > 1 || distance < DONUT_INNER_RADIUS) return COLORS.bg;
-    if (total <= 0) return COLORS.track;
-
-    let angle = Math.atan2(nx, -ny);
-    if (angle < 0) angle += Math.PI * 2;
-    const position = (angle / (Math.PI * 2)) * total;
-    let index = 0;
-    while (index < cumulative.length - 1 && position > (cumulative[index] ?? 0)) index++;
-    return colors[index] ?? COLORS.track;
-  };
-
-  const rows: ChartRow[] = [];
-  for (let row = 0; row < height; row++) {
-    const cells: Cell[] = [];
-    for (let column = 0; column < width; column++) {
-      const x = column * 2;
-      const y = row * 2;
-      cells.push(
-        packQuadrants([
-          sampleColor(x, y),
-          sampleColor(x + 1, y),
-          sampleColor(x, y + 1),
-          sampleColor(x + 1, y + 1),
-        ]),
-      );
-    }
-    rows.push({ segments: mergeCells(cells) });
-  }
-  return rows;
-}
-
 /** Single-line sparkline using the eighth-block ramp. */
 export function sparkline(values: number[], width: number): string {
   const max = Math.max(1, ...values);
   return resample(values, width)
-    .map((value) => BLOCK_RAMP[Math.max(1, Math.round((value / max) * 8))])
+    .map((value) => BLOCK_RAMP[Math.max(0, Math.min(8, Math.round((value / max) * 8)))])
     .join("");
 }
 
@@ -197,12 +99,18 @@ export function stackedBar(
   width: number,
   char = "▀",
 ): ChartSegment[] {
-  const total = parts.reduce((a, p) => a + p.value, 0);
+  if (width <= 0) return [];
+  const values = parts.map((part) => Math.max(0, part.value));
+  const total = sum(values);
+  if (total <= 0) return [{ text: char.repeat(width), color: COLORS.track }];
+
   const cells: Cell[] = [];
   let used = 0;
+  let cumulative = 0;
   parts.forEach((part, index) => {
-    const isLast = index === parts.length - 1;
-    const cellCount = isLast ? width - used : Math.round((part.value / (total || 1)) * width);
+    cumulative += values[index] ?? 0;
+    const boundary = index === parts.length - 1 ? width : Math.round((cumulative / total) * width);
+    const cellCount = Math.max(0, boundary - used);
     used += cellCount;
     for (let i = 0; i < cellCount; i++) cells.push({ char, color: part.color });
   });
