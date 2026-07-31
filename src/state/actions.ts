@@ -27,7 +27,10 @@ export interface AppActions {
   onboardingContinue(): void;
   onboardingFinish(): void;
   settingsToggle(id: ProviderId): void;
-  settingsConnect(id: ProviderId): void;
+  /** Cycles active → expired → none → active in place, adjusting the credential. */
+  settingsCycleStatus(id: ProviderId): void;
+  /** Applies a fresh (mock) credential and revives the provider instantly. */
+  settingsPasteKey(id: ProviderId): void;
   settingsDisconnect(id: ProviderId): void;
   quit(): void;
 }

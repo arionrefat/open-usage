@@ -47,11 +47,15 @@ export function CardLimitMeter({ limit, width, accentColor, useSeverityColors }:
   );
 }
 
-const DETAIL_VALUE_COLUMN = 16;
+/** Design widths: 12ch fits "NN% used", custom readouts get 14ch. */
+const DETAIL_PERCENT_COLUMN = 12;
+const DETAIL_CUSTOM_COLUMN = 14;
 
 /** Full-width meter used on a provider's own screen. */
 export function DetailLimitMeter({ limit, width, accentColor, useSeverityColors }: LimitMeterProps) {
   const meter = meterFor(limit, width, accentColor, useSeverityColors);
+  const hasCustomValue = limit.detailValueLabel !== undefined || limit.percent === null;
+  const valueColumn = hasCustomValue ? DETAIL_CUSTOM_COLUMN : DETAIL_PERCENT_COLUMN;
   const value =
     limit.detailValueLabel ??
     (limit.percent === null ? (limit.valueLabel ?? "—") : `${meter.percentLabel} used`);
@@ -64,7 +68,7 @@ export function DetailLimitMeter({ limit, width, accentColor, useSeverityColors 
         left={[{ text: limit.detailLabel ?? limit.label, color: COLORS.text }]}
         right={[
           { text: limit.reset, color: COLORS.textFaint },
-          { text: padStart(value, DETAIL_VALUE_COLUMN), color: valueColor },
+          { text: padStart(value, valueColumn), color: valueColor },
         ]}
       />
       <Line segments={barSegments(meter)} />

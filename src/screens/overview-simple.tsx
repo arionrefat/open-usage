@@ -1,8 +1,9 @@
-import type { ChartRow } from "../lib/chart";
+import { planChart, type PlanChart } from "../lib/chart";
 import { buildMeter, emptyMeter } from "../lib/meter";
-import { columnWidth, padEnd, truncate } from "../lib/text";
-import { BLOCK_RAMP, COLORS, PROVIDER_COLORS, THRESHOLDS } from "../theme";
+import { columnWidth, padEnd } from "../lib/text";
+import { COLORS, PROVIDER_COLORS, THRESHOLDS } from "../theme";
 import {
+  PROVIDER_IDS,
   STATUS_PRESENTATION,
   type ProviderId,
   type ScopeKey,
@@ -15,8 +16,15 @@ import { Chart, Line, Rule, SplitLine, Spacer, leftClick, type Segment } from ".
 import { toggleChip, toggleSegments, type ToggleOption } from "../components/toggle";
 
 const PERCENT_COLUMN = 7;
-const HISTOGRAM_MIN_CONTENT_WIDTH = 88;
-const HISTOGRAM_GAP = 4;
+const LEGEND_BAR_MAX_WIDTH = 46;
+const PLAN_CHART_MIN_CONTENT_WIDTH = 88;
+const PLAN_CHART_GAP = 4;
+
+const PLAN_LABELS: Record<ProviderId, string> = {
+  cl: "claude",
+  cx: "codex",
+  go: "go",
+};
 
 interface OverviewSimpleProps {
   state: AppState;
@@ -35,14 +43,15 @@ interface LegendEntry {
   fillColor: string;
   window: string;
   reset: string;
-  share: string;
+  slice: string;
 }
 
 function buildLegend(
   id: ProviderId,
   state: AppState,
-  derived: DerivedState,
   snapshot: UsageSnapshot,
+  consumption: Record<ProviderId, number>,
+  consumptionTotal: number,
   barWidth: number,
 ): LegendEntry {
   const connection = state.connections[id];
@@ -72,9 +81,9 @@ function buildLegend(
       : !connection.isEnabled
         ? "space in settings to show it again"
         : connection.note,
-    share:
-      hasCap && derived.scopeTotal > 0
-        ? `${Math.round((derived.scopeConsumption[id] / derived.scopeTotal) * 100)}%`
+    slice:
+      hasCap && consumptionTotal > 0
+        ? `${Math.round((consumption[id] / consumptionTotal) * 100)}%`
         : "—",
   };
 }
@@ -100,7 +109,7 @@ function ProviderLegend({
           { text: "▎", color: PROVIDER_COLORS[id] },
           { text: name, color: COLORS.textBright, isBold: true },
         ]}
-        right={[{ text: `${entry.share} share of active limits`, color: COLORS.textGhost }]}
+        right={[{ text: `${entry.slice} of all consumption`, color: COLORS.textGhost }]}
       />
       <Line
         segments={[
@@ -110,6 +119,7 @@ function ProviderLegend({
         ]}
       />
       <Line
+        width={width}
         segments={[
           { text: " ".repeat(PERCENT_COLUMN) },
           { text: entry.window, color: COLORS.textGhost },
@@ -121,127 +131,46 @@ function ProviderLegend({
   );
 }
 
-const HISTOGRAM_MAX_WIDTH = 34;
-const HISTOGRAM_MIN_WIDTH = 22;
-const HISTOGRAM_WIDTH_RATIO = 0.26;
-const HISTOGRAM_AXIS_WIDTH = 4;
-const HISTOGRAM_PLOT_HEIGHT = 10;
-const HISTOGRAM_BAR_MAX_WIDTH = 6;
-
-const HISTOGRAM_LABELS: Record<ProviderId, string> = {
-  cl: "claude",
-  cx: "codex",
-  go: "go",
-};
-
-function histogramWidth(contentWidth: number): number {
-  const raw = Math.round(contentWidth * HISTOGRAM_WIDTH_RATIO);
-  return Math.max(HISTOGRAM_MIN_WIDTH, Math.min(HISTOGRAM_MAX_WIDTH, raw));
-}
-
-function center(value: string, width: number): string {
-  const clipped = truncate(value, width);
-  const left = Math.floor((width - columnWidth(clipped)) / 2);
-  return `${" ".repeat(left)}${padEnd(clipped, width - left)}`;
-}
-
-function histogramRows(
-  entries: Array<{ id: ProviderId; percent: number | null }>,
-  width: number,
-): ChartRow[] {
-  const plotWidth = width - HISTOGRAM_AXIS_WIDTH;
-  const baseSlotWidth = Math.floor(plotWidth / entries.length);
-  const extraColumns = plotWidth % entries.length;
-  const slotWidths = entries.map((_, index) => baseSlotWidth + (index < extraColumns ? 1 : 0));
-  const rows: ChartRow[] = [];
-
-  for (let row = 0; row < HISTOGRAM_PLOT_HEIGHT; row++) {
-    const tick = row === 0 ? "100" : row === HISTOGRAM_PLOT_HEIGHT / 2 ? " 50" : "   ";
-    const segments: ChartRow["segments"] = [
-      { text: tick, color: COLORS.textGhost },
-      { text: tick.trim() ? "┤" : "│", color: COLORS.divider },
-    ];
-
-    entries.forEach((entry, index) => {
-      const slotWidth = slotWidths[index] ?? 0;
-      const barWidth = Math.max(1, Math.min(HISTOGRAM_BAR_MAX_WIDTH, slotWidth - 2));
-      const left = Math.floor((slotWidth - barWidth) / 2);
-      const right = slotWidth - barWidth - left;
-      const scaled = ((entry.percent ?? 0) / 100) * HISTOGRAM_PLOT_HEIGHT;
-      const level = scaled - (HISTOGRAM_PLOT_HEIGHT - row - 1);
-      const block =
-        entry.percent === null || level <= 0
-          ? " "
-          : level >= 1
-            ? "█"
-            : BLOCK_RAMP[Math.max(1, Math.min(8, Math.round(level * 8)))]!;
-
-      segments.push(
-        { text: " ".repeat(left), color: COLORS.bg },
-        {
-          text: block.repeat(barWidth),
-          color: entry.percent === null ? COLORS.track : PROVIDER_COLORS[entry.id],
-        },
-        { text: " ".repeat(right), color: COLORS.bg },
-      );
-    });
-    rows.push({ segments });
+/** Greedy word wrap; the design's lead line occupies a fixed 39ch column. */
+function wrapWords(text: string, width: number): string[] {
+  const lines: string[] = [];
+  let current = "";
+  for (const word of text.split(" ")) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (current && columnWidth(candidate) > width) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
   }
-
-  rows.push({
-    segments: [
-      { text: "  0└", color: COLORS.textGhost },
-      { text: "─".repeat(plotWidth), color: COLORS.divider },
-    ],
-  });
-  rows.push({
-    segments: [
-      { text: " ".repeat(HISTOGRAM_AXIS_WIDTH), color: COLORS.bg },
-      ...entries.map((entry, index) => ({
-        text: center(HISTOGRAM_LABELS[entry.id], slotWidths[index] ?? 0),
-        color: COLORS.textMuted,
-      })),
-    ],
-  });
-  rows.push({
-    segments: [
-      { text: " ".repeat(HISTOGRAM_AXIS_WIDTH), color: COLORS.bg },
-      ...entries.map((entry, index) => ({
-        text: center(entry.percent === null ? "—" : `${entry.percent}%`, slotWidths[index] ?? 0),
-        color: entry.percent === null ? COLORS.textFaint : PROVIDER_COLORS[entry.id],
-      })),
-    ],
-  });
-  return rows;
+  if (current) lines.push(current);
+  return lines;
 }
 
-function HistogramSummary({
-  state,
-  derived,
-  snapshot,
-  width,
-}: {
-  state: AppState;
-  derived: DerivedState;
-  snapshot: UsageSnapshot;
-  width: number;
-}) {
-  const entries = derived.visibleIds.map((id) => ({
-    id,
-    percent: isProviderLive(state.connections[id])
-      ? snapshot.providers[id].scopes[state.scope].percent
-      : null,
-  }));
-
+function PlanUsage({ chart, leadLine }: { chart: PlanChart; leadLine: string }) {
   return (
-    <box flexDirection="column" flexShrink={0} width={width}>
+    <box flexDirection="column" flexShrink={0} width={chart.width}>
       <SplitLine
-        width={width}
-        left={[{ text: "plan usage", color: COLORS.text, isBold: true }]}
+        width={chart.width}
+        left={[{ text: "plan usage", color: COLORS.textMuted, isBold: true }]}
         right={[{ text: "%", color: COLORS.textGhost }]}
       />
       <Spacer />
-      <Chart rows={histogramRows(entries, width)} />
+      <Chart rows={chart.rows} />
+      <Line segments={[{ text: chart.baseline, color: COLORS.rule }]} />
+      <Line segments={chart.names.map((label) => ({ text: label.text, color: label.color }))} />
+      <Line
+        segments={chart.values.map((label) => ({
+          text: label.text,
+          color: label.color,
+          isBold: true,
+        }))}
+      />
+      <Spacer />
+      {wrapWords(leadLine, chart.width).map((line, index) => (
+        <Line key={`lead-${index}`} segments={[{ text: line, color: COLORS.textFaint }]} />
+      ))}
     </box>
   );
 }
@@ -254,10 +183,41 @@ export function OverviewSimple({
   scopeTitle,
   actions,
 }: OverviewSimpleProps) {
-  const showHistogram = width >= HISTOGRAM_MIN_CONTENT_WIDTH && derived.visibleIds.length > 0;
-  const summaryWidth = histogramWidth(width);
-  const legendWidth = showHistogram ? width - summaryWidth - HISTOGRAM_GAP : width;
-  const barWidth = Math.max(10, legendWidth - PERCENT_COLUMN);
+  // The design plots all three providers regardless of filter or visibility;
+  // consumption counts live providers only. Candidate to lift into derive.ts.
+  const consumption = Object.fromEntries(
+    PROVIDER_IDS.map((id) => [
+      id,
+      isProviderLive(state.connections[id])
+        ? (snapshot.providers[id].scopes[state.scope].percent ?? 0)
+        : 0,
+    ]),
+  ) as Record<ProviderId, number>;
+  const consumptionTotal = PROVIDER_IDS.reduce((acc, id) => acc + consumption[id], 0);
+
+  const chart = planChart(
+    PROVIDER_IDS.map((id) => {
+      const scope = snapshot.providers[id].scopes[state.scope];
+      const isLive = isProviderLive(state.connections[id]);
+      return {
+        value: isLive && scope.percent !== null ? scope.percent : null,
+        color: PROVIDER_COLORS[id],
+        label: PLAN_LABELS[id],
+      };
+    }),
+  );
+
+  const lead = PROVIDER_IDS.reduce((a, b) => (consumption[b] > consumption[a] ? b : a));
+  const leadShare = consumptionTotal
+    ? `${Math.round((consumption[lead] / consumptionTotal) * 100)}%`
+    : "—";
+  const leadLine = consumptionTotal
+    ? `${leadShare} of everything metered in this window went to ${snapshot.providers[lead].meta.name}`
+    : "nothing connected — 5 settings to enable a provider";
+
+  const showChart = width >= PLAN_CHART_MIN_CONTENT_WIDTH;
+  const legendWidth = showChart ? width - chart.width - PLAN_CHART_GAP : width;
+  const barWidth = Math.max(10, Math.min(LEGEND_BAR_MAX_WIDTH, legendWidth - PERCENT_COLUMN));
 
   const worstId = derived.worstId;
   const bestId = derived.bestId;
@@ -275,41 +235,32 @@ export function OverviewSimple({
         right={[
           { text: scopeTitle, color: COLORS.textMuted, isBold: true },
           { text: " ▏ ", color: COLORS.rule },
-          { text: "relative usage across active plan limits", color: COLORS.textGhost },
+          { text: "share of limit consumed across providers", color: COLORS.textGhost },
         ]}
       />
       <Rule width={width} />
       <Spacer />
 
       <box flexDirection="row" flexShrink={0}>
-        {showHistogram ? (
-          <HistogramSummary
-            state={state}
-            derived={derived}
-            snapshot={snapshot}
-            width={summaryWidth}
-          />
-        ) : null}
-        {showHistogram ? <box width={HISTOGRAM_GAP} flexShrink={0} /> : null}
+        {showChart ? <PlanUsage chart={chart} leadLine={leadLine} /> : null}
+        {showChart ? <box width={PLAN_CHART_GAP} flexShrink={0} /> : null}
         <box flexDirection="column" flexShrink={0} width={legendWidth}>
-          {derived.visibleIds.map((id, index) => (
+          {PROVIDER_IDS.map((id, index) => (
             <box key={id} flexDirection="column" flexShrink={0}>
               {index > 0 ? <Spacer /> : null}
               <ProviderLegend
                 id={id}
                 name={snapshot.providers[id].meta.name}
-                entry={buildLegend(id, state, derived, snapshot, barWidth)}
+                entry={buildLegend(id, state, snapshot, consumption, consumptionTotal, barWidth)}
                 width={legendWidth}
                 onSelect={() => actions.openProvider(id)}
               />
             </box>
           ))}
-          {derived.visibleIds.length === 0 ? (
-            <Line segments={[{ text: "no providers match the current filter", color: COLORS.textFaint }]} />
-          ) : null}
           <Spacer />
           <Rule width={legendWidth} />
           <Line
+            width={legendWidth}
             segments={[
               {
                 text: "▲ ",
@@ -333,6 +284,7 @@ export function OverviewSimple({
             ]}
           />
           <Line
+            width={legendWidth}
             segments={[
               { text: "→ ", color: COLORS.ok },
               {

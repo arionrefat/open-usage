@@ -14,7 +14,7 @@ const RANGE_NAMES: Record<RangeKey, string> = {
   "7d": "last 7 days",
   "30d": "last 30 days",
   month: "billing month",
-  all: "all available history",
+  all: "all time",
 };
 
 const RANGE_LABELS: Record<RangeKey, string> = {
@@ -33,7 +33,7 @@ export interface DerivedState {
   enabledCount: number;
   /** Enabled but unusable — expired or missing credential. */
   disconnectedIds: ProviderId[];
-  /** Live providers with any published limit at or past the danger threshold. */
+  /** Live providers at or past the danger threshold in the current scope. */
   hotIds: ProviderId[];
   alertText: string;
   alertColor: string;
@@ -127,10 +127,8 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
         (snapshot.providers[a].scopes[state.scope].percent ?? 0),
     );
 
-  const hotIds = liveIds.filter((id) =>
-    snapshot.providers[id].limits.some(
-      (limit) => limit.percent !== null && limit.percent >= THRESHOLDS.danger,
-    ),
+  const hotIds = liveIds.filter(
+    (id) => (snapshot.providers[id].scopes[state.scope].percent ?? 0) >= THRESHOLDS.danger,
   );
   const alertCount = hotIds.length + disconnectedIds.length;
 

@@ -1,5 +1,5 @@
 import { formatTokens, sparkline, stackedBar, sum } from "../lib/chart";
-import { padEnd, padStart } from "../lib/text";
+import { columnWidth, padEnd } from "../lib/text";
 import { COLORS, PROVIDER_COLORS, THRESHOLDS } from "../theme";
 import { PROVIDER_IDS, STATUS_PRESENTATION, type ProviderId, type UsageSnapshot } from "../data/types";
 import { isProviderLive, type AppState } from "../state/app-state";
@@ -11,8 +11,8 @@ import { Line, Rule, SplitLine, Spacer, leftClick } from "../components/primitiv
 const CARD_MAX_WIDTH = 44;
 const CARD_GAP = 2;
 const DAY_LABEL_WIDTH = 9;
-const DAY_TOTAL_WIDTH = 8;
 const MIN_COLUMN_WIDTH = 20;
+const SPARKLINE_WIDTH = 40;
 
 interface OverviewDetailedProps {
   state: AppState;
@@ -269,10 +269,20 @@ function UsageShare({ derived, snapshot, width }: OverviewDetailedProps) {
                     { text: `  ${snapshot.providers[id].meta.name}`, color: COLORS.textFaint },
                   ]}
                 />
-                <Line segments={[{ text: sparkline(derived.series[id], column), color: PROVIDER_COLORS[id] }]} />
                 <Line
                   segments={[
-                    { text: `${formatTokens(tokens)} tokens`, color: COLORS.textGhost },
+                    {
+                      text: sparkline(derived.series[id], Math.min(SPARKLINE_WIDTH, column)),
+                      color: PROVIDER_COLORS[id],
+                    },
+                  ]}
+                />
+                <Line
+                  width={column}
+                  segments={[
+                    { text: `${formatTokens(tokens)} tokens `, color: COLORS.textGhost },
+                    { text: "·", color: COLORS.rule },
+                    { text: ` ${Math.max(1, Math.round(tokens / 22))} sessions`, color: COLORS.textGhost },
                   ]}
                 />
               </box>
@@ -285,9 +295,24 @@ function UsageShare({ derived, snapshot, width }: OverviewDetailedProps) {
 }
 
 function DailySplit({ derived, snapshot, width }: OverviewDetailedProps) {
-  const barWidth = Math.max(10, width - DAY_LABEL_WIDTH - DAY_TOTAL_WIDTH);
   const dates = snapshot.dailyDates.slice(-7);
   const dateOffset = snapshot.dailyDates.length - dates.length;
+  const days = dates.map((date, index) => {
+    const dayIndex = dateOffset + index;
+    const label = new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
+      weekday: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
+    const parts = derived.visibleIds.map((id) => ({
+      value: snapshot.providers[id].series.daily[dayIndex] ?? 0,
+      color: PROVIDER_COLORS[id],
+    }));
+    return { date, label, parts, total: formatTokens(sum(parts.map((part) => part.value))) };
+  });
+  // The design left-aligns totals one column after the bar.
+  const totalWidth = Math.max(0, ...days.map((day) => columnWidth(day.total)));
+  const barWidth = Math.max(10, width - DAY_LABEL_WIDTH - 1 - totalWidth);
 
   return (
     <box flexDirection="column" flexShrink={0}>
@@ -299,30 +324,17 @@ function DailySplit({ derived, snapshot, width }: OverviewDetailedProps) {
         ]}
       />
       <Spacer />
-      {dates.map((date, index) => {
-        const dayIndex = dateOffset + index;
-        const label = new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
-          weekday: "short",
-          day: "numeric",
-          timeZone: "UTC",
-        });
-        const parts = derived.visibleIds.map((id) => ({
-          value: snapshot.providers[id].series.daily[dayIndex] ?? 0,
-          color: PROVIDER_COLORS[id],
-        }));
-        const dayTotal = sum(parts.map((part) => part.value));
-        return (
-          <text key={date}>
-            <span fg={COLORS.textFaint}>{padEnd(label, DAY_LABEL_WIDTH)}</span>
-            {stackedBar(parts, barWidth).map((segment, segmentIndex) => (
-              <span key={`seg-${segmentIndex}`} fg={segment.color}>
-                {segment.text}
-              </span>
-            ))}
-            <span fg={COLORS.textGhost}>{padStart(formatTokens(dayTotal), DAY_TOTAL_WIDTH)}</span>
-          </text>
-        );
-      })}
+      {days.map((day) => (
+        <text key={day.date}>
+          <span fg={COLORS.textFaint}>{padEnd(day.label, DAY_LABEL_WIDTH)}</span>
+          {stackedBar(day.parts, barWidth).map((segment, segmentIndex) => (
+            <span key={`seg-${segmentIndex}`} fg={segment.color}>
+              {segment.text}
+            </span>
+          ))}
+          <span fg={COLORS.textGhost}>{` ${day.total}`}</span>
+        </text>
+      ))}
       <Spacer />
       <text>
         <span>{" ".repeat(DAY_LABEL_WIDTH)}</span>

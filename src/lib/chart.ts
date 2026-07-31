@@ -51,33 +51,117 @@ export function resample(values: number[], width: number): number[] {
 }
 
 /**
- * Filled area chart. The topmost filled row of each column keeps the accent
- * color, everything below it drops to `dimColor` so the silhouette reads.
+ * Solid bar chart, one bar per data point. Bar widths are distributed so the
+ * chart spans exactly `width` columns; zero values leave a blank column.
  */
-export function areaChart(
-  values: number[],
-  width: number,
-  height: number,
-  color: string,
-  dimColor: string,
-): ChartRow[] {
-  const columns = resample(values, width);
-  const max = Math.max(1, ...values);
+export function bars(values: number[], width: number, height: number, color: string): ChartRow[] {
+  if (width <= 0 || height <= 0) return [];
+  const points = values.length > width ? resample(values, width) : values;
+  const count = points.length;
+  if (count === 0) {
+    return Array.from({ length: height }, () => ({
+      segments: [{ text: " ".repeat(width), color: COLORS.bg }],
+    }));
+  }
+
+  const baseWidth = Math.max(1, Math.floor(width / count));
+  const extra = Math.max(0, width - baseWidth * count);
+  const barWidths = points.map(
+    (_, i) => baseWidth + (Math.floor(((i + 1) * extra) / count) - Math.floor((i * extra) / count)),
+  );
+  const max = Math.max(1, ...points);
   const rows: ChartRow[] = [];
 
   for (let row = 0; row < height; row++) {
     const cells: Cell[] = [];
-    for (let i = 0; i < width; i++) {
-      const filled = ((columns[i] ?? 0) / max) * height;
-      const top = height - Math.ceil(filled);
-      const level = filled - (height - 1 - row);
-      if (level >= 1) cells.push({ char: "█", color: row === top ? color : dimColor });
-      else if (level > 0.06) cells.push({ char: BLOCK_RAMP[Math.max(1, Math.round(level * 8))]!, color });
-      else cells.push({ char: " ", color: COLORS.bg });
-    }
+    points.forEach((value, i) => {
+      const filled = value > 0 ? Math.max(1, Math.round((value / max) * height)) : 0;
+      const isOn = row >= height - filled;
+      const cell: Cell = { char: isOn ? "█" : " ", color: isOn ? color : COLORS.bg };
+      for (let z = 0; z < (barWidths[i] ?? 0); z++) cells.push(cell);
+    });
     rows.push({ segments: mergeCells(cells) });
   }
   return rows;
+}
+
+export interface PlanChartItem {
+  /** null renders a zero-height bar with a dimmed label and an em-dash value. */
+  value: number | null;
+  color: string;
+  label: string;
+}
+
+export interface PlanChartLabel {
+  text: string;
+  color: string;
+}
+
+export interface PlanChart {
+  rows: ChartRow[];
+  baseline: string;
+  names: PlanChartLabel[];
+  values: PlanChartLabel[];
+  /** Total column footprint including the tick gutter. */
+  width: number;
+}
+
+const PLAN_HEIGHT = 10;
+const PLAN_BAR_WIDTH = 8;
+const PLAN_GAP = 5;
+const PLAN_LEFT_PAD = 5;
+const PLAN_TICK_WIDTH = 5;
+
+function centerPad(text: string, width: number): string {
+  const left = Math.max(0, Math.floor((width - text.length) / 2));
+  return " ".repeat(left) + text + " ".repeat(Math.max(0, width - text.length - left));
+}
+
+/** Fixed-geometry percent chart: 10 rows, 8-wide bars, 5-wide gaps, % ticks. */
+export function planChart(items: PlanChartItem[]): PlanChart {
+  const rows: ChartRow[] = [];
+  for (let row = 0; row < PLAN_HEIGHT; row++) {
+    const cells: Cell[] = [];
+    items.forEach((item, i) => {
+      if (i) for (let z = 0; z < PLAN_GAP; z++) cells.push({ char: " ", color: COLORS.bg });
+      const filled =
+        item.value === null
+          ? 0
+          : item.value > 0
+            ? Math.max(1, Math.round((item.value / 100) * PLAN_HEIGHT))
+            : 0;
+      const isOn = row >= PLAN_HEIGHT - filled;
+      const cell: Cell = { char: isOn ? "█" : " ", color: isOn ? item.color : COLORS.bg };
+      for (let z = 0; z < PLAN_BAR_WIDTH; z++) cells.push(cell);
+    });
+    const tick = row === 0 ? "100" : row === Math.round(PLAN_HEIGHT / 2) - 1 ? " 50" : "   ";
+    rows.push({
+      segments: [{ text: `${tick} │`, color: COLORS.textDisabled }, ...mergeCells(cells)],
+    });
+  }
+
+  const names: PlanChartLabel[] = [];
+  const values: PlanChartLabel[] = [];
+  items.forEach((item, i) => {
+    const gap = " ".repeat(i ? PLAN_GAP : PLAN_LEFT_PAD);
+    names.push({
+      text: gap + centerPad(item.label, PLAN_BAR_WIDTH),
+      color: item.value === null ? COLORS.textGhost : COLORS.textMuted,
+    });
+    values.push({
+      text: gap + centerPad(item.value === null ? "—" : `${item.value}%`, PLAN_BAR_WIDTH),
+      color: item.value === null ? COLORS.textGhost : item.color,
+    });
+  });
+
+  const plotWidth = items.length * PLAN_BAR_WIDTH + Math.max(0, items.length - 1) * PLAN_GAP;
+  return {
+    rows,
+    baseline: `  0 └${"─".repeat(plotWidth)}`,
+    names,
+    values,
+    width: PLAN_TICK_WIDTH + plotWidth,
+  };
 }
 
 /** Single-line sparkline using the eighth-block ramp. */

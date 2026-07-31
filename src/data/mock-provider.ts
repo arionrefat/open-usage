@@ -1,4 +1,5 @@
 import { COLORS } from "../theme";
+import { maskCredential } from "./mask";
 import type {
   ProviderConnection,
   ProviderId,
@@ -16,6 +17,7 @@ const META: Record<ProviderId, ProviderMeta> = {
     planDetail: "Max (20x) · anthropic oauth",
     requirement: "oauth login or ANTHROPIC_API_KEY",
     source: "~/.claude/usage.jsonl",
+    fake: "sk-ant-api03-•••••••••7b31",
   },
   cx: {
     id: "cx",
@@ -25,6 +27,7 @@ const META: Record<ProviderId, ProviderMeta> = {
     planDetail: "Plus · codex and work share one limit",
     requirement: "openai api key with usage.read",
     source: "platform.openai.com/usage",
+    fake: "sk-proj-•••••••••••4f2a",
   },
   go: {
     id: "go",
@@ -34,6 +37,7 @@ const META: Record<ProviderId, ProviderMeta> = {
     planDetail: "Go · subscribed",
     requirement: "opencode auth token",
     source: "opencode auth token",
+    fake: "oc_live_•••••••9d1c",
   },
 };
 
@@ -235,8 +239,5 @@ export const mockUsageProvider: UsageProvider = {
         { once: true },
       );
     }),
-  maskCredential: (raw) =>
-    raw.length <= 24
-      ? "•".repeat(raw.length)
-      : `${raw.slice(0, 4)}${"•".repeat(Math.min(9, raw.length - 8))}${raw.slice(-4)}`,
+  maskCredential,
 };

@@ -2,6 +2,7 @@
 export const COLORS = {
   bg: "#0b0b0b",
   bgChrome: "#0e0e0e",
+  bgFilter: "#111111",
   bgRowActive: "#151515",
   bgTabActive: "#232323",
   bgTabIdle: "#131313",
@@ -25,6 +26,8 @@ export const COLORS = {
   textDisabled: "#3d3d3d",
   textInert: "#3a3a3a",
   markIdle: "#232323",
+  /** Dot separators between the footer key hints. */
+  footerSeparator: "#2a2a2a",
   accent: "#e0a244",
   info: "#4c8dff",
   ok: "#3fb950",
@@ -41,13 +44,6 @@ export const PROVIDER_COLORS = {
   cl: COLORS.accent,
   cx: COLORS.ok,
   go: COLORS.info,
-} as const;
-
-/** Body fill for area/bar charts — the top row keeps the full-strength color. */
-export const PROVIDER_COLORS_DIM = {
-  cl: "#5d4419",
-  cx: "#1b4a28",
-  go: "#1a3b66",
 } as const;
 
 export const BLOCK_RAMP = [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;

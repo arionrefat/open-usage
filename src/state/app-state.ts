@@ -1,6 +1,7 @@
 import {
   PROVIDER_IDS,
   RANGE_KEYS,
+  type ConnectionStatus,
   type ProviderConnection,
   type ProviderId,
   type ProviderMeta,
@@ -40,8 +41,6 @@ export interface AppState {
   /** Highlighted row on the settings screen. */
   settingsCursor: number;
   isRefreshing: boolean;
-  spinnerFrame: number;
-  secondsSinceUpdate: number;
   refreshError: string | null;
   isHelpOpen: boolean;
   isFiltering: boolean;
@@ -58,7 +57,6 @@ export interface AppStateOptions {
   mode?: OverviewMode;
   useSeverityColors?: boolean;
   isDailySplitVisible?: boolean;
-  secondsSinceUpdate?: number;
   connections: Record<ProviderId, ProviderConnection>;
 }
 
@@ -80,8 +78,6 @@ export function createInitialState(options: AppStateOptions): AppState {
     selection: 0,
     settingsCursor: 0,
     isRefreshing: false,
-    spinnerFrame: 0,
-    secondsSinceUpdate: options.secondsSinceUpdate ?? 0,
     refreshError: null,
     isHelpOpen: false,
     isFiltering: false,
@@ -120,10 +116,8 @@ export type AppAction =
   | { type: "filter-cancel" }
   | { type: "paste-input"; text: string }
   | { type: "refresh-start" }
-  | { type: "refresh-success"; secondsSinceUpdate: number }
+  | { type: "refresh-success" }
   | { type: "refresh-failure"; message: string }
-  | { type: "tick-second" }
-  | { type: "tick-spinner" }
   | { type: "open-onboarding" }
   | { type: "onboarding-move"; delta: number }
   | { type: "onboarding-toggle" }
@@ -138,10 +132,23 @@ export type AppAction =
   | { type: "onboarding-cancel" }
   | { type: "settings-move"; delta: number }
   | { type: "settings-toggle-enabled"; id?: ProviderId }
-  | { type: "settings-connect"; id?: ProviderId }
+  | { type: "settings-cycle-status"; id?: ProviderId }
+  | { type: "settings-paste-key"; id?: ProviderId }
   | { type: "settings-disconnect"; id?: ProviderId };
 
 export const MAX_CREDENTIAL_LENGTH = 16_384;
+
+const NEXT_STATUS: Record<ConnectionStatus, ConnectionStatus> = {
+  active: "expired",
+  expired: "none",
+  none: "active",
+};
+
+const CYCLE_NOTES: Record<ConnectionStatus, string> = {
+  active: "reconnected just now",
+  expired: "renewal needed",
+  none: "credential removed",
+};
 
 function wrapIndex(index: number, delta: number, length: number): number {
   return (index + (delta % length) + length) % length;
@@ -266,18 +273,9 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
       case "refresh-start":
         return { ...state, isRefreshing: true, refreshError: null };
       case "refresh-success":
-        return {
-          ...state,
-          isRefreshing: false,
-          secondsSinceUpdate: action.secondsSinceUpdate,
-          refreshError: null,
-        };
+        return { ...state, isRefreshing: false, refreshError: null };
       case "refresh-failure":
         return { ...state, isRefreshing: false, refreshError: action.message };
-      case "tick-second":
-        return { ...state, secondsSinceUpdate: state.secondsSinceUpdate + 1 };
-      case "tick-spinner":
-        return { ...state, spinnerFrame: state.spinnerFrame + 1 };
       case "open-onboarding":
         return {
           ...state,
@@ -325,6 +323,7 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
         return { ...state, onboarding: { ...state.onboarding, picks: { cl: true, cx: true, go: true } } };
       case "onboarding-begin-auth": {
         const queue = pickedProviders(state.onboarding.picks);
+        if (queue.length === 0) return state;
         const connections = Object.fromEntries(
           PROVIDER_IDS.map((id) => [
             id,
@@ -336,7 +335,7 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
           connections,
           onboarding: {
             ...state.onboarding,
-            step: queue.length === 0 ? 2 : 1,
+            step: 1,
             index: 0,
             typed: "",
             inputError: null,
@@ -412,23 +411,24 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
         const id = action.id ?? PROVIDER_IDS[state.settingsCursor]!;
         return withConnection(state, id, { isEnabled: !state.connections[id].isEnabled });
       }
-      case "settings-connect": {
+      case "settings-cycle-status": {
         const id = action.id ?? PROVIDER_IDS[state.settingsCursor]!;
-        return {
-          ...state,
-          screen: "onboarding",
-          settingsCursor: PROVIDER_IDS.indexOf(id),
-          onboarding: {
-            step: 1,
-            cursor: PROVIDER_IDS.indexOf(id),
-            picks: Object.fromEntries(
-              PROVIDER_IDS.map((providerId) => [providerId, providerId === id]),
-            ) as Record<ProviderId, boolean>,
-            index: 0,
-            typed: "",
-            inputError: null,
-          },
-        };
+        const connection = state.connections[id];
+        const next = NEXT_STATUS[connection.status];
+        return withConnection(state, id, {
+          status: next,
+          credential: next === "none" ? "" : connection.credential || meta[id].fake,
+          note: CYCLE_NOTES[next],
+        });
+      }
+      case "settings-paste-key": {
+        const id = action.id ?? PROVIDER_IDS[state.settingsCursor]!;
+        return withConnection(state, id, {
+          isEnabled: true,
+          status: "active",
+          credential: meta[id].fake,
+          note: "pasted just now",
+        });
       }
       case "settings-disconnect": {
         const id = action.id ?? PROVIDER_IDS[state.settingsCursor]!;

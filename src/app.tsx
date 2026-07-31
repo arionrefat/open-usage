@@ -27,15 +27,16 @@ import { Onboarding } from "./screens/onboarding";
 import { Overview } from "./screens/overview";
 import { ProviderDetail } from "./screens/provider-detail";
 import { Settings } from "./screens/settings";
-import { COLORS, SPINNER_FRAMES } from "./theme";
+import { COLORS } from "./theme";
 
 const HORIZONTAL_PADDING = 2;
 /** Reserved so the scrollbox's gutter never steals a column from the content. */
 const SCROLLBAR_WIDTH = 1;
-const SPINNER_INTERVAL_MS = 80;
 const SECOND_MS = 1000;
+const IDLE_EXIT_MS = 24 * 60 * 60 * SECOND_MS;
+const IDLE_CHECK_INTERVAL_MS = 5 * 60 * SECOND_MS;
 const POLL_INTERVAL_MS = POLL_INTERVAL_SECONDS * SECOND_MS;
-const DETAIL_CHART_MAX_HEIGHT = 7;
+const DETAIL_CHART_MAX_HEIGHT = 8;
 const DETAIL_CHART_MIN_HEIGHT = 4;
 /** Rows consumed by chrome plus a provider screen's non-chart content. */
 const DETAIL_CHROME_ROWS = 24;
@@ -52,9 +53,11 @@ function printableChar(key: KeyEvent): string | null {
 export interface AppProps {
   provider: UsageProvider;
   startup: Omit<AppStateOptions, "connections">;
+  /** false disables the startup refresh and poll timer (--no-poll); r still refreshes. */
+  isPollingEnabled?: boolean;
 }
 
-export function App({ provider, startup }: AppProps) {
+export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
   const renderer = useRenderer();
   const { width, height } = useTerminalDimensions();
   const meta = useMemo(() => provider.listMeta(), [provider]);
@@ -62,31 +65,19 @@ export function App({ provider, startup }: AppProps) {
   const [snapshot, setSnapshot] = useState<UsageSnapshot>(() => provider.readSnapshot());
   const [state, dispatch] = useReducer(
     reducer,
-    {
-      provider,
-      startup,
-      secondsSinceUpdate: Math.max(0, Math.floor((Date.now() - snapshot.fetchedAt) / SECOND_MS)),
-    },
-    ({ provider: initialProvider, startup: initialStartup, secondsSinceUpdate }) =>
+    { provider, startup },
+    ({ provider: initialProvider, startup: initialStartup }) =>
       createInitialState({
         ...initialStartup,
-        secondsSinceUpdate,
         connections: initialProvider.initialConnections(),
       }),
   );
   const derived = useMemo(() => deriveState(state, snapshot), [state, snapshot]);
   const refreshAbortRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    const timer = setInterval(() => dispatch({ type: "tick-second" }), SECOND_MS);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!state.isRefreshing) return;
-    const timer = setInterval(() => dispatch({ type: "tick-spinner" }), SPINNER_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [state.isRefreshing]);
+  // Read by quit() so its identity stays stable; unstable deps here would
+  // re-render the whole tree via `actions` and feed Bun's per-commit leak.
+  const sessionRef = useRef({ connections: state.connections, fetchedAt: snapshot.fetchedAt });
+  sessionRef.current = { connections: state.connections, fetchedAt: snapshot.fetchedAt };
 
   const refresh = useCallback(() => {
     if (refreshAbortRef.current) return;
@@ -98,13 +89,7 @@ export function App({ provider, startup }: AppProps) {
       .then((nextSnapshot) => {
         if (controller.signal.aborted) return;
         setSnapshot(nextSnapshot);
-        dispatch({
-          type: "refresh-success",
-          secondsSinceUpdate: Math.max(
-            0,
-            Math.floor((Date.now() - nextSnapshot.fetchedAt) / SECOND_MS),
-          ),
-        });
+        dispatch({ type: "refresh-success" });
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -117,6 +102,7 @@ export function App({ provider, startup }: AppProps) {
   }, [provider]);
 
   useEffect(() => {
+    if (!isPollingEnabled) return;
     refresh();
     const timer = setInterval(refresh, POLL_INTERVAL_MS);
     return () => {
@@ -124,18 +110,32 @@ export function App({ provider, startup }: AppProps) {
       refreshAbortRef.current?.abort();
       refreshAbortRef.current = null;
     };
-  }, [refresh]);
+  }, [isPollingEnabled, refresh]);
 
-  const quit = useCallback((exitCode = 0) => {
-    renderer.destroy();
-    const polled = PROVIDER_IDS.filter(
-      (id) => state.connections[id].isEnabled && state.connections[id].status === "active",
-    ).length;
-    process.stdout.write(
-      `$ ${APP_NAME}\n  session ended · ${polled} providers polled · cached ${state.secondsSinceUpdate}s ago\n`,
-    );
-    process.exitCode = exitCode;
-  }, [renderer, state.connections, state.secondsSinceUpdate]);
+  const quit = useCallback(
+    (exitCode = 0) => {
+      renderer.destroy();
+      const { connections, fetchedAt } = sessionRef.current;
+      const polled = PROVIDER_IDS.filter(
+        (id) => connections[id].isEnabled && connections[id].status === "active",
+      ).length;
+      const cachedSeconds = Math.max(0, Math.floor((Date.now() - fetchedAt) / SECOND_MS));
+      process.stdout.write(
+        `$ ${APP_NAME}\n  session ended · ${polled} providers polled · cached ${cachedSeconds}s ago\n`,
+      );
+      process.exit(exitCode);
+    },
+    [renderer],
+  );
+
+  // A forgotten session must not poll and leak forever (see memory report).
+  const lastInputRef = useRef(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (Date.now() - lastInputRef.current > IDLE_EXIT_MS) quit();
+    }, IDLE_CHECK_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [quit]);
 
   const actions = useMemo<AppActions>(
     () => ({
@@ -159,7 +159,8 @@ export function App({ provider, startup }: AppProps) {
       onboardingContinue: () => dispatch({ type: "onboarding-begin-auth" }),
       onboardingFinish: () => dispatch({ type: "onboarding-finish" }),
       settingsToggle: (id: ProviderId) => dispatch({ type: "settings-toggle-enabled", id }),
-      settingsConnect: (id: ProviderId) => dispatch({ type: "settings-connect", id }),
+      settingsCycleStatus: (id: ProviderId) => dispatch({ type: "settings-cycle-status", id }),
+      settingsPasteKey: (id: ProviderId) => dispatch({ type: "settings-paste-key", id }),
       settingsDisconnect: (id: ProviderId) => dispatch({ type: "settings-disconnect", id }),
       quit: () => quit(),
     }),
@@ -215,11 +216,11 @@ export function App({ provider, startup }: AppProps) {
       return true;
     }
     if (key.name === "return") {
-      dispatch({ type: "settings-connect" });
+      dispatch({ type: "settings-cycle-status" });
       return true;
     }
     if (char === "p") {
-      dispatch({ type: "settings-connect" });
+      dispatch({ type: "settings-paste-key" });
       return true;
     }
     if (char === "d") {
@@ -232,6 +233,7 @@ export function App({ provider, startup }: AppProps) {
   useKeyboard(
     useCallback(
       (key: KeyEvent) => {
+        lastInputRef.current = Date.now();
         if (key.ctrl && key.name === "c") {
           quit(130);
           return;
@@ -252,8 +254,7 @@ export function App({ provider, startup }: AppProps) {
         }
 
         if (state.isHelpOpen) {
-          const char = printableChar(key);
-          if (key.name === "escape" || char === "?") dispatch({ type: "close-help" });
+          dispatch({ type: "close-help" });
           return;
         }
 
@@ -293,6 +294,7 @@ export function App({ provider, startup }: AppProps) {
   usePaste(
     useCallback(
       (event) => {
+        lastInputRef.current = Date.now();
         if (event.bytes.length > MAX_CREDENTIAL_LENGTH) {
           dispatch({
             type: "onboarding-input-error",
@@ -346,12 +348,8 @@ export function App({ provider, startup }: AppProps) {
           providerCount={`${derived.enabledCount} of ${PROVIDER_IDS.length} providers`}
           alertText={state.refreshError ? "▲ refresh failed" : derived.alertText}
           alertColor={state.refreshError ? COLORS.danger : derived.alertColor}
-          updatedLabel={state.isRefreshing ? "now" : `${state.secondsSinceUpdate}s ago`}
-          spinner={
-            state.isRefreshing
-              ? (SPINNER_FRAMES[state.spinnerFrame % SPINNER_FRAMES.length] ?? "")
-              : ""
-          }
+          fetchedAt={snapshot.fetchedAt}
+          isRefreshing={state.isRefreshing}
         />
         <box height={1} flexShrink={0} />
         <Tabs
@@ -395,6 +393,22 @@ export function App({ provider, startup }: AppProps) {
         ) : null}
       </scrollbox>
 
+      {state.isFiltering ? (
+        <box
+          flexDirection="column"
+          flexShrink={0}
+          paddingLeft={HORIZONTAL_PADDING}
+          paddingRight={HORIZONTAL_PADDING}
+          backgroundColor={COLORS.bgFilter}
+        >
+          <FilterBar
+            width={contentWidth}
+            query={state.filterQuery}
+            matchCount={derived.visibleIds.length}
+            isCursorVisible={isCursorVisible}
+          />
+        </box>
+      ) : null}
       <box
         flexDirection="column"
         flexShrink={0}
@@ -402,14 +416,6 @@ export function App({ provider, startup }: AppProps) {
         paddingRight={HORIZONTAL_PADDING}
         backgroundColor={COLORS.bgChrome}
       >
-        {state.isFiltering ? (
-          <FilterBar
-            width={contentWidth}
-            query={state.filterQuery}
-            matchCount={derived.visibleIds.length}
-            isCursorVisible={isCursorVisible}
-          />
-        ) : null}
         <StatusBar width={contentWidth} actions={actions} />
       </box>
 

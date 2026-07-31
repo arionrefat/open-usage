@@ -40,6 +40,54 @@ describe("App interactions", () => {
     expect(refreshSignal?.aborted).toBe(true);
   });
 
+  test("--no-poll mode never calls refresh, but r still does", async () => {
+    let refreshCount = 0;
+    const setup = await testRender(
+      <App
+        provider={pendingProvider(() => {
+          refreshCount += 1;
+        })}
+        startup={{ screen: "app", view: "overview", mode: "detailed" }}
+        isPollingEnabled={false}
+      />,
+      { width: 80, height: 30 },
+    );
+
+    try {
+      expect(refreshCount).toBe(0);
+      act(() => setup.renderer.stdin.emit("data", Buffer.from("r")));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await setup.flush();
+      expect(refreshCount).toBe(1);
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
+  test("any key closes the help overlay", async () => {
+    const setup = await testRender(
+      <App
+        provider={pendingProvider()}
+        startup={{ screen: "app", view: "overview", mode: "detailed" }}
+      />,
+      { width: 100, height: 40 },
+    );
+
+    try {
+      act(() => setup.renderer.stdin.emit("data", Buffer.from("?")));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await setup.flush();
+      expect(setup.captureCharFrame()).toContain("keymap");
+
+      act(() => setup.renderer.stdin.emit("data", Buffer.from("j")));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await setup.flush();
+      expect(setup.captureCharFrame()).not.toContain("keymap");
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
   test("accepts bracketed paste without displaying the raw credential", async () => {
     const setup = await testRender(
       <App

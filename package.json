@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "dev": "bun --watch src/index.tsx",
-    "limits": "bun src/index.tsx",
+    "limit": "NODE_ENV=production bun src/index.tsx --mock --no-poll",
+    "production": "NODE_ENV=production bun src/index.tsx",
     "preview": "bun scripts/preview.tsx",
     "shot": "bun scripts/shot.tsx",
     "test": "bun test",

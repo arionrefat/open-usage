@@ -8,8 +8,8 @@
  */
 import { testRender } from "@opentui/react/test-utils";
 import { App } from "../src/app";
-import { mockUsageProvider } from "../src/data/mock-provider";
-import { readFlags, startupFromFlags } from "../src/lib/args";
+import { selectUsageProvider } from "../src/data/real-provider";
+import { providerModeFromFlags, readFlags, startupFromFlags } from "../src/lib/args";
 
 const DEFAULT_WIDTH = 140;
 const DEFAULT_HEIGHT = 46;
@@ -24,9 +24,12 @@ console.error = (...args: unknown[]) => {
 
 const flags = readFlags(process.argv.slice(2));
 
+// Previews stay deterministic on the mock; pass --real to read local sources.
+const provider = selectUsageProvider(providerModeFromFlags(flags, "mock"));
+
 const setup = await testRender(
   <App
-    provider={mockUsageProvider}
+    provider={provider}
     startup={startupFromFlags(flags)}
   />,
   {

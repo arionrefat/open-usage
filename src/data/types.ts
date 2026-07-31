@@ -25,6 +25,8 @@ export interface ProviderMeta {
   requirement: string;
   /** Where limits are read from once connected. */
   source: string;
+  /** Pre-masked credential stored when a key is pasted or a connection revives. */
+  fake: string;
 }
 
 export interface ProviderConnection {

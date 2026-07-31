@@ -23,6 +23,15 @@ export function isFlagEnabled(flags: Map<string, string>, name: string): boolean
   return !["0", "false", "no", "off"].includes((flags.get(name) ?? "").toLowerCase());
 }
 
+export type ProviderMode = "mock" | "real";
+
+/** --mock wins over --real; each entry point picks its own default. */
+export function providerModeFromFlags(flags: Map<string, string>, fallback: ProviderMode): ProviderMode {
+  if (isFlagEnabled(flags, "mock")) return "mock";
+  if (isFlagEnabled(flags, "real")) return "real";
+  return fallback;
+}
+
 export function startupFromFlags(flags: Map<string, string>): Omit<AppStateOptions, "connections"> {
   const screen = flags.get("screen");
   const view = flags.get("view");

@@ -1,26 +1,42 @@
+import { useEffect, useState } from "react";
+import { useSecondsSince } from "../hooks/use-seconds-since";
 import { columnWidth } from "../lib/text";
-import { COLORS } from "../theme";
+import { COLORS, SPINNER_FRAMES } from "../theme";
 import { VIEW_KEYS, type ViewKey } from "../state/app-state";
 import type { AppActions } from "../state/actions";
-import { Line, SplitLine, keyHint, segmentsWidth, type Segment } from "./primitives";
+import { Line, Rule, SplitLine, keyHint, segmentsWidth, type Segment } from "./primitives";
 
 interface HeaderProps {
   width: number;
   providerCount: string;
   alertText: string;
   alertColor: string;
-  updatedLabel: string;
-  spinner: string;
+  fetchedAt: number;
+  isRefreshing: boolean;
 }
+
+const SPINNER_INTERVAL_MS = 80;
 
 export function Header({
   width,
   providerCount,
   alertText,
   alertColor,
-  updatedLabel,
-  spinner,
+  fetchedAt,
+  isRefreshing,
 }: HeaderProps) {
+  const secondsSinceUpdate = useSecondsSince(fetchedAt);
+  const updatedLabel = isRefreshing ? "now" : `${secondsSinceUpdate}s ago`;
+  const [spinnerFrame, setSpinnerFrame] = useState(0);
+  useEffect(() => {
+    if (!isRefreshing) return;
+    setSpinnerFrame(0);
+    const timer = setInterval(() => setSpinnerFrame((frame) => frame + 1), SPINNER_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [isRefreshing]);
+  const spinner = isRefreshing
+    ? (SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length] ?? "")
+    : "";
   return (
     <SplitLine
       width={width}
@@ -161,21 +177,24 @@ export function FilterBar({ width, query, matchCount, isCursorVisible }: FilterB
         : `…${queryChars.slice(-(queryBudget - 1)).join("")}`
       : query;
   return (
-    <SplitLine
-      width={width}
-      background={COLORS.bgChrome}
-      left={[
-        { text: "/", color: COLORS.info },
-        { text: ` ${visibleQuery}`, color: COLORS.text },
-        { text: isCursorVisible ? "█" : " ", color: COLORS.text },
-      ]}
-      right={[
-        {
-          text: `${matchCount} of 3 providers · enter to keep · esc to clear`,
-          color: COLORS.textGhost,
-        },
-      ]}
-    />
+    <box flexDirection="column" flexShrink={0}>
+      <Rule width={width} color={COLORS.border} />
+      <SplitLine
+        width={width}
+        background={COLORS.bgFilter}
+        left={[
+          { text: "/", color: COLORS.info },
+          { text: ` ${visibleQuery}`, color: COLORS.text },
+          { text: isCursorVisible ? "█" : " ", color: COLORS.text },
+        ]}
+        right={[
+          {
+            text: `${matchCount} of 3 providers · enter to keep · esc to clear`,
+            color: COLORS.textGhost,
+          },
+        ]}
+      />
+    </box>
   );
 }
 
@@ -208,7 +227,7 @@ export function StatusBar({ width, actions }: { width: number; actions: AppActio
   for (const [key, description, onClick] of hints) {
     const cost = columnWidth(key) + columnWidth(description) + 1 + (left.length > 0 ? SEPARATOR_WIDTH : 0);
     if (used + cost > budget) break;
-    if (left.length > 0) left.push({ text: " · ", color: COLORS.markIdle });
+    if (left.length > 0) left.push({ text: " · ", color: COLORS.footerSeparator });
     left.push({ text: key, color: COLORS.textSoft, onClick });
     left.push({ text: ` ${description}`, color: COLORS.textGhost, onClick });
     used += cost;

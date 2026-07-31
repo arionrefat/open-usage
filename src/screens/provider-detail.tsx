@@ -1,10 +1,20 @@
-import { areaChart, formatTokens } from "../lib/chart";
-import { COLORS, PROVIDER_COLORS, PROVIDER_COLORS_DIM } from "../theme";
+import { bars, formatTokens } from "../lib/chart";
+import { COLORS, PROVIDER_COLORS } from "../theme";
 import { STATUS_PRESENTATION, type ProviderId, type ProviderNotice, type UsageSnapshot } from "../data/types";
 import { isProviderLive, type AppState } from "../state/app-state";
 import type { DerivedState } from "../state/derive";
 import { DetailLimitMeter } from "../components/limit-meter";
-import { Chart, Line, Rule, SplitLine, Spacer, TripleLine } from "../components/primitives";
+import { Chart, Line, Rule, SplitLine, Spacer, TripleLine, type Segment } from "../components/primitives";
+
+/** The design plots 8 chart rows; shorter terminals fall back to the clamp. */
+
+/** Colors the footer stats locally: numbers bright, "▏" separators dim. */
+function footerSegments(footer: string): Segment[] {
+  return footer.split(/(\s+)/).map((token) => ({
+    text: token,
+    color: token === "▏" ? COLORS.rule : /^\d/.test(token) ? COLORS.text : COLORS.textGhost,
+  }));
+}
 
 interface ProviderDetailProps {
   id: ProviderId;
@@ -123,9 +133,7 @@ export function ProviderDetail({
       <Spacer />
       <Line segments={[{ text: `tokens ${derived.rangeName}`, color: COLORS.textMuted, isBold: true }]} />
       <Spacer />
-      <Chart
-        rows={areaChart(series, width, chartHeight, PROVIDER_COLORS[id], PROVIDER_COLORS_DIM[id])}
-      />
+      <Chart rows={bars(series, width, chartHeight, PROVIDER_COLORS[id])} />
       <Rule width={width} />
       <TripleLine
         width={width}
@@ -137,7 +145,7 @@ export function ProviderDetail({
       {provider.detailFooter ? (
         <>
           <Spacer />
-          <Line width={width} segments={[{ text: provider.detailFooter, color: COLORS.textGhost }]} />
+          <Line width={width} segments={footerSegments(provider.detailFooter)} />
         </>
       ) : null}
     </box>

@@ -66,12 +66,28 @@ describe("no adjacent groups collide", () => {
   }
 });
 
-test("simple overview uses a provider histogram", async () => {
+test("simple overview uses the fixed-geometry plan chart", async () => {
   const frame = (await renderRows(140, "overview", "simple")).join("\n");
   expect(frame).toContain("plan usage");
-  expect(frame).toContain("100┤");
-  expect(frame).toContain("0└");
+  expect(frame).toContain("100 │");
+  expect(frame).toContain(" 50 │");
+  expect(frame).toContain(`  0 └${"─".repeat(34)}`);
+  expect(frame).toContain("share of limit consumed across providers");
+  expect(frame).toContain("of all consumption");
+  expect(frame).toContain("went to claude code");
   expect(frame).not.toContain("largest share");
+});
+
+test("simple overview keeps all three providers in the legend", async () => {
+  const rows = await renderRows(140, "overview", "simple");
+  // codex ships expired in the mock, so its off-state legend must still render.
+  expect(rowContaining(rows, "▎codex")).toContain("of all consumption");
+  expect(rows.join("\n")).toContain("subscription ended");
+});
+
+test("detailed overview shows sessions in the usage share block", async () => {
+  const frame = (await renderRows(140, "overview", "detailed")).join("\n");
+  expect(frame).toMatch(/\d+ sessions/);
 });
 
 describe("every view renders at every width", () => {

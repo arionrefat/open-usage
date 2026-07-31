@@ -63,7 +63,7 @@ function ProviderRow({
           {
             text: padEnd(`${status.dot} ${status.label}`, STATUS_COLUMN),
             color: connection.isEnabled ? status.color : COLORS.textFaint,
-            onClick: () => actions.settingsConnect(id),
+            onClick: () => actions.settingsCycleStatus(id),
           },
         ]}
       />
@@ -76,7 +76,7 @@ function ProviderRow({
           {
             text: connection.credential || "— none stored —",
             color: connection.credential ? COLORS.textMuted : COLORS.textFaint,
-            onClick: () => actions.settingsConnect(id),
+            onClick: () => actions.settingsPasteKey(id),
           },
         ]}
         right={[{ text: connection.note, color: COLORS.textGhost }]}
@@ -131,7 +131,7 @@ export function Settings(props: SettingsProps) {
           { text: " ▏ ", color: COLORS.rule },
           { text: "providers, credentials, subscriptions", color: COLORS.textFaint },
         ]}
-        right={[{ text: "changes apply for this session", color: COLORS.textGhost }]}
+        right={[{ text: "~/.config/limits/config.toml", color: COLORS.textGhost }]}
       />
       <Spacer />
       <SplitLine
@@ -140,9 +140,9 @@ export function Settings(props: SettingsProps) {
         right={[
           ...keyHint("space", "show / hide", () => actions.settingsToggle(selectedId)),
           { text: "  " },
-          ...keyHint("↵", "connect / replace", () => actions.settingsConnect(selectedId)),
+          ...keyHint("↵", "cycle status", () => actions.settingsCycleStatus(selectedId)),
           { text: "  " },
-          ...keyHint("p", "paste key", () => actions.settingsConnect(selectedId)),
+          ...keyHint("p", "paste key", () => actions.settingsPasteKey(selectedId)),
           { text: "  " },
           ...keyHint("d", "disconnect", () => actions.settingsDisconnect(selectedId)),
         ]}
@@ -164,7 +164,7 @@ export function Settings(props: SettingsProps) {
       />
       <SettingLine label="poll interval" value={`${POLL_INTERVAL_SECONDS}s`} hint="r forces a refresh" />
       <SettingLine
-        label="danger threshold"
+        label="warn threshold"
         value={`${THRESHOLDS.danger}%`}
         hint="bars turn red past this"
       />
