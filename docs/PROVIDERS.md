@@ -95,10 +95,28 @@ Ground truth beat the third-party docs in three places, all verified against `co
 
 `account/read` supplies the real plan name, which replaces the opencode-derived stand-in label.
 
-### Correction
+### Usage history
 
-An earlier note in this document claimed opencode would be consuming the same ChatGPT pool, so codex figures would include opencode-driven usage.
-That is **wrong**: the live reading is 0% used against the `codex` limit id despite heavy opencode activity, so the two do not share a bucket here - different account, or usage metered under a different limit id.
+`account/usage/read` returns server-side history and is the best token source available for any provider here:
+
+```
+summary: { lifetimeTokens, peakDailyTokens, longestRunningTurnSec, currentStreakDays, longestStreakDays }
+dailyUsageBuckets: [{ startDate: "YYYY-MM-DD", tokens }]
+```
+
+Buckets are sparse - idle days are absent rather than zero - so they are mapped onto the chart's date keys rather than consumed positionally.
+This supersedes the opencode-derived series for codex, which only ever saw traffic opencode itself sent: server history reports a 110M peak day against opencode's 4M.
+The call is treated as a bonus, so limits still render if a future CLI drops the method.
+
+### On whether opencode shares this pool
+
+This flip-flopped twice, so the evidence is recorded here rather than the conclusion alone.
+
+The live limit reading is 0% used, which first looked like proof that opencode's OpenAI traffic bills to a different pool.
+It is not: the weekly window opened on 1 Aug (`resetsAt` 8 Aug, `windowDurationMins` 10080) and the last recorded activity was 29 Jul, so an empty current window is expected regardless.
+The daily buckets then land on 22, 23 and 29 Jul - the same days opencode.db records OpenAI activity - which points to one shared account with the server counting everything and opencode counting only what it sent.
+
+Account identity is still not directly proven, so nothing in the UI asserts it.
 
 ### Cost
 

@@ -15,13 +15,18 @@ import {
   formatCountdown,
   formatRate,
   seriesFromBuckets,
+  toMillions,
   tokensPerHour,
   type HourBuckets,
 } from "./real/aggregate";
 import { readHistoryStats } from "./real/claude-history";
 import { readClaudeTranscripts } from "./real/claude-transcripts";
 import { createCodexLimitsSource, type CodexLimitsSource } from "./real/codex-limits";
-import type { CodexAccountLimits, CodexWindow } from "./real/codex-app-server";
+import type {
+  CodexAccountLimits,
+  CodexUsageSummary,
+  CodexWindow,
+} from "./real/codex-app-server";
 import { readOpencodeAuth, type OpencodeAuth } from "./real/opencode-auth";
 import { readOpencodeUsage, type OpencodeSessionStats } from "./real/opencode-db";
 import { readGoSpend, type GoSpend, type SpendWindow } from "./real/opencode-go-spend";
@@ -79,6 +84,17 @@ const OPENCODE_PROVIDER_IDS: Partial<Record<ProviderId, string>> = {
 const GO_LIMIT_FOOTNOTE = "estimated from local spend - opencode publishes no usage api";
 /** Limits come from the codex cli now, so the source explains its own absence. */
 const CODEX_NO_LIMITS = "codex limits unavailable";
+
+function codexSummaryFooter(summary: CodexUsageSummary): string | undefined {
+  if (summary.lifetimeTokens <= 0) return undefined;
+  const parts = [
+    `lifetime ${formatTokenCount(summary.lifetimeTokens)}`,
+    `peak day ${formatTokenCount(summary.peakDailyTokens)}`,
+    ...(summary.longestStreakDays > 0 ? [`longest streak ${summary.longestStreakDays}d`] : []),
+    "from codex",
+  ];
+  return parts.join(" ▏ ");
+}
 
 /** "plus" reads as a plan name, not a sentence, so only the case changes. */
 function withPlan(meta: ProviderMeta, planType: string): ProviderMeta {
@@ -492,11 +508,19 @@ function buildSnapshot(
   const cxBuckets: HourBuckets = opencode?.buckets.get(OPENCODE_PROVIDER_IDS.cx ?? "") ?? new Map();
   const cxStats = opencode?.stats.get(OPENCODE_PROVIDER_IDS.cx ?? "");
   const codex = codexLimits.read();
+  // Codex's own server history covers every route into the account, while
+  // opencode.db only sees what opencode itself sent, so it wins when present.
+  const codexUsage = codex?.usage ?? null;
   const cx: ProviderUsage = {
     id: "cx",
     // Codex reports the real plan; the opencode-derived label is only a stand-in.
     meta: codex?.planType ? withPlan(meta.cx, codex.planType) : meta.cx,
-    series: seriesFromBuckets(cxBuckets, dates, now),
+    series: codexUsage
+      ? {
+          daily: dates.map((date) => toMillions(codexUsage.dailyTokens.get(date) ?? 0)),
+          hourly: seriesFromBuckets(cxBuckets, dates, now).hourly,
+        }
+      : seriesFromBuckets(cxBuckets, dates, now),
     limits: codex
       ? codexLimitLines(codex, nowMs)
       : [
@@ -529,7 +553,9 @@ function buildSnapshot(
           },
     },
     burn: localBurn(tokensPerHour(cxBuckets, now)),
-    detailFooter: localStatsFooter(cxStats, nowMs),
+    detailFooter: codexUsage?.summary
+      ? codexSummaryFooter(codexUsage.summary)
+      : localStatsFooter(cxStats, nowMs),
   };
 
   // opencode go

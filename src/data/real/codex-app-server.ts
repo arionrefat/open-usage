@@ -12,12 +12,25 @@ export interface CodexWindow {
   windowMinutes: number | null;
 }
 
+export interface CodexUsageSummary {
+  lifetimeTokens: number;
+  peakDailyTokens: number;
+  longestStreakDays: number;
+}
+
+export interface CodexUsageHistory {
+  /** Server-side totals keyed by "YYYY-MM-DD"; sparse - idle days are absent. */
+  dailyTokens: Map<string, number>;
+  summary: CodexUsageSummary | null;
+}
+
 export interface CodexAccountLimits {
   session: CodexWindow | null;
   weekly: CodexWindow | null;
   planType: string | null;
   /** Free "reset my limits" grants the account currently holds. */
   resetCredits: number;
+  usage: CodexUsageHistory | null;
   fetchedAtMs: number;
 }
 
@@ -89,8 +102,41 @@ export function parseRateLimits(result: unknown, fetchedAtMs: number): CodexAcco
     weekly,
     planType: typeof plan === "string" ? plan : null,
     resetCredits: typeof credits === "number" && Number.isFinite(credits) ? credits : 0,
+    usage: null,
     fetchedAtMs,
   };
+}
+
+function positiveNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/** Server-side token history; far more complete than any local transcript. */
+export function parseUsageHistory(result: unknown): CodexUsageHistory | null {
+  if (!isRecord(result)) return null;
+  const buckets = result.dailyUsageBuckets;
+  const dailyTokens = new Map<string, number>();
+  if (Array.isArray(buckets)) {
+    for (const bucket of buckets) {
+      if (!isRecord(bucket)) continue;
+      const { startDate } = bucket;
+      const tokens = positiveNumber(bucket.tokens);
+      if (typeof startDate !== "string" || tokens <= 0) continue;
+      dailyTokens.set(startDate, (dailyTokens.get(startDate) ?? 0) + tokens);
+    }
+  }
+
+  const raw = result.summary;
+  const summary: CodexUsageSummary | null = isRecord(raw)
+    ? {
+        lifetimeTokens: positiveNumber(raw.lifetimeTokens),
+        peakDailyTokens: positiveNumber(raw.peakDailyTokens),
+        longestStreakDays: positiveNumber(raw.longestStreakDays),
+      }
+    : null;
+
+  if (dailyTokens.size === 0 && summary === null) return null;
+  return { dailyTokens, summary };
 }
 
 export function parseAccountPlan(result: unknown): string | null {
@@ -192,6 +238,7 @@ async function runRequests(
 
 const RATE_LIMITS_ID = 1;
 const ACCOUNT_ID = 2;
+const USAGE_ID = 3;
 
 function isLoggedOut(error: unknown): boolean {
   if (!isRecord(error)) return false;
@@ -208,6 +255,7 @@ export async function readCodexLimits(
     [
       { id: RATE_LIMITS_ID, method: "account/rateLimits/read" },
       { id: ACCOUNT_ID, method: "account/read" },
+      { id: USAGE_ID, method: "account/usage/read" },
     ],
     timeoutMs,
   );
@@ -226,5 +274,7 @@ export async function readCodexLimits(
   return {
     ...limits,
     planType: limits.planType ?? parseAccountPlan(results.get(ACCOUNT_ID)),
+    // Usage history is a bonus: limits stay usable if this call is unsupported.
+    usage: errors.has(USAGE_ID) ? null : parseUsageHistory(results.get(USAGE_ID)),
   };
 }

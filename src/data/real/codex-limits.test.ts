@@ -8,6 +8,7 @@ function limits(fetchedAtMs: number): CodexAccountLimits {
     weekly: { usedPercent: 12, resetsAtMs: fetchedAtMs + 600_000, windowMinutes: 10080 },
     planType: "plus",
     resetCredits: 1,
+    usage: null,
     fetchedAtMs,
   };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseAccountPlan, parseRateLimits } from "./codex-app-server";
+import { parseAccountPlan, parseRateLimits, parseUsageHistory } from "./codex-app-server";
 
 /** Captured verbatim from `account/rateLimits/read` on codex-cli 0.146.0. */
 const LIVE_RESPONSE = {
@@ -87,6 +87,54 @@ describe("parseRateLimits", () => {
     expect(parseRateLimits(null, NOW_MS)).toBeNull();
     expect(parseRateLimits({}, NOW_MS)).toBeNull();
     expect(parseRateLimits({ rateLimits: "nope" }, NOW_MS)).toBeNull();
+  });
+});
+
+describe("parseUsageHistory", () => {
+  /** Captured verbatim from `account/usage/read`. */
+  const LIVE_USAGE = {
+    summary: {
+      lifetimeTokens: 401496457,
+      peakDailyTokens: 110289890,
+      longestRunningTurnSec: 1802,
+      currentStreakDays: 0,
+      longestStreakDays: 3,
+    },
+    dailyUsageBuckets: [
+      { startDate: "2026-07-05", tokens: 18094581 },
+      { startDate: "2026-07-29", tokens: 28885042 },
+    ],
+  };
+
+  test("reads sparse daily buckets and the summary", () => {
+    const usage = parseUsageHistory(LIVE_USAGE);
+    expect(usage?.dailyTokens.get("2026-07-05")).toBe(18094581);
+    expect(usage?.dailyTokens.get("2026-07-29")).toBe(28885042);
+    // Idle days are simply absent rather than zero-filled.
+    expect(usage?.dailyTokens.has("2026-07-06")).toBe(false);
+    expect(usage?.summary?.lifetimeTokens).toBe(401496457);
+    expect(usage?.summary?.longestStreakDays).toBe(3);
+  });
+
+  test("drops malformed buckets and sums duplicate dates", () => {
+    const usage = parseUsageHistory({
+      dailyUsageBuckets: [
+        { startDate: "2026-07-05", tokens: 10 },
+        { startDate: "2026-07-05", tokens: 5 },
+        { startDate: "2026-07-06", tokens: -3 },
+        { startDate: 7, tokens: 10 },
+        null,
+      ],
+    });
+    expect(usage?.dailyTokens.get("2026-07-05")).toBe(15);
+    expect(usage?.dailyTokens.has("2026-07-06")).toBe(false);
+    expect(usage?.summary).toBeNull();
+  });
+
+  test("returns null when there is nothing usable", () => {
+    expect(parseUsageHistory(null)).toBeNull();
+    expect(parseUsageHistory({})).toBeNull();
+    expect(parseUsageHistory({ dailyUsageBuckets: [] })).toBeNull();
   });
 });
 
