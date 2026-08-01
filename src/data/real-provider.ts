@@ -76,6 +76,8 @@ const OPENCODE_PROVIDER_IDS: Partial<Record<ProviderId, string>> = {
 };
 
 const GO_LIMIT_FOOTNOTE = "estimated from local spend - opencode publishes no usage api";
+/** Opencode stores tokens and cost, never the chatgpt plan windows. */
+const CODEX_NO_LIMITS = "opencode does not record plan limits";
 const NO_CAP_DATA = "no cap data";
 const STATS_WINDOW_DAYS = 30;
 
@@ -95,8 +97,8 @@ function buildMeta(auth: OpencodeAuth): Record<ProviderId, ProviderMeta> {
       id: "cx",
       name: "codex",
       plan: "local usage only",
-      planShort: "local usage",
-      planDetail: "local usage",
+      planShort: "via opencode",
+      planDetail: "via opencode",
       requirement: "openai oauth via opencode",
       source: "~/.local/share/opencode/opencode.db",
       fake: "oauth · openai",
@@ -327,6 +329,24 @@ function sessionsFooter(stats: OpencodeSessionStats | undefined, suffix: string)
   return `sessions 30d ${stats.sessions} ▏ avg per session ${formatTokenCount(stats.tokens / stats.sessions)} ▏ ${suffix}`;
 }
 
+/**
+ * Opencode records no limit data, so the codex line carries everything it does
+ * hold. Last-active matters most: it explains a flat chart at a glance.
+ */
+function localStatsFooter(
+  stats: OpencodeSessionStats | undefined,
+  nowMs: number,
+): string | undefined {
+  if (!stats || stats.sessions <= 0) return undefined;
+  const parts = [
+    `${formatTokenCount(stats.tokens)} tokens 30d`,
+    `sessions ${stats.sessions}`,
+    ...(stats.topModel ? [stats.topModel] : []),
+    ...(stats.latestMs > 0 ? [`last active ${formatAge(nowMs - stats.latestMs)} ago`] : []),
+  ];
+  return parts.join(" ▏ ");
+}
+
 function localBurn(rate: number): BurnRate {
   return {
     limit: "local burn only",
@@ -437,18 +457,18 @@ function buildSnapshot(
             percent: Math.round(codex.weeklyPercent),
             reset: resetText(codex.resetsAtMs, nowMs),
           }
-        : capLessLimit("weekly", "weekly limit", "weekly usage limit", codexLimits.note, codexLimits.note),
+        : capLessLimit("weekly", "weekly limit", "weekly usage limit", CODEX_NO_LIMITS, codexLimits.note),
     ],
     scopes: {
       session: { percent: null, window: "no session cap", reset: "counted in the weekly pool" },
       weekly: {
         percent: codex ? Math.round(codex.weeklyPercent) : null,
         window: "7d · openai plan",
-        reset: codex ? resetText(codex.resetsAtMs, nowMs) : codexLimits.note,
+        reset: codex ? resetText(codex.resetsAtMs, nowMs) : CODEX_NO_LIMITS,
       },
     },
     burn: localBurn(tokensPerHour(cxBuckets, now)),
-    detailFooter: sessionsFooter(cxStats, "tokens from opencode.db"),
+    detailFooter: localStatsFooter(cxStats, nowMs),
   };
 
   // opencode go

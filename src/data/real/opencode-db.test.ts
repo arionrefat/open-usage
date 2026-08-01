@@ -22,6 +22,20 @@ describe("usageFromRows", () => {
     expect(usage.latestMs).toBe(12_000);
   });
 
+  test("picks the most-used model per provider", () => {
+    const usage = usageFromRows(
+      [],
+      [{ provider: "openai", sessions: 2, tokens: 100, latest: 5 }],
+      [
+        { provider: "openai", model: "gpt-5.6-sol", msgs: 900 },
+        { provider: "openai", model: "gpt-5-mini", msgs: 40 },
+        { provider: "opencode-go", model: "claude-sonnet", msgs: 12 },
+        { provider: "openai", model: 7, msgs: 5000 },
+      ],
+    );
+    expect(usage.stats.get("openai")?.topModel).toBe("gpt-5.6-sol");
+  });
+
   test("drops malformed rows instead of throwing", () => {
     const usage = usageFromRows(
       [
@@ -35,7 +49,12 @@ describe("usageFromRows", () => {
       [null, { provider: "openai" }],
     );
     expect(usage.buckets.size).toBe(0);
-    expect(usage.stats.get("openai")).toEqual({ sessions: 0, tokens: 0, latestMs: 0 });
+    expect(usage.stats.get("openai")).toEqual({
+      sessions: 0,
+      tokens: 0,
+      latestMs: 0,
+      topModel: null,
+    });
   });
 });
 

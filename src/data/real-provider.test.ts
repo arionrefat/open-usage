@@ -51,7 +51,7 @@ describe("createRealUsageProvider with no sources", () => {
 
   test("codex and go publish cap-less lines", () => {
     expect(snapshot.providers.cx.limits[0]?.percent).toBeNull();
-    expect(snapshot.providers.cx.limits[0]?.reset).toBe("limits api not yet connected");
+    expect(snapshot.providers.cx.limits[0]?.reset).toBe("opencode does not record plan limits");
     expect(snapshot.providers.go.limits[0]?.percent).toBeNull();
     expect(snapshot.providers.go.limits[0]?.footnote).toContain("no usage api");
   });

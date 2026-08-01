@@ -7,6 +7,8 @@ export interface OpencodeSessionStats {
   sessions: number;
   tokens: number;
   latestMs: number;
+  /** Most-used model id for the provider, e.g. "gpt-5.6-sol". */
+  topModel: string | null;
 }
 
 /** Aggregates keyed by opencode's providerID ("openai", "opencode-go", ...). */
@@ -42,12 +44,38 @@ const SESSION_ROWS_SQL =
   " WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
   " GROUP BY provider";
 
+const MODEL_ROWS_SQL =
+  "SELECT json_extract(data,'$.providerID') AS provider," +
+  " json_extract(data,'$.modelID') AS model," +
+  " COUNT(*) AS msgs" +
+  " FROM message" +
+  " WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
+  " GROUP BY provider, model";
+
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+/** Picks the model with the most assistant messages per provider. */
+function topModels(modelRows: unknown[]): Map<string, string> {
+  const best = new Map<string, { model: string; msgs: number }>();
+  for (const row of modelRows) {
+    if (!isRecord(row)) continue;
+    const { provider, model } = row;
+    if (typeof provider !== "string" || typeof model !== "string") continue;
+    const msgs = finiteNumber(row.msgs) ?? 0;
+    const current = best.get(provider);
+    if (!current || msgs > current.msgs) best.set(provider, { model, msgs });
+  }
+  return new Map([...best].map(([provider, entry]) => [provider, entry.model]));
+}
+
 /** Pure assembly from raw SQL rows so tests can feed synthetic data. */
-export function usageFromRows(hourRows: unknown[], sessionRows: unknown[]): OpencodeUsage {
+export function usageFromRows(
+  hourRows: unknown[],
+  sessionRows: unknown[],
+  modelRows: unknown[] = [],
+): OpencodeUsage {
   const buckets = new Map<string, HourBuckets>();
   for (const row of hourRows) {
     if (!isRecord(row) || typeof row.provider !== "string") continue;
@@ -59,6 +87,7 @@ export function usageFromRows(hourRows: unknown[], sessionRows: unknown[]): Open
     buckets.set(row.provider, providerBuckets);
   }
 
+  const models = topModels(modelRows);
   const stats = new Map<string, OpencodeSessionStats>();
   let latestMs = 0;
   for (const row of sessionRows) {
@@ -67,6 +96,7 @@ export function usageFromRows(hourRows: unknown[], sessionRows: unknown[]): Open
       sessions: finiteNumber(row.sessions) ?? 0,
       tokens: finiteNumber(row.tokens) ?? 0,
       latestMs: finiteNumber(row.latest) ?? 0,
+      topModel: models.get(row.provider) ?? null,
     };
     stats.set(row.provider, entry);
     latestMs = Math.max(latestMs, entry.latestMs);
@@ -83,7 +113,8 @@ export function readOpencodeUsage(dbPath: string, now: Date): OpencodeUsage | nu
     const sinceMs = now.getTime() - USAGE_WINDOW_DAYS * DAY_MS;
     const hourRows: unknown[] = db.query(HOUR_ROWS_SQL).all(sinceMs);
     const sessionRows: unknown[] = db.query(SESSION_ROWS_SQL).all(sinceMs);
-    return usageFromRows(hourRows, sessionRows);
+    const modelRows: unknown[] = db.query(MODEL_ROWS_SQL).all(sinceMs);
+    return usageFromRows(hourRows, sessionRows, modelRows);
   } catch {
     // A locked or migrated DB is an expected local condition, not a crash.
     return null;
