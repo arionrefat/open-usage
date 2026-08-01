@@ -6,6 +6,8 @@ import { isRecord } from "./json";
 export interface TranscriptEvent {
   epochMs: number;
   tokens: number;
+  /** Assistant message id; the same message is logged more than once. */
+  id: string | null;
 }
 
 export interface TranscriptAggregate {
@@ -43,15 +45,26 @@ export function parseTranscriptLine(line: string): TranscriptEvent | null {
     tokenCount(usage.output_tokens) +
     tokenCount(usage.cache_creation_input_tokens);
   if (tokens <= 0) return null;
-  return { epochMs, tokens };
+  const id = typeof message.id === "string" ? message.id : null;
+  return { epochMs, tokens, id };
 }
 
+/**
+ * Claude Code re-logs an assistant message as it streams, so a transcript holds
+ * several identical usage blocks per message. Counting every line inflates the
+ * totals by roughly 3x, so each message id is banked once.
+ */
 export function aggregateTranscriptLines(lines: Iterable<string>): TranscriptAggregate {
   const buckets: HourBuckets = new Map();
+  const seen = new Set<string>();
   let latestMs = 0;
   for (const line of lines) {
     const event = parseTranscriptLine(line);
     if (!event) continue;
+    if (event.id !== null) {
+      if (seen.has(event.id)) continue;
+      seen.add(event.id);
+    }
     addToBucket(buckets, event.epochMs, event.tokens);
     latestMs = Math.max(latestMs, event.epochMs);
   }

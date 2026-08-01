@@ -19,14 +19,26 @@ Verdict up front: all three providers can show real or near-real limit data, eac
 | --- | --- | --- | --- | --- |
 | `~/.claude/usage-snapshot.json` | local file, rewritten every ~3s by the statusline | none | `rate_limits.five_hour.{used_percentage,resets_at}`, `rate_limits.seven_day.{used_percentage,resets_at}`, `context_window`, `cost`, `model` | High while a session is open; goes stale otherwise |
 | `GET https://api.anthropic.com/api/oauth/usage` | HTTP, undocumented (powers `/usage`) | OAuth bearer token + `anthropic-beta: oauth-2025-04-20` + `User-Agent: claude-code/<version>` | session %, weekly all-models %, weekly per-model %, reset timestamps | Reverse-engineered; 429s hard without the User-Agent header; poll no faster than ~180s |
-| `~/.claude/projects/**/*.jsonl` | local transcripts | none | per-message token usage, model, timestamps | Structure is fine, but token counts undercount up to ~100-174x on input; use for activity shape only, never for accounting |
+| `~/.claude/projects/**/*.jsonl` | local transcripts | none | per-message token usage, model, timestamps | Usable for activity shape once de-duplicated (see below); never for accounting |
 | `v1/organizations/usage_report/*` | HTTP, official | Admin API key | org-level tokens/costs | Official but orgs only; not applicable to a personal Max/Pro plan |
 
 ### Recommendation
 
 Keep the statusline snapshot as the primary source; it is already wired in and carries exactly the two windows the UI shows.
 Do not adopt the OAuth endpoint as a default path: on macOS the token lives in the Keychain (no `~/.claude/.credentials.json` on this machine), and since early 2026 Anthropic rejects consumer OAuth tokens used outside Claude Code / Claude.ai, so a third-party poller risks 401s and ToS trouble.
-Treat transcripts as the histogram source only, with the undercount caveat documented in code.
+Treat transcripts as the histogram source only.
+
+### The transcript double-count, and a correction
+
+An earlier note here claimed transcripts *undercount* input tokens by 100-174x, sourced from third-party write-ups.
+Measured against this machine's own transcripts, that is not the failure mode.
+
+The real problem is duplication: Claude Code re-logs an assistant message as it streams, so the same `message.id` appears with an identical usage block several times.
+Across 40 transcripts, 3074 assistant rows collapsed to 1312 unique messages, meaning **65.8% of the tokens being counted were duplicates** - roughly a 3x inflation of the chart, the burn rate and the usage-share figures.
+
+`aggregateTranscriptLines` now banks each `message.id` once. Every message in the sample carried an id, so the de-duplication is complete rather than best-effort; messages without one are still counted, since there is no way to tell them apart.
+
+The lesson worth keeping: this was measurable locally in a few minutes and the published claim pointed the wrong direction. Verify token-accounting claims against real files before encoding them.
 
 ### Staleness handling
 

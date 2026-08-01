@@ -66,4 +66,28 @@ describe("aggregateTranscriptLines", () => {
     expect(buckets.size).toBe(0);
     expect(latestMs).toBe(0);
   });
+
+  test("banks a re-logged message once", () => {
+    const line = (id: string, tokens: number) =>
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-07-30T10:15:00.000Z",
+        message: { id, usage: { output_tokens: tokens } },
+      });
+
+    // Claude Code re-logs a message as it streams; on real transcripts this
+    // triple-counting inflated totals by about 3x.
+    const { buckets } = aggregateTranscriptLines([
+      line("msg_1", 100),
+      line("msg_1", 100),
+      line("msg_1", 100),
+      line("msg_2", 50),
+    ]);
+    expect([...buckets.values()][0]).toBe(150);
+  });
+
+  test("still counts messages that carry no id", () => {
+    const { buckets } = aggregateTranscriptLines([ASSISTANT_LINE, ASSISTANT_LINE]);
+    expect([...buckets.values()][0]).toBe(6_420);
+  });
 });
