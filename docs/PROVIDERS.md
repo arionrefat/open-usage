@@ -8,7 +8,7 @@ Verdict up front: all three providers can show real or near-real limit data, eac
 | Provider | Real percent-of-limit? | Best source | User must provide | Status |
 | --- | --- | --- | --- | --- |
 | claude code | Yes (5h + weekly) | `~/.claude/usage-snapshot.json` (statusline) | Nothing (already configured) | Shipped |
-| codex | Yes (5h + weekly) | Codex CLI `app-server` RPC, else `chatgpt.com/backend-api/wham/usage` | Install Codex CLI - the borrowed opencode token has expired | Not built - stub source, blocked |
+| codex | Yes, from the CLI itself | Codex CLI `app-server` JSON-RPC | Codex CLI installed and signed in | Shipped |
 | opencode go | Yes with a cookie, else a spend estimate | `opencode.ai/_server` RPC, falling back to `opencode.db` spend vs caps | Optional session cookie for exact figures | Shipped |
 
 ## claude code
@@ -82,16 +82,28 @@ The only OpenAI credential here is the `openai` entry in opencode's `auth.json` 
 That makes refresh mandatory rather than optional, which is the problem: OpenAI rotates refresh tokens, so spending opencode's refresh token would likely invalidate the copy opencode still holds and break the user's opencode login.
 Writing the rotated token back into opencode's `auth.json` avoids that but means Limitless mutating another tool's credential store, which this app has so far deliberately never done.
 
-### Recommendation
+### Implemented
 
-Do not spend opencode's refresh token.
-Prefer, in order:
+Codex CLI 0.146.0 was installed, which made the CLI RPC route available, so no token is ever read, refreshed or transmitted by this app.
+`src/data/real/codex-app-server.ts` spawns `codex -s read-only -a untrusted app-server`, sends `initialize`, then `account/rateLimits/read` and `account/read`, and kills the child on every path including the timeout.
 
-1. The CLI RPC (`app-server`) when Codex CLI is installed - no credential handling at all.
-2. A Codex-owned `~/.codex/auth.json` if the user installs Codex, where refreshing and writing back is legitimate because the file is Codex's own.
-3. Read-only use of opencode's token *only while it is unexpired*, showing a "reconnect in opencode" state once it lapses rather than refreshing behind opencode's back.
+Ground truth beat the third-party docs in three places, all verified against `codex app-server generate-json-schema` and a live call:
 
-The existing `stubCodexLimitsSource` in `src/data/real/codex-limits.ts` remains the seam to fill.
+- Fields are camelCase (`usedPercent`, `resetsAt`, `windowDurationMins`), not the snake_case in CodexBar's write-up. `resetsAt` is unix **seconds**.
+- `primary` is not necessarily the session window. This Plus account reports a single **weekly** window (`windowDurationMins: 10080`) as `primary` with `secondary: null`, so windows are classified by their own reported duration - anything at or under six hours is the session lane - and position is only a fallback when the duration is absent.
+- The response also carries `rateLimitResetCredits`, a free "reset my limits" grant. It surfaces on the card because it is the way out of a capped week.
+
+`account/read` supplies the real plan name, which replaces the opencode-derived stand-in label.
+
+### Correction
+
+An earlier note in this document claimed opencode would be consuming the same ChatGPT pool, so codex figures would include opencode-driven usage.
+That is **wrong**: the live reading is 0% used against the `codex` limit id despite heavy opencode activity, so the two do not share a bucket here - different account, or usage metered under a different limit id.
+
+### Cost
+
+Spawning a process is heavier than an HTTP call, so the poll interval stays at 60s minimum with a five-minute backoff on failure and a 15-minute staleness cut-off.
+Tests inject `stubCodexLimitsSource` so the suite never launches a real codex process.
 
 ## opencode go
 

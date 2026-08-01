@@ -20,7 +20,8 @@ import {
 } from "./real/aggregate";
 import { readHistoryStats } from "./real/claude-history";
 import { readClaudeTranscripts } from "./real/claude-transcripts";
-import { stubCodexLimitsSource, type CodexLimitsSource } from "./real/codex-limits";
+import { createCodexLimitsSource, type CodexLimitsSource } from "./real/codex-limits";
+import type { CodexAccountLimits, CodexWindow } from "./real/codex-app-server";
 import { readOpencodeAuth, type OpencodeAuth } from "./real/opencode-auth";
 import { readOpencodeUsage, type OpencodeSessionStats } from "./real/opencode-db";
 import { readGoSpend, type GoSpend, type SpendWindow } from "./real/opencode-go-spend";
@@ -76,8 +77,55 @@ const OPENCODE_PROVIDER_IDS: Partial<Record<ProviderId, string>> = {
 };
 
 const GO_LIMIT_FOOTNOTE = "estimated from local spend - opencode publishes no usage api";
-/** Opencode stores tokens and cost, never the chatgpt plan windows. */
-const CODEX_NO_LIMITS = "opencode does not record plan limits";
+/** Limits come from the codex cli now, so the source explains its own absence. */
+const CODEX_NO_LIMITS = "codex limits unavailable";
+
+/** "plus" reads as a plan name, not a sentence, so only the case changes. */
+function withPlan(meta: ProviderMeta, planType: string): ProviderMeta {
+  const plan = planType.charAt(0).toUpperCase() + planType.slice(1);
+  return { ...meta, plan, planShort: plan, planDetail: plan };
+}
+
+/** Names a window by the duration codex reports rather than by assumption. */
+function windowLabel(minutes: number | null, fallback: string): string {
+  if (minutes === null) return `${fallback} · codex`;
+  if (minutes % 1440 === 0) return `${minutes / 1440}d · codex`;
+  if (minutes % 60 === 0) return `${minutes / 60}h · codex`;
+  return `${minutes}m · codex`;
+}
+
+function codexLimitLines(limits: CodexAccountLimits, nowMs: number): UsageLimit[] {
+  const lines: UsageLimit[] = [];
+  const windows: Array<[string, CodexWindow | null]> = [
+    ["session", limits.session],
+    ["weekly", limits.weekly],
+  ];
+  for (const [id, window] of windows) {
+    if (!window) continue;
+    const label = windowLabel(window.windowMinutes, id).replace(" · codex", " limit");
+    lines.push({
+      id,
+      label,
+      detailLabel: label,
+      percent: Math.round(window.usedPercent),
+      reset: resetText(window.resetsAtMs, nowMs),
+      ...(window.resetsAtMs !== null
+        ? { resetLong: `${resetText(window.resetsAtMs, nowMs)} · ${formatClock(window.resetsAtMs)}` }
+        : {}),
+    });
+  }
+  // A free reset grant is worth surfacing: it is the way out of a capped week.
+  if (lines.length > 0 && limits.resetCredits > 0) {
+    const first = lines[0];
+    if (first) {
+      first.alert = {
+        text: `✓ ${limits.resetCredits} free limit reset available`,
+        color: COLORS.ok,
+      };
+    }
+  }
+  return lines;
+}
 const NO_CAP_DATA = "no cap data";
 const STATS_WINDOW_DAYS = 30;
 
@@ -446,26 +494,39 @@ function buildSnapshot(
   const codex = codexLimits.read();
   const cx: ProviderUsage = {
     id: "cx",
-    meta: meta.cx,
+    // Codex reports the real plan; the opencode-derived label is only a stand-in.
+    meta: codex?.planType ? withPlan(meta.cx, codex.planType) : meta.cx,
     series: seriesFromBuckets(cxBuckets, dates, now),
-    limits: [
-      codex
-        ? {
-            id: "weekly",
-            label: "weekly limit",
-            detailLabel: "weekly usage limit",
-            percent: Math.round(codex.weeklyPercent),
-            reset: resetText(codex.resetsAtMs, nowMs),
-          }
-        : capLessLimit("weekly", "weekly limit", "weekly usage limit", CODEX_NO_LIMITS, codexLimits.note),
-    ],
+    limits: codex
+      ? codexLimitLines(codex, nowMs)
+      : [
+          capLessLimit(
+            "weekly",
+            "weekly limit",
+            "weekly usage limit",
+            codexLimits.note() ?? CODEX_NO_LIMITS,
+            codexLimits.note() ?? CODEX_NO_LIMITS,
+          ),
+        ],
     scopes: {
-      session: { percent: null, window: "no session cap", reset: "counted in the weekly pool" },
-      weekly: {
-        percent: codex ? Math.round(codex.weeklyPercent) : null,
-        window: "7d · openai plan",
-        reset: codex ? resetText(codex.resetsAtMs, nowMs) : CODEX_NO_LIMITS,
-      },
+      session: codex?.session
+        ? {
+            percent: Math.round(codex.session.usedPercent),
+            window: windowLabel(codex.session.windowMinutes, "session"),
+            reset: resetText(codex.session.resetsAtMs, nowMs),
+          }
+        : { percent: null, window: "no session cap", reset: "counted in the weekly pool" },
+      weekly: codex?.weekly
+        ? {
+            percent: Math.round(codex.weekly.usedPercent),
+            window: windowLabel(codex.weekly.windowMinutes, "weekly"),
+            reset: resetText(codex.weekly.resetsAtMs, nowMs),
+          }
+        : {
+            percent: null,
+            window: "no data",
+            reset: codexLimits.note() ?? CODEX_NO_LIMITS,
+          },
     },
     burn: localBurn(tokensPerHour(cxBuckets, now)),
     detailFooter: localStatsFooter(cxStats, nowMs),
@@ -538,15 +599,19 @@ function buildSnapshot(
     dailyDates: dates,
     hourlyAxis: ["00:00", "12:00", "23:00"],
     fetchedAt,
-    windowNote: goSpend
-      ? "codex limits not connected · opencode go is a local spend estimate"
-      : "codex + opencode go limits not connected",
+    // Only caveats that still apply; a connected provider says nothing.
+    windowNote: [
+      codex ? null : (codexLimits.note() ?? "codex limits unavailable"),
+      goServer ? null : goSpend ? "opencode go is a local spend estimate" : null,
+    ]
+      .filter((part): part is string => part !== null)
+      .join(" · "),
   };
 }
 
 export function createRealUsageProvider(options: RealProviderOptions = {}): UsageProvider {
   const paths = options.paths ?? defaultRealProviderPaths();
-  const codexLimits = options.codexLimits ?? stubCodexLimitsSource;
+  const codexLimits = options.codexLimits ?? createCodexLimitsSource();
   const goLimits = options.goLimits ?? createGoLimitsSource(paths.opencodeCookie);
   const trend = createWeeklyTrend();
   const meta = buildMeta(readOpencodeAuth(paths.opencodeAuth));
@@ -571,7 +636,11 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
       }
       // Network limits refresh their cache first; a failure there must not
       // sink the local read, which is the source of truth for everything else.
-      await goLimits.poll(new Date(), signal).catch(() => undefined);
+      const at = new Date();
+      await Promise.all([
+        goLimits.poll(at, signal).catch(() => undefined),
+        codexLimits.poll(at, signal).catch(() => undefined),
+      ]);
       if (signal?.aborted) {
         throw signal.reason instanceof Error
           ? signal.reason

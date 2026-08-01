@@ -1,0 +1,99 @@
+import { describe, expect, test } from "bun:test";
+import { parseAccountPlan, parseRateLimits } from "./codex-app-server";
+
+/** Captured verbatim from `account/rateLimits/read` on codex-cli 0.146.0. */
+const LIVE_RESPONSE = {
+  rateLimits: {
+    limitId: "codex",
+    limitName: null,
+    primary: { usedPercent: 0, windowDurationMins: 10080, resetsAt: 1786212362 },
+    secondary: null,
+    credits: { hasCredits: false, unlimited: false, balance: "0" },
+    individualLimit: null,
+    spendControlReached: false,
+    planType: "plus",
+    rateLimitReachedType: null,
+  },
+  rateLimitsByLimitId: { codex: { limitId: "codex" } },
+  rateLimitResetCredits: {
+    availableCount: 1,
+    credits: [{ id: "x", resetType: "codexRateLimits", status: "available", grantedAt: 1 }],
+  },
+};
+
+const NOW_MS = 1_786_000_000_000;
+
+describe("parseRateLimits", () => {
+  test("classifies a lone weekly primary window by its duration", () => {
+    const limits = parseRateLimits(LIVE_RESPONSE, NOW_MS);
+    // A positional mapping would have called this the session window.
+    expect(limits?.session).toBeNull();
+    expect(limits?.weekly).toEqual({
+      usedPercent: 0,
+      resetsAtMs: 1786212362 * 1000,
+      windowMinutes: 10080,
+    });
+    expect(limits?.planType).toBe("plus");
+    expect(limits?.resetCredits).toBe(1);
+  });
+
+  test("splits a short and a long window into the right scopes", () => {
+    const limits = parseRateLimits(
+      {
+        rateLimits: {
+          primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1_786_000_600 },
+          secondary: { usedPercent: 88, windowDurationMins: 10080, resetsAt: 1_786_100_000 },
+          planType: "pro",
+        },
+      },
+      NOW_MS,
+    );
+    expect(limits?.session?.usedPercent).toBe(42);
+    expect(limits?.weekly?.usedPercent).toBe(88);
+  });
+
+  test("falls back to position when a duration is missing", () => {
+    const limits = parseRateLimits(
+      {
+        rateLimits: {
+          primary: { usedPercent: 10 },
+          secondary: { usedPercent: 20 },
+        },
+      },
+      NOW_MS,
+    );
+    expect(limits?.session?.usedPercent).toBe(10);
+    expect(limits?.weekly?.usedPercent).toBe(20);
+  });
+
+  test("treats a lone undated window as the weekly one", () => {
+    const limits = parseRateLimits({ rateLimits: { primary: { usedPercent: 10 } } }, NOW_MS);
+    expect(limits?.session).toBeNull();
+    expect(limits?.weekly?.usedPercent).toBe(10);
+  });
+
+  test("survives nulls, clamps percentages and defaults the credit count", () => {
+    const limits = parseRateLimits(
+      { rateLimits: { primary: { usedPercent: 150 }, secondary: null } },
+      NOW_MS,
+    );
+    expect(limits?.weekly?.usedPercent).toBe(100);
+    expect(limits?.weekly?.resetsAtMs).toBeNull();
+    expect(limits?.resetCredits).toBe(0);
+    expect(limits?.planType).toBeNull();
+  });
+
+  test("rejects replies without a rate limit snapshot", () => {
+    expect(parseRateLimits(null, NOW_MS)).toBeNull();
+    expect(parseRateLimits({}, NOW_MS)).toBeNull();
+    expect(parseRateLimits({ rateLimits: "nope" }, NOW_MS)).toBeNull();
+  });
+});
+
+describe("parseAccountPlan", () => {
+  test("reads the plan from an account reply", () => {
+    expect(parseAccountPlan({ account: { type: "chatgpt", planType: "plus" } })).toBe("plus");
+    expect(parseAccountPlan({ account: {} })).toBeNull();
+    expect(parseAccountPlan(null)).toBeNull();
+  });
+});

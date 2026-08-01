@@ -4,6 +4,8 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DAY_MS, HOUR_MS } from "./real/aggregate";
+import { stubCodexLimitsSource } from "./real/codex-limits";
+import { dormantGoLimitsSource } from "./real/go-limits-source";
 import { PROVIDER_IDS } from "./types";
 import {
   createRealUsageProvider,
@@ -22,8 +24,14 @@ const MISSING_PATHS: RealProviderPaths = {
   usageSnapshot: "/nonexistent/usage-snapshot.json",
 };
 
+/** Keeps the suite off the network and away from a real codex process. */
+const OFFLINE = {
+  codexLimits: stubCodexLimitsSource,
+  goLimits: dormantGoLimitsSource,
+} as const;
+
 describe("createRealUsageProvider with no sources", () => {
-  const provider = createRealUsageProvider({ paths: MISSING_PATHS });
+  const provider = createRealUsageProvider({ paths: MISSING_PATHS, ...OFFLINE });
   const snapshot = provider.readSnapshot();
 
   test("keeps the full snapshot contract", () => {
@@ -51,7 +59,7 @@ describe("createRealUsageProvider with no sources", () => {
 
   test("codex and go publish cap-less lines", () => {
     expect(snapshot.providers.cx.limits[0]?.percent).toBeNull();
-    expect(snapshot.providers.cx.limits[0]?.reset).toBe("opencode does not record plan limits");
+    expect(snapshot.providers.cx.limits[0]?.reset).toBe("codex limits not connected");
     expect(snapshot.providers.go.limits[0]?.percent).toBeNull();
     expect(snapshot.providers.go.limits[0]?.footnote).toContain("no usage api");
   });
@@ -106,6 +114,7 @@ describe("opencode go spend limits", () => {
     try {
       const provider = createRealUsageProvider({
         paths: { ...MISSING_PATHS, opencodeDb: dbPath },
+        ...OFFLINE,
       });
       const go = provider.readSnapshot().providers.go;
 
@@ -132,6 +141,7 @@ describe("opencode go server limits", () => {
   test("server percentages replace the local estimate", () => {
     const provider = createRealUsageProvider({
       paths: MISSING_PATHS,
+      ...OFFLINE,
       goLimits: { read: () => serverLimits, note: () => null, poll: () => Promise.resolve() },
     });
     const go = provider.readSnapshot().providers.go;
@@ -146,6 +156,7 @@ describe("opencode go server limits", () => {
   test("a source note surfaces when there are no limits at all", () => {
     const provider = createRealUsageProvider({
       paths: MISSING_PATHS,
+      ...OFFLINE,
       goLimits: {
         read: () => null,
         note: () => "opencode session expired - paste a fresh cookie",
@@ -159,6 +170,7 @@ describe("opencode go server limits", () => {
   test("a failing poll leaves the local snapshot intact", async () => {
     const provider = createRealUsageProvider({
       paths: MISSING_PATHS,
+      ...OFFLINE,
       goLimits: {
         read: () => null,
         note: () => null,
