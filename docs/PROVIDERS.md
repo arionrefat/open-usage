@@ -8,7 +8,7 @@ Verdict up front: all three providers can show real or near-real limit data, eac
 | Provider | Real percent-of-limit? | Best source | User must provide | Status |
 | --- | --- | --- | --- | --- |
 | claude code | Yes (5h + weekly) | `~/.claude/usage-snapshot.json` (statusline) | Nothing (already configured) | Shipped |
-| codex | Yes (5h + weekly) | `chatgpt.com/backend-api/wham/usage` | Nothing (OAuth token already in opencode auth.json) | Not built - stub source |
+| codex | Yes (5h + weekly) | Codex CLI `app-server` RPC, else `chatgpt.com/backend-api/wham/usage` | Install Codex CLI - the borrowed opencode token has expired | Not built - stub source, blocked |
 | opencode go | Yes with a cookie, else a spend estimate | `opencode.ai/_server` RPC, falling back to `opencode.db` spend vs caps | Optional session cookie for exact figures | Shipped |
 
 ## claude code
@@ -43,17 +43,55 @@ Surface the snapshot's age (mtime) and mark the provider stale when it exceeds t
 | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | local files | none | `token_count` events: cumulative tokens + nullable `rate_limits` snapshot | Offline fallback; `rate_limits` is sometimes null (openai/codex#14880); not present on this machine |
 | `api.openai.com/v1/billing/usage` | HTTP, official | platform API key | API billing usage | Wrong billing system for ChatGPT-plan users; irrelevant here |
 
-### This machine
+### The CLI RPC path (best, when Codex is installed)
 
-`~/.codex` does not exist; Codex runs through OpenCode.
-But `~/.local/share/opencode/auth.json` has an `openai` entry with `access`, `refresh`, `expires`, `accountId` fields, which is exactly what `wham/usage` needs.
-So Limitless can show real Codex percent + reset by reading that token and calling the endpoint, with the `expires` field telling us when a refresh (via the `refresh` token against OpenAI's OAuth token endpoint) is needed.
+CodexBar's `docs/codex.md` documents a route the earlier research missed entirely: Codex CLI can be driven as a JSON-RPC server, so limits come from the tool itself with no token handling and no private endpoint.
+
+```
+codex -s read-only -a untrusted app-server
+```
+
+Methods: `initialize` (client name/version), then `account/read` and `account/rateLimits/read`.
+Sandboxed read-only and untrusted, with a per-method timeout and the child killed on overrun.
+This should be the first choice wherever the CLI exists, because it survives endpoint changes and never touches a credential.
+
+### Exact wire format
+
+Response nests the windows under `rate_limit`: `rate_limit.primary_window` is the session lane, `rate_limit.secondary_window` the weekly lane, each with `used_percent`, `reset_at`, `limit_window_seconds`.
+`additional_rate_limits[]` carries per-model lanes, and a credits snapshot carries `balance`, `hasCredits`, `unlimited`.
+Headers are `Authorization: Bearer <access_token>`, `ChatGPT-Account-Id: <account_id>`, `User-Agent: codex-cli`.
+Fallback endpoint: `{base_url}/api/codex/usage`. Related: `GET .../wham/rate-limit-reset-credits`.
+
+### Token refresh
+
+```
+POST https://auth.openai.com/oauth/token
+{ "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+  "grant_type": "refresh_token",
+  "refresh_token": "<refresh_token>",
+  "scope": "openid profile email" }
+```
+
+Returns a new `id_token`, `access_token` and `refresh_token`; CodexBar refreshes when `last_refresh` is over 8 days old, and treats a missing `last_refresh` as due immediately.
+
+### This machine, and the hazard that blocks it
+
+No `~/.codex`, and no `codex` on PATH, so both the CLI RPC path and the `auth.json` path are unavailable.
+The only OpenAI credential here is the `openai` entry in opencode's `auth.json` (`access`, `refresh`, `expires`, `accountId`) - and as of 2026-08-01 that access token is already **expired**.
+
+That makes refresh mandatory rather than optional, which is the problem: OpenAI rotates refresh tokens, so spending opencode's refresh token would likely invalidate the copy opencode still holds and break the user's opencode login.
+Writing the rotated token back into opencode's `auth.json` avoids that but means Limitless mutating another tool's credential store, which this app has so far deliberately never done.
 
 ### Recommendation
 
-Implement a `codex-limits` source that reads the OpenAI OAuth entry from opencode's auth.json (falling back to `~/.codex/auth.json` if it appears later), calls `wham/usage` at most once per 60s, and maps primary/secondary windows onto the session/weekly scopes.
-Handle 401 by attempting one token refresh, then marking the connection expired with the reason.
-The existing `stubCodexLimitsSource` in `src/data/real/codex-limits.ts` is the seam to fill.
+Do not spend opencode's refresh token.
+Prefer, in order:
+
+1. The CLI RPC (`app-server`) when Codex CLI is installed - no credential handling at all.
+2. A Codex-owned `~/.codex/auth.json` if the user installs Codex, where refreshing and writing back is legitimate because the file is Codex's own.
+3. Read-only use of opencode's token *only while it is unexpired*, showing a "reconnect in opencode" state once it lapses rather than refreshing behind opencode's back.
+
+The existing `stubCodexLimitsSource` in `src/data/real/codex-limits.ts` remains the seam to fill.
 
 ## opencode go
 
