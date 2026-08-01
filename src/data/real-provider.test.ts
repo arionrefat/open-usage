@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DAY_MS, HOUR_MS } from "./real/aggregate";
@@ -21,6 +21,7 @@ const MISSING_PATHS: RealProviderPaths = {
   opencodeCookie: "/nonexistent/opencode-cookie",
   claudeProjects: "/nonexistent/projects",
   claudeHistory: "/nonexistent/history.jsonl",
+  claudeSettings: "/nonexistent/settings.json",
   usageSnapshot: "/nonexistent/usage-snapshot.json",
 };
 
@@ -51,10 +52,25 @@ describe("createRealUsageProvider with no sources", () => {
     for (const id of PROVIDER_IDS) expect(connections[id].status).toBe("none");
   });
 
-  test("claude limits explain the missing snapshot", () => {
+  test("claude limits blame the unconfigured statusline, not the session", () => {
     const [session] = snapshot.providers.cl.limits;
     expect(session?.percent).toBeNull();
-    expect(session?.footnote).toContain("statusline snapshot missing");
+    // "open a session" would never produce a snapshot without a statusline.
+    expect(session?.footnote).toContain("no statusline configured");
+    expect(session?.footnote).not.toContain("open a claude code session");
+  });
+
+  test("a configured statusline changes the advice to opening a session", () => {
+    const dir = mkdtempSync(join(tmpdir(), "limitless-settings-"));
+    const settings = join(dir, "settings.json");
+    writeFileSync(settings, JSON.stringify({ statusLine: { type: "command", command: "x.sh" } }));
+
+    const provider = createRealUsageProvider({
+      paths: { ...MISSING_PATHS, claudeSettings: settings },
+      ...OFFLINE,
+    });
+    const [session] = provider.readSnapshot().providers.cl.limits;
+    expect(session?.footnote).toContain("open a claude code session");
   });
 
   test("codex and go publish cap-less lines", () => {

@@ -20,6 +20,7 @@ import {
   type HourBuckets,
 } from "./real/aggregate";
 import { readHistoryStats } from "./real/claude-history";
+import { hasStatuslineConfigured } from "./real/claude-settings";
 import { readClaudeTranscripts } from "./real/claude-transcripts";
 import { createCodexLimitsSource, type CodexLimitsSource } from "./real/codex-limits";
 import type {
@@ -57,6 +58,7 @@ export interface RealProviderPaths {
   opencodeCookie: string;
   claudeProjects: string;
   claudeHistory: string;
+  claudeSettings: string;
   usageSnapshot: string;
 }
 
@@ -68,6 +70,7 @@ export function defaultRealProviderPaths(): RealProviderPaths {
     opencodeCookie: join(home, ".config", "limitless", "opencode-cookie"),
     claudeProjects: join(home, ".claude", "projects"),
     claudeHistory: join(home, ".claude", "history.jsonl"),
+    claudeSettings: join(home, ".claude", "settings.json"),
     usageSnapshot: join(home, ".claude", "usage-snapshot.json"),
   };
 }
@@ -180,8 +183,8 @@ function buildMeta(auth: OpencodeAuth): Record<ProviderId, ProviderMeta> {
   };
 }
 
-function claudeConnectionNote(snapshotFile: SnapshotFile | null): string {
-  if (!snapshotFile) return "no statusline snapshot yet";
+function claudeConnectionNote(snapshotFile: SnapshotFile | null, hasStatusline: boolean): string {
+  if (!snapshotFile) return hasStatusline ? "no statusline snapshot yet" : "no statusline configured";
   const age = formatAge(snapshotFile.ageMs);
   return snapshotFile.ageMs < SNAPSHOT_FRESH_MS
     ? `statusline snapshot ${age === "just now" ? "just written" : `${age} old`}`
@@ -209,7 +212,7 @@ function buildConnections(
           isEnabled: true,
           status: "active",
           credential: "oauth · claude code",
-          note: claudeConnectionNote(snapshotFile),
+          note: claudeConnectionNote(snapshotFile, hasStatuslineConfigured(paths.claudeSettings)),
         }
       : { isEnabled: true, status: "none", credential: "", note: "claude code not found" },
     cx: auth.openai
@@ -337,10 +340,13 @@ function claudeLimits(
   projection: ClaudeProjection,
   rateLabel: string,
   nowMs: number,
+  hasStatusline: boolean,
 ): UsageLimit[] {
   const staleNote =
     snapshotFile === null
-      ? "statusline snapshot missing - open a claude code session to refresh"
+      ? hasStatusline
+        ? "statusline snapshot missing - open a claude code session to refresh"
+        : "no statusline configured - claude code writes limits from one"
       : `statusline snapshot stale (${formatAge(snapshotFile.ageMs)} old) - open a claude code session to refresh`;
   const isFresh = snapshotFile !== null && snapshotFile.ageMs < SNAPSHOT_FRESH_MS;
   const five = snapshotFile?.reading.fiveHour ?? null;
@@ -442,6 +448,7 @@ function buildSnapshot(
   const transcripts = readClaudeTranscripts(paths.claudeProjects);
   const history = readHistoryStats(paths.claudeHistory, nowMs - STATS_WINDOW_DAYS * DAY_MS);
   const snapshotFile = readUsageSnapshot(paths.usageSnapshot, now);
+  const hasStatusline = hasStatuslineConfigured(paths.claudeSettings);
 
   // claude
   const clRate = tokensPerHour(transcripts.buckets, now);
@@ -457,7 +464,7 @@ function buildSnapshot(
     id: "cl",
     meta: meta.cl,
     series: seriesFromBuckets(transcripts.buckets, dates, now),
-    limits: claudeLimits(snapshotFile, projection, rateLabel, nowMs),
+    limits: claudeLimits(snapshotFile, projection, rateLabel, nowMs, hasStatusline),
     scopes: {
       session: {
         percent: five ? Math.round(five.percent) : null,
@@ -491,9 +498,11 @@ function buildSnapshot(
             segments: [
               {
                 text:
-                  snapshotFile === null
-                    ? "statusline snapshot missing - open a claude code session to refresh limits"
-                    : "statusline snapshot stale - open a claude code session to refresh limits",
+                  snapshotFile !== null
+                    ? "statusline snapshot stale - open a claude code session to refresh limits"
+                    : hasStatusline
+                      ? "statusline snapshot missing - open a claude code session to refresh limits"
+                      : "no statusline configured - claude code writes its limits from a statusline command",
               },
             ],
           },
