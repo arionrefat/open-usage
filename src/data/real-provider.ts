@@ -23,6 +23,9 @@ import { readClaudeTranscripts } from "./real/claude-transcripts";
 import { stubCodexLimitsSource, type CodexLimitsSource } from "./real/codex-limits";
 import { readOpencodeAuth, type OpencodeAuth } from "./real/opencode-auth";
 import { readOpencodeUsage, type OpencodeSessionStats } from "./real/opencode-db";
+import { readGoSpend, type GoSpend, type SpendWindow } from "./real/opencode-go-spend";
+import { createGoLimitsSource, type GoLimitsSource } from "./real/go-limits-source";
+import type { GoServerLimits } from "./real/opencode-server";
 import {
   SNAPSHOT_FRESH_MS,
   createWeeklyTrend,
@@ -45,6 +48,7 @@ import type {
 export interface RealProviderPaths {
   opencodeDb: string;
   opencodeAuth: string;
+  opencodeCookie: string;
   claudeProjects: string;
   claudeHistory: string;
   usageSnapshot: string;
@@ -55,6 +59,7 @@ export function defaultRealProviderPaths(): RealProviderPaths {
   return {
     opencodeDb: join(home, ".local", "share", "opencode", "opencode.db"),
     opencodeAuth: join(home, ".local", "share", "opencode", "auth.json"),
+    opencodeCookie: join(home, ".config", "limitless", "opencode-cookie"),
     claudeProjects: join(home, ".claude", "projects"),
     claudeHistory: join(home, ".claude", "history.jsonl"),
     usageSnapshot: join(home, ".claude", "usage-snapshot.json"),
@@ -70,7 +75,7 @@ const OPENCODE_PROVIDER_IDS: Partial<Record<ProviderId, string>> = {
   go: "opencode-go",
 };
 
-const GO_LIMIT_FOOTNOTE = "no usage api yet - opencode.ai dashboard";
+const GO_LIMIT_FOOTNOTE = "estimated from local spend - opencode publishes no usage api";
 const NO_CAP_DATA = "no cap data";
 const STATS_WINDOW_DAYS = 30;
 
@@ -81,7 +86,7 @@ function buildMeta(auth: OpencodeAuth): Record<ProviderId, ProviderMeta> {
       name: "claude code",
       plan: "local data",
       planShort: "local data",
-      planDetail: "statusline snapshot + local transcripts",
+      planDetail: "local data",
       requirement: "claude code installed (oauth)",
       source: "~/.claude",
       fake: "oauth · claude code",
@@ -91,7 +96,7 @@ function buildMeta(auth: OpencodeAuth): Record<ProviderId, ProviderMeta> {
       name: "codex",
       plan: "local usage only",
       planShort: "local usage",
-      planDetail: "usage from opencode.db · limits not connected",
+      planDetail: "local usage",
       requirement: "openai oauth via opencode",
       source: "~/.local/share/opencode/opencode.db",
       fake: "oauth · openai",
@@ -100,8 +105,8 @@ function buildMeta(auth: OpencodeAuth): Record<ProviderId, ProviderMeta> {
       id: "go",
       name: "opencode go",
       plan: "local usage only",
-      planShort: "local usage",
-      planDetail: "usage from opencode.db · no usage api",
+      planShort: "Go · estimate",
+      planDetail: "Go · spend estimate",
       requirement: "opencode go api key",
       source: "~/.local/share/opencode/opencode.db",
       fake: auth.opencodeGo?.maskedKey ?? "api key",
@@ -170,6 +175,69 @@ function capLessLimit(id: string, label: string, detailLabel: string, note: stri
 
 function resetText(resetsAtMs: number | null, nowMs: number): string {
   return resetsAtMs !== null ? `resets in ${formatCountdown(resetsAtMs - nowMs)}` : "reset unknown";
+}
+
+function formatUsd(usd: number): string {
+  return usd >= 10 ? `$${usd.toFixed(0)}` : `$${usd.toFixed(2)}`;
+}
+
+/** Rolling windows free up gradually; a billing cycle resets outright. */
+function spendResetText(window: SpendWindow, nowMs: number, isRolling = true): string {
+  if (window.resetAtMs === null) return "no spend in window";
+  const verb = isRolling && window.usd > 0 ? "frees up in" : "resets in";
+  return `${verb} ${formatCountdown(window.resetAtMs - nowMs)}`;
+}
+
+/**
+ * Server percentages replace the estimate for the windows opencode publishes;
+ * the monthly line has no server equivalent so the local estimate carries it.
+ */
+function serverGoLimits(
+  server: GoServerLimits,
+  spend: GoSpend | null,
+  nowMs: number,
+): UsageLimit[] {
+  const limits: UsageLimit[] = [
+    {
+      id: "session",
+      label: "rolling 5h",
+      detailLabel: "rolling 5h limit",
+      percent: Math.round(server.rollingPercent),
+      reset: resetText(server.rollingResetAtMs, nowMs),
+    },
+  ];
+  if (server.weeklyPercent !== null) {
+    limits.push({
+      id: "weekly",
+      label: "rolling 7d",
+      detailLabel: "rolling 7d limit",
+      percent: Math.round(server.weeklyPercent),
+      reset: resetText(server.weeklyResetAtMs, nowMs),
+    });
+  }
+  if (spend) {
+    limits.push(spendLimit("monthly", "this cycle", "monthly limit", spend.monthly, nowMs, false));
+  }
+  return limits;
+}
+
+function spendLimit(
+  id: string,
+  label: string,
+  detailLabel: string,
+  window: SpendWindow,
+  nowMs: number,
+  isRolling = true,
+): UsageLimit {
+  return {
+    id,
+    label,
+    detailLabel,
+    percent: Math.round(window.percent),
+    reset: spendResetText(window, nowMs, isRolling),
+    detailValueLabel: `${formatUsd(window.usd)} of ${formatUsd(window.capUsd)}`,
+    footnote: GO_LIMIT_FOOTNOTE,
+  };
 }
 
 interface ClaudeProjection {
@@ -272,12 +340,14 @@ function localBurn(rate: number): BurnRate {
 interface RealProviderOptions {
   paths?: RealProviderPaths;
   codexLimits?: CodexLimitsSource;
+  goLimits?: GoLimitsSource;
 }
 
 function buildSnapshot(
   paths: RealProviderPaths,
   meta: Record<ProviderId, ProviderMeta>,
   codexLimits: CodexLimitsSource,
+  goLimits: GoLimitsSource,
   trend: WeeklyTrend,
 ): UsageSnapshot {
   const now = new Date();
@@ -384,16 +454,50 @@ function buildSnapshot(
   // opencode go
   const goBuckets: HourBuckets = opencode?.buckets.get(OPENCODE_PROVIDER_IDS.go ?? "") ?? new Map();
   const goStats = opencode?.stats.get(OPENCODE_PROVIDER_IDS.go ?? "");
+  const goSpend = readGoSpend(paths.opencodeDb, now);
+  const goServer = goLimits.read();
+  const goNote = goLimits.note();
   const go: ProviderUsage = {
     id: "go",
     meta: meta.go,
     series: seriesFromBuckets(goBuckets, dates, now),
-    limits: [
-      capLessLimit("usage", "plan usage", "plan usage", "no usage api yet", GO_LIMIT_FOOTNOTE),
-    ],
+    limits: goServer
+      ? serverGoLimits(goServer, goSpend, nowMs)
+      : goSpend
+        ? [
+            spendLimit("session", "rolling 5h", "rolling 5h limit", goSpend.session, nowMs),
+            spendLimit("weekly", "rolling 7d", "rolling 7d limit", goSpend.weekly, nowMs),
+            spendLimit("monthly", "this cycle", "monthly limit", goSpend.monthly, nowMs, false),
+          ]
+        : [capLessLimit("usage", "plan usage", "plan usage", goNote ?? "no local usage", GO_LIMIT_FOOTNOTE)],
     scopes: {
-      session: { percent: null, window: "no data", reset: "no usage api yet" },
-      weekly: { percent: null, window: "no data", reset: GO_LIMIT_FOOTNOTE },
+      session: goServer
+        ? {
+            percent: Math.round(goServer.rollingPercent),
+            window: "5h rolling · opencode",
+            reset: resetText(goServer.rollingResetAtMs, nowMs),
+          }
+        : goSpend
+          ? {
+              percent: Math.round(goSpend.session.percent),
+              window: "5h rolling · spend estimate",
+              reset: spendResetText(goSpend.session, nowMs),
+            }
+          : { percent: null, window: "no data", reset: goNote ?? "no local usage" },
+      weekly:
+        goServer && goServer.weeklyPercent !== null
+          ? {
+              percent: Math.round(goServer.weeklyPercent),
+              window: "7d · opencode",
+              reset: resetText(goServer.weeklyResetAtMs, nowMs),
+            }
+          : goSpend
+            ? {
+                percent: Math.round(goSpend.weekly.percent),
+                window: "7d rolling · spend estimate",
+                reset: spendResetText(goSpend.weekly, nowMs),
+              }
+            : { percent: null, window: "no data", reset: goNote ?? GO_LIMIT_FOOTNOTE },
     },
     burn: localBurn(tokensPerHour(goBuckets, now)),
     detailFooter: sessionsFooter(goStats, "tokens from opencode.db"),
@@ -414,17 +518,19 @@ function buildSnapshot(
     dailyDates: dates,
     hourlyAxis: ["00:00", "12:00", "23:00"],
     fetchedAt,
-    windowNote:
-      "claude limits come from the statusline snapshot - codex and opencode go limits are not connected yet",
+    windowNote: goSpend
+      ? "codex limits not connected · opencode go is a local spend estimate"
+      : "codex + opencode go limits not connected",
   };
 }
 
 export function createRealUsageProvider(options: RealProviderOptions = {}): UsageProvider {
   const paths = options.paths ?? defaultRealProviderPaths();
   const codexLimits = options.codexLimits ?? stubCodexLimitsSource;
+  const goLimits = options.goLimits ?? createGoLimitsSource(paths.opencodeCookie);
   const trend = createWeeklyTrend();
   const meta = buildMeta(readOpencodeAuth(paths.opencodeAuth));
-  let snapshot = buildSnapshot(paths, meta, codexLimits, trend);
+  let snapshot = buildSnapshot(paths, meta, codexLimits, goLimits, trend);
 
   return {
     scopeTitles: { session: "current session", weekly: "weekly limit" },
@@ -437,16 +543,23 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
         Date.now(),
       ),
     readSnapshot: () => snapshot,
-    refresh: (signal) =>
-      Promise.resolve().then(() => {
-        if (signal?.aborted) {
-          throw signal.reason instanceof Error
-            ? signal.reason
-            : new DOMException("Refresh aborted", "AbortError");
-        }
-        snapshot = buildSnapshot(paths, meta, codexLimits, trend);
-        return snapshot;
-      }),
+    refresh: async (signal) => {
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error
+          ? signal.reason
+          : new DOMException("Refresh aborted", "AbortError");
+      }
+      // Network limits refresh their cache first; a failure there must not
+      // sink the local read, which is the source of truth for everything else.
+      await goLimits.poll(new Date(), signal).catch(() => undefined);
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error
+          ? signal.reason
+          : new DOMException("Refresh aborted", "AbortError");
+      }
+      snapshot = buildSnapshot(paths, meta, codexLimits, goLimits, trend);
+      return snapshot;
+    },
     maskCredential,
   };
 }

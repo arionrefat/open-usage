@@ -101,7 +101,6 @@ export function ProviderDetail({
           { text: " ▏ ", color: COLORS.rule },
           { text: provider.meta.planDetail, color: COLORS.textFaint },
         ]}
-        right={[{ text: `source: ${provider.meta.source}`, color: COLORS.textGhost }]}
       />
       {isStale ? (
         <>

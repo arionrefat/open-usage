@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bars, planChart, sparkline, stackedBar, type ChartRow } from "./chart";
+import { bars, formatTokens, planChart, sparkline, stackedBar, type ChartRow } from "./chart";
 import { buildMeter } from "./meter";
 import { COLORS } from "../theme";
 
@@ -113,5 +113,16 @@ describe("planChart", () => {
     expect(chart.names[1]).toEqual({ text: `${" ".repeat(5)} codex  `, color: COLORS.textGhost });
     expect(chart.values[1]).toEqual({ text: `${" ".repeat(5)}   —    `, color: COLORS.textGhost });
     expect(chart.values[0]).toEqual({ text: `${" ".repeat(5)}  88%   `, color: "orange" });
+  });
+});
+
+describe("formatTokens", () => {
+  test("scales across billions, millions and thousands", () => {
+    expect(formatTokens(1200)).toBe("1.20B");
+    expect(formatTokens(42)).toBe("42M");
+    // A light provider must not collapse to a flat "0M".
+    expect(formatTokens(0.049)).toBe("49K");
+    expect(formatTokens(0.0004)).toBe("<1K");
+    expect(formatTokens(0)).toBe("0");
   });
 });

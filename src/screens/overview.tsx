@@ -37,15 +37,6 @@ export function Overview(props: OverviewProps) {
       <SplitLine
         width={width}
         left={[{ text: "mode ", color: COLORS.textDim }, ...modeToggleSegments(state.mode, actions)]}
-        right={[
-          {
-            text:
-              state.mode === "simple"
-                ? "one chart, one number per provider"
-                : "every limit, burn rate and history",
-            color: COLORS.textGhost,
-          },
-        ]}
       />
       <Spacer />
       {state.mode === "simple" ? <OverviewSimple {...props} /> : <OverviewDetailed {...props} />}

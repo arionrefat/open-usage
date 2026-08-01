@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DAY_MS, HOUR_MS } from "./real/aggregate";
 import { PROVIDER_IDS } from "./types";
 import {
   createRealUsageProvider,
@@ -11,6 +16,7 @@ import { mockUsageProvider } from "./mock-provider";
 const MISSING_PATHS: RealProviderPaths = {
   opencodeDb: "/nonexistent/opencode.db",
   opencodeAuth: "/nonexistent/auth.json",
+  opencodeCookie: "/nonexistent/opencode-cookie",
   claudeProjects: "/nonexistent/projects",
   claudeHistory: "/nonexistent/history.jsonl",
   usageSnapshot: "/nonexistent/usage-snapshot.json",
@@ -47,7 +53,7 @@ describe("createRealUsageProvider with no sources", () => {
     expect(snapshot.providers.cx.limits[0]?.percent).toBeNull();
     expect(snapshot.providers.cx.limits[0]?.reset).toBe("limits api not yet connected");
     expect(snapshot.providers.go.limits[0]?.percent).toBeNull();
-    expect(snapshot.providers.go.limits[0]?.footnote).toContain("opencode.ai dashboard");
+    expect(snapshot.providers.go.limits[0]?.footnote).toContain("no usage api");
   });
 
   test("refresh resolves and honors an already-aborted signal", async () => {
@@ -56,7 +62,111 @@ describe("createRealUsageProvider with no sources", () => {
 
     const controller = new AbortController();
     controller.abort();
-    await expect(provider.refresh(controller.signal)).rejects.toBeDefined();
+    let rejection: unknown;
+    try {
+      await provider.refresh(controller.signal);
+    } catch (error) {
+      rejection = error;
+    }
+    expect(rejection).toBeDefined();
+  });
+});
+
+describe("opencode go spend limits", () => {
+  /** A throwaway db shaped like opencode's so the go path exercises real SQL. */
+  function seedDb(path: string, rows: Array<{ atMs: number; usd: number }>): void {
+    const db = new Database(path);
+    db.run("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)");
+    rows.forEach((row, index) => {
+      const data = JSON.stringify({
+        role: "assistant",
+        providerID: "opencode-go",
+        cost: row.usd,
+        tokens: { input: 10, output: 10, reasoning: 0, cache: { write: 0, read: 0 } },
+        time: { created: row.atMs },
+      });
+      db.run("INSERT INTO message VALUES (?1, ?2, ?3, ?4)", [
+        `m${index}`,
+        `s${index}`,
+        row.atMs,
+        data,
+      ]);
+    });
+    db.close();
+  }
+
+  test("derives percent and dollar readouts from local spend", () => {
+    const dbPath = join(tmpdir(), `limitless-go-${Date.now()}.db`);
+    const nowMs = Date.now();
+    seedDb(dbPath, [
+      { atMs: nowMs - HOUR_MS, usd: 3 },
+      { atMs: nowMs - 2 * DAY_MS, usd: 6 },
+    ]);
+
+    try {
+      const provider = createRealUsageProvider({
+        paths: { ...MISSING_PATHS, opencodeDb: dbPath },
+      });
+      const go = provider.readSnapshot().providers.go;
+
+      // $3 of the $12 rolling-5h cap, $9 of the $30 weekly cap.
+      expect(go.scopes.session.percent).toBe(25);
+      expect(go.scopes.weekly.percent).toBe(30);
+      expect(go.limits[0]?.detailValueLabel).toBe("$3.00 of $12");
+      expect(go.limits[0]?.footnote).toContain("estimated from local spend");
+    } finally {
+      rmSync(dbPath, { force: true });
+    }
+  });
+});
+
+describe("opencode go server limits", () => {
+  const serverLimits = {
+    rollingPercent: 17,
+    rollingResetAtMs: Date.now() + 5_944_000,
+    weeklyPercent: 75,
+    weeklyResetAtMs: Date.now() + 278_201_000,
+    fetchedAtMs: Date.now(),
+  };
+
+  test("server percentages replace the local estimate", () => {
+    const provider = createRealUsageProvider({
+      paths: MISSING_PATHS,
+      goLimits: { read: () => serverLimits, note: () => null, poll: () => Promise.resolve() },
+    });
+    const go = provider.readSnapshot().providers.go;
+
+    expect(go.scopes.session.percent).toBe(17);
+    expect(go.scopes.weekly.percent).toBe(75);
+    expect(go.scopes.weekly.window).toContain("opencode");
+    // The estimate's hedging language must not survive alongside server truth.
+    expect(go.scopes.weekly.window).not.toContain("estimate");
+  });
+
+  test("a source note surfaces when there are no limits at all", () => {
+    const provider = createRealUsageProvider({
+      paths: MISSING_PATHS,
+      goLimits: {
+        read: () => null,
+        note: () => "opencode session expired - paste a fresh cookie",
+        poll: () => Promise.resolve(),
+      },
+    });
+    const go = provider.readSnapshot().providers.go;
+    expect(go.limits[0]?.reset).toContain("session expired");
+  });
+
+  test("a failing poll leaves the local snapshot intact", async () => {
+    const provider = createRealUsageProvider({
+      paths: MISSING_PATHS,
+      goLimits: {
+        read: () => null,
+        note: () => null,
+        poll: () => Promise.reject(new Error("network down")),
+      },
+    });
+    const next = await provider.refresh();
+    expect(next.dailyDates).toHaveLength(30);
   });
 });
 

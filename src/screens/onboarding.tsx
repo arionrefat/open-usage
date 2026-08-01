@@ -1,4 +1,4 @@
-import { POLL_INTERVAL_SECONDS } from "../config";
+import { APP_NAME, POLL_INTERVAL_SECONDS } from "../config";
 import { padEnd } from "../lib/text";
 import { COLORS, PROVIDER_COLORS } from "../theme";
 import { PROVIDER_IDS, STATUS_PRESENTATION, type ProviderId, type UsageSnapshot } from "../data/types";
@@ -252,7 +252,7 @@ export function Onboarding(props: OnboardingProps) {
       <SplitLine
         width={width}
         left={[
-          { text: "limits", color: COLORS.textBright, isBold: true },
+          { text: APP_NAME, color: COLORS.textBright, isBold: true },
           { text: " ▏ ", color: COLORS.rule },
           { text: "first run", color: COLORS.textFaint },
         ]}

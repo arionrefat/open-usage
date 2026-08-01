@@ -1,4 +1,4 @@
-# limits
+# Limitless
 
 A terminal dashboard for unified AI plan usage across Claude Code, Codex, and OpenCode Go.
 Built with [OpenTUI](https://opentui.com/docs/) and React.
@@ -7,7 +7,7 @@ Built with [OpenTUI](https://opentui.com/docs/) and React.
 
 ```bash
 bun install
-bun run limits
+bun run limitless
 ```
 
 `bun dev` runs the same thing with file watching.
@@ -15,11 +15,11 @@ bun run limits
 The CLI can open any screen directly, which is useful while iterating on a view:
 
 ```bash
-bun run limits --view settings
-bun run limits --mode simple
-bun run limits --screen onboarding
-bun run limits --severity-colors    # bars read green/amber/red instead of brand colors
-bun run limits --no-daily-split     # hide the stacked daily chart on the overview
+bun run limitless --view settings
+bun run limitless --mode simple
+bun run limitless --screen onboarding
+bun run limitless --severity-colors    # bars read green/amber/red instead of brand colors
+bun run limitless --no-daily-split     # hide the stacked daily chart on the overview
 ```
 
 ## Keys

@@ -205,7 +205,14 @@ export function sum(values: number[]): number {
   return values.reduce((a, b) => a + b, 0);
 }
 
-/** Token counts are held in millions; roll over to billions past 1000M. */
+/**
+ * Token counts are held in millions; roll over to billions past 1000M and down
+ * to thousands below 1M so light providers never read as a flat "0M".
+ */
 export function formatTokens(millions: number): string {
-  return millions >= 1000 ? `${(millions / 1000).toFixed(2)}B` : `${Math.round(millions)}M`;
+  if (millions >= 1000) return `${(millions / 1000).toFixed(2)}B`;
+  if (millions >= 1) return `${Math.round(millions)}M`;
+  if (millions <= 0) return "0";
+  const thousands = millions * 1000;
+  return thousands >= 1 ? `${Math.round(thousands)}K` : "<1K";
 }

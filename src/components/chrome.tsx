@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { APP_NAME } from "../config";
 import { useSecondsSince } from "../hooks/use-seconds-since";
 import { columnWidth } from "../lib/text";
 import { COLORS, SPINNER_FRAMES } from "../theme";
@@ -41,9 +42,9 @@ export function Header({
     <SplitLine
       width={width}
       left={[
-        { text: "limits", color: COLORS.textBright, isBold: true },
+        { text: APP_NAME, color: COLORS.textBright, isBold: true },
         { text: " ▏ ", color: COLORS.rule },
-        { text: `unified plan usage · ${providerCount}`, color: COLORS.textFaint },
+        { text: providerCount, color: COLORS.textFaint },
       ]}
       right={[
         { text: alertText, color: alertColor },

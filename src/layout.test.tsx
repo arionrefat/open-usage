@@ -35,14 +35,14 @@ describe("chrome stays on one row", () => {
   for (const width of WIDTHS) {
     test(`header does not wrap at ${width} columns`, async () => {
       const rows = await renderRows(width, "overview", "detailed");
-      const header = rowContaining(rows, "limits");
+      const header = rowContaining(rows, "limitless");
       // Both groups on one row means the line never overflowed into a second.
       expect(header).toContain("updated");
     });
 
     test(`header keeps a gap before the alert group at ${width} columns`, async () => {
       const rows = await renderRows(width, "overview", "detailed");
-      expect(rowContaining(rows, "limits")).toMatch(/\s▲/);
+      expect(rowContaining(rows, "limitless")).toMatch(/\s▲/);
     });
 
     test(`tab strip does not wrap at ${width} columns`, async () => {
@@ -72,16 +72,15 @@ test("simple overview uses the fixed-geometry plan chart", async () => {
   expect(frame).toContain("100 │");
   expect(frame).toContain(" 50 │");
   expect(frame).toContain(`  0 └${"─".repeat(34)}`);
-  expect(frame).toContain("share of limit consumed across providers");
-  expect(frame).toContain("of all consumption");
-  expect(frame).toContain("went to claude code");
+  expect(frame).toContain("% share");
   expect(frame).not.toContain("largest share");
 });
 
 test("simple overview keeps all three providers in the legend", async () => {
   const rows = await renderRows(140, "overview", "simple");
   // codex ships expired in the mock, so its off-state legend must still render.
-  expect(rowContaining(rows, "▎codex")).toContain("of all consumption");
+  expect(rowContaining(rows, "▎codex")).not.toBe("");
+  expect(rowContaining(rows, "▎codex")).not.toContain("share");
   expect(rows.join("\n")).toContain("subscription ended");
 });
 

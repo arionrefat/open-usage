@@ -109,7 +109,7 @@ function ProviderLegend({
           { text: "▎", color: PROVIDER_COLORS[id] },
           { text: name, color: COLORS.textBright, isBold: true },
         ]}
-        right={[{ text: `${entry.slice} of all consumption`, color: COLORS.textGhost }]}
+        right={entry.slice === "—" ? [] : [{ text: `${entry.slice} share`, color: COLORS.textGhost }]}
       />
       <Line
         segments={[
@@ -207,13 +207,7 @@ export function OverviewSimple({
     }),
   );
 
-  const lead = PROVIDER_IDS.reduce((a, b) => (consumption[b] > consumption[a] ? b : a));
-  const leadShare = consumptionTotal
-    ? `${Math.round((consumption[lead] / consumptionTotal) * 100)}%`
-    : "—";
-  const leadLine = consumptionTotal
-    ? `${leadShare} of everything metered in this window went to ${snapshot.providers[lead].meta.name}`
-    : "nothing connected — 5 settings to enable a provider";
+  const leadLine = consumptionTotal ? "" : "nothing connected — 5 settings to enable a provider";
 
   const showChart = width >= PLAN_CHART_MIN_CONTENT_WIDTH;
   const legendWidth = showChart ? width - chart.width - PLAN_CHART_GAP : width;
@@ -232,11 +226,7 @@ export function OverviewSimple({
           { text: "window ", color: COLORS.textDim },
           ...scopeToggleSegments(state.scope, actions),
         ]}
-        right={[
-          { text: scopeTitle, color: COLORS.textMuted, isBold: true },
-          { text: " ▏ ", color: COLORS.rule },
-          { text: "share of limit consumed across providers", color: COLORS.textGhost },
-        ]}
+        right={[{ text: scopeTitle, color: COLORS.textMuted, isBold: true }]}
       />
       <Rule width={width} />
       <Spacer />
@@ -278,7 +268,7 @@ export function OverviewSimple({
                 color: COLORS.text,
               },
               {
-                text: worstId ? " is closest to its cap" : " — every provider is off or disconnected",
+                text: worstId ? " closest to cap" : " — every provider is off or disconnected",
                 color: COLORS.textFaint,
               },
             ]}
@@ -294,9 +284,7 @@ export function OverviewSimple({
                 color: COLORS.text,
               },
               {
-                text: bestId
-                  ? " has the most headroom right now"
-                  : " to enable a provider or paste a key",
+                text: bestId ? " most headroom" : " to enable a provider or paste a key",
                 color: COLORS.textFaint,
               },
             ]}

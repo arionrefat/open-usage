@@ -345,7 +345,7 @@ export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
       >
         <Header
           width={contentWidth}
-          providerCount={`${derived.enabledCount} of ${PROVIDER_IDS.length} providers`}
+          providerCount={`${derived.enabledCount} providers`}
           alertText={state.refreshError ? "▲ refresh failed" : derived.alertText}
           alertColor={state.refreshError ? COLORS.danger : derived.alertColor}
           fetchedAt={snapshot.fetchedAt}

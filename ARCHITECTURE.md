@@ -1,6 +1,6 @@
 # Architecture
 
-`open-usage` is a terminal UI (Bun + React via `@opentui/react`) that shows plan usage and limits for Claude Code, Codex, and OpenCode Go.
+`Limitless` is a terminal UI (Bun + React via `@opentui/react`) that shows plan usage and limits for Claude Code, Codex, and OpenCode Go.
 
 ## The 30-second version
 
