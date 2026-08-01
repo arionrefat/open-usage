@@ -16,6 +16,13 @@ export const SERVER_FUNCTION_IDS = {
 /** Only the session cookies carry auth; everything else is noise we must not send. */
 const AUTH_COOKIE_NAMES = ["auth", "__Host-auth"];
 
+const DEFAULT_TIMEOUT_MS = 8_000;
+
+// A control character in a pasted cookie makes fetch throw a header-validation
+// error that can quote the offending value, so such cookies are refused here.
+
+const CONTROL_CHARS = new RegExp("[\\u0000-\\u001F\\u007F]");
+
 export interface UsageWindowReading {
   percent: number;
   resetInSec: number;
@@ -34,7 +41,9 @@ export function filterCookieHeader(raw: string): string | null {
     const equals = trimmed.indexOf("=");
     if (equals <= 0) continue;
     const name = trimmed.slice(0, equals).trim();
-    if (AUTH_COOKIE_NAMES.includes(name)) kept.push(trimmed);
+    if (!AUTH_COOKIE_NAMES.includes(name)) continue;
+    if (CONTROL_CHARS.test(trimmed)) continue;
+    kept.push(trimmed);
   }
   return kept.length > 0 ? kept.join("; ") : null;
 }
@@ -43,10 +52,13 @@ export function parseWorkspaceId(text: string): string | null {
   return /\bwrk_[A-Za-z0-9]+/.exec(text)?.[0] ?? null;
 }
 
-/** A percent field at or below 1 is a fraction; anything larger is already 0-100. */
+/**
+ * `usagePercent` is on a 0-100 scale, so small values are taken literally.
+ * Rescaling anything at or under 1 as a fraction - as some ports do - turns a
+ * genuine 1% reading, common right after a reset, into a 100% false alarm.
+ */
 function normalizePercent(value: number): number {
-  const percent = value > 0 && value <= 1 ? value * 100 : value;
-  return Math.min(100, Math.max(0, percent));
+  return Math.min(100, Math.max(0, value));
 }
 
 function windowFromRecord(value: unknown): UsageWindowReading | null {
@@ -80,9 +92,16 @@ function windowFromRecord(value: unknown): UsageWindowReading | null {
   return null;
 }
 
-/** Pulls `usagePercent` and `resetInSec` out of one serialized-JS object literal. */
+/**
+ * Pulls `usagePercent` and `resetInSec` out of one serialized-JS object literal.
+ * The literal must start right after the key, optionally through a `$R[n]=`
+ * binding: the serializer emits an already-seen object as a bare `$R[n]`
+ * back-reference, and scanning past that would read the NEXT window's values.
+ */
 function windowFromText(text: string, key: string): UsageWindowReading | null {
-  const block = new RegExp(`${key}[^}]*?\\}`).exec(text)?.[0];
+  const block = new RegExp(`${key}\\s*:\\s*(?:\\$R\\[\\d+\\]\\s*=\\s*)?\\{[^{}]*\\}`).exec(
+    text,
+  )?.[0];
   if (!block) return null;
   const percent = /usagePercent\s*:\s*([0-9]+(?:\.[0-9]+)?)/.exec(block)?.[1];
   const reset = /resetInSec\s*:\s*([0-9]+)/.exec(block)?.[1];
@@ -124,8 +143,9 @@ export class OpencodeServerError extends Error {
   constructor(
     message: string,
     readonly kind: "credentials" | "network" | "parse",
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "OpencodeServerError";
   }
 }
@@ -151,10 +171,15 @@ async function callServer(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(args),
+      // This RPC never legitimately redirects; refusing keeps the session
+      // cookie from following a redirect to another host.
+      redirect: "error",
       signal,
     });
   } catch (error) {
-    throw new OpencodeServerError(`request failed: ${String(error)}`, "network");
+    // The cause carries the detail; the message stays free of anything that
+    // could echo the request headers back into the UI.
+    throw new OpencodeServerError("request failed", "network", { cause: error });
   }
 
   if (response.status === 401 || response.status === 403) {
@@ -186,12 +211,19 @@ export interface GoServerLimits {
 export async function fetchGoServerLimits(
   cookieHeader: string,
   now: Date,
-  options: { workspaceId?: string; signal?: AbortSignal } = {},
+  options: { workspaceId?: string; signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<GoServerLimits> {
   const cookie = filterCookieHeader(cookieHeader);
   if (!cookie) {
     throw new OpencodeServerError("no opencode auth cookie", "credentials");
   }
+
+  // One budget spans both round trips, so a stalled connection can never hold
+  // the refresh loop open indefinitely.
+  const deadline = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, deadline])
+    : deadline;
 
   let workspaceId = options.workspaceId;
   if (!workspaceId) {
@@ -200,7 +232,7 @@ export async function fetchGoServerLimits(
       [],
       cookie,
       "https://opencode.ai",
-      options.signal,
+      signal,
     );
     workspaceId = parseWorkspaceId(listed) ?? undefined;
     if (!workspaceId) throw new OpencodeServerError("missing workspace id", "parse");
@@ -211,7 +243,7 @@ export async function fetchGoServerLimits(
     [workspaceId],
     cookie,
     `https://opencode.ai/workspace/${workspaceId}/billing`,
-    options.signal,
+    signal,
   );
   const subscription = parseSubscription(body);
   if (!subscription) throw new OpencodeServerError("no usage in response", "parse");

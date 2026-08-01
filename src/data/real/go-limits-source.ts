@@ -22,6 +22,8 @@ export const COOKIE_ENV_VAR = "LIMITLESS_OPENCODE_COOKIE";
 
 const MIN_POLL_MS = 60_000;
 const BACKOFF_MS = 5 * 60_000;
+/** Past this, a cached reading stops being reported as server truth. */
+const STALE_MS = 15 * 60_000;
 
 export function readCookie(path: string, env: Record<string, string | undefined>): string | null {
   const fromEnv = env[COOKIE_ENV_VAR]?.trim();
@@ -40,14 +42,23 @@ export const dormantGoLimitsSource: GoLimitsSource = {
   poll: () => Promise.resolve(),
 };
 
-export function createGoLimitsSource(cookiePath: string, env = process.env): GoLimitsSource {
+/** Injectable so tests can drive the cache, backoff and staleness rules. */
+export type GoLimitsFetcher = typeof fetchGoServerLimits;
+
+export function createGoLimitsSource(
+  cookiePath: string,
+  env: Record<string, string | undefined> = process.env,
+  fetcher: GoLimitsFetcher = fetchGoServerLimits,
+): GoLimitsSource {
   let cached: GoServerLimits | null = null;
   let workspaceId: string | undefined;
   let note: string | null = null;
   let nextPollAtMs = 0;
 
   return {
-    read: () => cached,
+    // An offline machine must fall back to the local estimate rather than keep
+    // showing an old percentage as if it were current.
+    read: () => (cached && Date.now() - cached.fetchedAtMs <= STALE_MS ? cached : null),
     note: () => note,
     async poll(now, signal) {
       const nowMs = now.getTime();
@@ -70,10 +81,13 @@ export function createGoLimitsSource(cookiePath: string, env = process.env): GoL
 
       nextPollAtMs = nowMs + MIN_POLL_MS;
       try {
-        cached = await fetchGoServerLimits(cookie, now, { workspaceId, signal });
+        cached = await fetcher(cookie, now, { workspaceId, signal });
         note = null;
       } catch (error) {
         if (!(error instanceof OpencodeServerError)) throw error;
+        // A caller-cancelled refresh is not a provider failure, so it must not
+        // trigger the backoff or claim opencode is unreachable.
+        if (signal?.aborted) throw error;
         nextPollAtMs = nowMs + BACKOFF_MS;
         if (error.kind === "credentials") {
           cached = null;

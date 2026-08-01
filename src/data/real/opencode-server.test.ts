@@ -46,15 +46,24 @@ describe("parseSubscription", () => {
     expect(parsed?.weekly?.percent).toBe(75);
   });
 
-  test("scales a fractional percent but leaves a whole one alone", () => {
+  test("reads small percentages literally instead of rescaling them", () => {
+    // usagePercent is a 0-100 field, so 1 means 1%. Treating values at or under
+    // 1 as fractions would show a just-reset account as fully capped.
     const parsed = parseSubscription(
       JSON.stringify({
-        rollingUsage: { usagePercent: 0.25, resetInSec: 600 },
-        weeklyUsage: { usagePercent: 75, resetInSec: 3600 },
+        rollingUsage: { usagePercent: 1, resetInSec: 600 },
+        weeklyUsage: { usagePercent: 0.5, resetInSec: 3600 },
       }),
     );
-    expect(parsed?.rolling.percent).toBe(25);
-    expect(parsed?.weekly?.percent).toBe(75);
+    expect(parsed?.rolling.percent).toBe(1);
+    expect(parsed?.weekly?.percent).toBe(0.5);
+  });
+
+  test("clamps out-of-range percentages", () => {
+    const parsed = parseSubscription(
+      JSON.stringify({ rollingUsage: { usagePercent: 140, resetInSec: 600 } }),
+    );
+    expect(parsed?.rolling.percent).toBe(100);
   });
 
   test("computes a percent from used and limit when none is published", () => {
@@ -82,6 +91,23 @@ describe("parseSubscription", () => {
     );
     expect(parsed?.rolling.resetInSec).toBe(100);
     expect(parsed?.weekly).toBeNull();
+  });
+
+  test("a back-referenced window does not absorb the next window's values", () => {
+    // The serializer emits a repeated object as a bare `$R[n]` with no literal;
+    // scanning onward would silently give rolling the weekly figures.
+    const parsed = parseSubscription(
+      "$R[16]($R[30],$R[41]={rollingUsage:$R[42]," +
+        'weeklyUsage:$R[43]={status:"ok",resetInSec:278201,usagePercent:75}});',
+    );
+    expect(parsed).toBeNull();
+  });
+
+  test("still reads a window bound through $R[n]=", () => {
+    const parsed = parseSubscription(
+      'rollingUsage:$R[42]={status:"ok",resetInSec:5944,usagePercent:17}',
+    );
+    expect(parsed?.rolling).toEqual({ percent: 17, resetInSec: 5944 });
   });
 });
 
