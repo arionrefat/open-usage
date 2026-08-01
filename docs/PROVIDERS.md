@@ -1,6 +1,7 @@
 # Provider integration research
 
-Researched 2026-08-01 (web research + local ground-truthing on this machine).
+Researched 2026-08-01, re-verified 2026-08-02 (web research + local ground-truthing on this machine).
+Where a published claim disagreed with this machine's own files, the measurement won; those cases are kept as corrections rather than quietly overwritten.
 This is the implementation reference for wiring real limit data into Limitless for all three providers.
 
 Verdict up front: all three providers can show real or near-real limit data, each through a different mechanism.
@@ -134,6 +135,24 @@ Account identity is still not directly proven, so nothing in the UI asserts it.
 
 Spawning a process is heavier than an HTTP call, so the poll interval stays at 60s minimum with a five-minute backoff on failure and a 15-minute staleness cut-off.
 Tests inject `stubCodexLimitsSource` so the suite never launches a real codex process.
+
+### Re-verified 2026-08-02
+
+CLI 0.146.0 is current, and the core `account/*` methods are stable enough that the official VSCode extension depends on them.
+The app-server carries no breaking-change guarantee, so the parser stays defensive.
+
+`openai/codex#32707` reports Pro accounts losing the 5-hour bucket from `account/rateLimits/read`.
+That is the exact shape our duration-based classification already handles - a lone window is placed by its own `windowDurationMins` - whereas a positional `primary → session` mapping would mislabel it. The choice made under uncertainty turns out to be the one that survives the schema moving.
+
+Fields left unread, and why: `rateLimitsByLimitId`, `individualLimit` and `spendControlReached` only populate on Team/Business plans with workspace spend controls; `rateLimits.credits` reads `balance: "0"` on a Plus account with no add-on credits. None reach a Plus user, so reading them would add branches nothing exercises.
+
+`account/usage/read` counts cached input tokens toward its totals with no separate breakdown, which is consistent with how those tokens count against the rate-limit windows.
+
+### Deliberately not built: redeeming a reset credit
+
+`account/rateLimitResetCredit/consume` would let the app spend the free reset it already displays.
+That is a one-way account action, and this is a read-only dashboard: every other call it makes can be repeated with no consequence.
+Burning a scarce credit from a background poller - or from a mis-keyed keystroke - is not a failure mode worth introducing for convenience. If it is ever added it should require an explicit confirmation, never a bare keybinding.
 
 ## opencode go
 
