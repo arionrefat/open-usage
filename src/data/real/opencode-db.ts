@@ -9,6 +9,15 @@ export interface OpencodeSessionStats {
   latestMs: number;
   /** Most-used model id for the provider, e.g. "gpt-5.6-sol". */
   topModel: string | null;
+  modelTokens30d?: Record<string, number>;
+  tokenSplit30d?: {
+    input: number;
+    output: number;
+    reasoning: number;
+    cacheRead: number;
+    cacheWrite: number;
+  };
+  cost30d?: { totalUsd: number; peakDayUsd: number };
 }
 
 /** Aggregates keyed by opencode's providerID ("openai", "opencode-go", ...). */
@@ -18,7 +27,7 @@ export interface OpencodeUsage {
   latestMs: number;
 }
 
-const USAGE_WINDOW_DAYS = 31;
+const USAGE_WINDOW_DAYS = 30;
 
 /** Fresh tokens only - cache reads would dwarf real work by two orders of magnitude. */
 const TOKENS_SQL =
@@ -47,10 +56,30 @@ const SESSION_ROWS_SQL =
 const MODEL_ROWS_SQL =
   "SELECT json_extract(data,'$.providerID') AS provider," +
   " json_extract(data,'$.modelID') AS model," +
-  " COUNT(*) AS msgs" +
+  ` COUNT(*) AS msgs, SUM(${TOKENS_SQL}+coalesce(json_extract(data,'$.tokens.cache.read'),0)) AS tokens` +
   " FROM message" +
   " WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
   " GROUP BY provider, model";
+
+const DETAIL_ROWS_SQL =
+  "SELECT json_extract(data,'$.providerID') AS provider," +
+  " SUM(coalesce(json_extract(data,'$.tokens.input'),0)) AS input," +
+  " SUM(coalesce(json_extract(data,'$.tokens.output'),0)) AS output," +
+  " SUM(coalesce(json_extract(data,'$.tokens.reasoning'),0)) AS reasoning," +
+  " SUM(coalesce(json_extract(data,'$.tokens.cache.read'),0)) AS cacheRead," +
+  " SUM(coalesce(json_extract(data,'$.tokens.cache.write'),0)) AS cacheWrite," +
+  " SUM(coalesce(json_extract(data,'$.cost'),0)) AS totalUsd," +
+  " SUM(CASE WHEN json_type(data,'$.tokens')='object' THEN 1 ELSE 0 END) AS tokenCount," +
+  " COUNT(json_extract(data,'$.cost')) AS costCount" +
+  " FROM message WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
+  " GROUP BY provider";
+
+const DAILY_COST_ROWS_SQL =
+  "SELECT json_extract(data,'$.providerID') AS provider," +
+  " CAST(time_created/86400000 AS INTEGER) AS day," +
+  " SUM(coalesce(json_extract(data,'$.cost'),0)) AS usd" +
+  " FROM message WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
+  " GROUP BY provider, day";
 
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -75,6 +104,8 @@ export function usageFromRows(
   hourRows: unknown[],
   sessionRows: unknown[],
   modelRows: unknown[] = [],
+  detailRows: unknown[] = [],
+  dailyCostRows: unknown[] = [],
 ): OpencodeUsage {
   const buckets = new Map<string, HourBuckets>();
   for (const row of hourRows) {
@@ -88,6 +119,43 @@ export function usageFromRows(
   }
 
   const models = topModels(modelRows);
+  const modelTokens = new Map<string, Record<string, number>>();
+  for (const row of modelRows) {
+    if (!isRecord(row) || typeof row.provider !== "string" || typeof row.model !== "string") continue;
+    const tokens = finiteNumber(row.tokens);
+    if (tokens === null || tokens <= 0) continue;
+    const providerModels = modelTokens.get(row.provider) ?? {};
+    providerModels[row.model] = tokens;
+    modelTokens.set(row.provider, providerModels);
+  }
+  const details = new Map<
+    string,
+    OpencodeSessionStats["tokenSplit30d"] & {
+      totalUsd: number;
+      tokenCount: number;
+      costCount: number;
+    }
+  >();
+  for (const row of detailRows) {
+    if (!isRecord(row) || typeof row.provider !== "string") continue;
+    details.set(row.provider, {
+      input: finiteNumber(row.input) ?? 0,
+      output: finiteNumber(row.output) ?? 0,
+      reasoning: finiteNumber(row.reasoning) ?? 0,
+      cacheRead: finiteNumber(row.cacheRead) ?? 0,
+      cacheWrite: finiteNumber(row.cacheWrite) ?? 0,
+      totalUsd: finiteNumber(row.totalUsd) ?? 0,
+      tokenCount: finiteNumber(row.tokenCount) ?? 0,
+      costCount: finiteNumber(row.costCount) ?? 0,
+    });
+  }
+  const peakCosts = new Map<string, number>();
+  for (const row of dailyCostRows) {
+    if (!isRecord(row) || typeof row.provider !== "string") continue;
+    const usd = finiteNumber(row.usd);
+    if (usd === null) continue;
+    peakCosts.set(row.provider, Math.max(peakCosts.get(row.provider) ?? 0, usd));
+  }
   const stats = new Map<string, OpencodeSessionStats>();
   let latestMs = 0;
   for (const row of sessionRows) {
@@ -98,6 +166,21 @@ export function usageFromRows(
       latestMs: finiteNumber(row.latest) ?? 0,
       topModel: models.get(row.provider) ?? null,
     };
+    const providerModels = modelTokens.get(row.provider);
+    if (providerModels) entry.modelTokens30d = providerModels;
+    const detail = details.get(row.provider);
+    if (detail?.tokenCount) {
+      entry.tokenSplit30d = {
+        input: detail.input,
+        output: detail.output,
+        reasoning: detail.reasoning,
+        cacheRead: detail.cacheRead,
+        cacheWrite: detail.cacheWrite,
+      };
+    }
+    if (detail?.costCount) {
+      entry.cost30d = { totalUsd: detail.totalUsd, peakDayUsd: peakCosts.get(row.provider) ?? 0 };
+    }
     stats.set(row.provider, entry);
     latestMs = Math.max(latestMs, entry.latestMs);
   }
@@ -114,7 +197,9 @@ export function readOpencodeUsage(dbPath: string, now: Date): OpencodeUsage | nu
     const hourRows: unknown[] = db.query(HOUR_ROWS_SQL).all(sinceMs);
     const sessionRows: unknown[] = db.query(SESSION_ROWS_SQL).all(sinceMs);
     const modelRows: unknown[] = db.query(MODEL_ROWS_SQL).all(sinceMs);
-    return usageFromRows(hourRows, sessionRows, modelRows);
+    const detailRows: unknown[] = db.query(DETAIL_ROWS_SQL).all(sinceMs);
+    const dailyCostRows: unknown[] = db.query(DAILY_COST_ROWS_SQL).all(sinceMs);
+    return usageFromRows(hourRows, sessionRows, modelRows, detailRows, dailyCostRows);
   } catch {
     // A locked or migrated DB is an expected local condition, not a crash.
     return null;

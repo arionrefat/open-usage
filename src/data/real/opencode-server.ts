@@ -36,6 +36,7 @@ export interface OpencodeSubscription {
   rolling: UsageWindowReading;
   weekly: UsageWindowReading | null;
   monthly: UsageWindowReading | null;
+  useBalance: boolean | null;
 }
 
 /** Keeps only the auth cookies from a pasted Cookie header. */
@@ -125,6 +126,7 @@ function subscriptionFromJson(text: string): OpencodeSubscription | null {
     rolling,
     weekly: windowFromRecord(parsed.weeklyUsage),
     monthly: windowFromRecord(parsed.monthlyUsage),
+    useBalance: typeof parsed.useBalance === "boolean" ? parsed.useBalance : null,
   };
 }
 
@@ -135,6 +137,11 @@ function subscriptionFromSerializedText(text: string): OpencodeSubscription | nu
     rolling,
     weekly: windowFromText(text, "weeklyUsage"),
     monthly: windowFromText(text, "monthlyUsage"),
+    useBalance: /\buseBalance\s*:\s*true\b/.test(text)
+      ? true
+      : /\buseBalance\s*:\s*false\b/.test(text)
+        ? false
+        : null,
   };
 }
 
@@ -231,6 +238,7 @@ export interface GoServerLimits {
   monthlyPercent: number | null;
   monthlyResetAtMs: number | null;
   fetchedAtMs: number;
+  useBalance?: boolean | null;
 }
 
 /**
@@ -292,5 +300,6 @@ export async function fetchGoServerLimits(
     monthlyPercent: subscription.monthly?.percent ?? null,
     monthlyResetAtMs,
     fetchedAtMs: nowMs,
+    useBalance: subscription.useBalance ?? null,
   };
 }

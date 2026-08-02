@@ -30,6 +30,7 @@ function reading(fetchedAtMs: number): GoServerLimits {
     monthlyPercent: 99,
     monthlyResetAtMs: fetchedAtMs + 90_000,
     fetchedAtMs,
+    useBalance: null,
   };
 }
 

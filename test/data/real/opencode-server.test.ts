@@ -18,7 +18,7 @@ const SUBSCRIPTION_JS =
   "$R[16]($R[30],$R[41]={" +
   'rollingUsage:$R[42]={status:"ok",resetInSec:5944,usagePercent:17},' +
   'weeklyUsage:$R[43]={status:"ok",resetInSec:278201,usagePercent:75},' +
-  'monthlyUsage:$R[44]={status:"ok",resetInSec:90061,usagePercent:99}' +
+  'monthlyUsage:$R[44]={status:"ok",resetInSec:90061,usagePercent:99},useBalance:true' +
   "});";
 
 describe("parseWorkspaceId", () => {
@@ -37,6 +37,7 @@ describe("parseSubscription", () => {
     expect(parsed?.rolling).toEqual({ percent: 17, resetInSec: 5944 });
     expect(parsed?.weekly).toEqual({ percent: 75, resetInSec: 278201 });
     expect(parsed?.monthly).toEqual({ percent: 99, resetInSec: 90061 });
+    expect(parsed?.useBalance).toBe(true);
   });
 
   test("reads the json form too", () => {
@@ -45,11 +46,13 @@ describe("parseSubscription", () => {
         rollingUsage: { usagePercent: 17, resetInSec: 5944 },
         weeklyUsage: { usagePercent: 75, resetInSec: 278201 },
         monthlyUsage: { usagePercent: 99, resetInSec: 90061 },
+        useBalance: false,
       }),
     );
     expect(parsed?.rolling.percent).toBe(17);
     expect(parsed?.weekly?.percent).toBe(75);
     expect(parsed?.monthly?.percent).toBe(99);
+    expect(parsed?.useBalance).toBe(false);
   });
 
   test("reads small percentages literally instead of rescaling them", () => {
@@ -85,6 +88,7 @@ describe("parseSubscription", () => {
     );
     expect(weeklyless?.weekly).toBeNull();
     expect(weeklyless?.monthly).toBeNull();
+    expect(weeklyless?.useBalance).toBeNull();
 
     expect(parseSubscription(JSON.stringify({ weeklyUsage: { usagePercent: 5 } }))).toBeNull();
     expect(parseSubscription("null")).toBeNull();
