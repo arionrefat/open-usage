@@ -56,19 +56,21 @@ function rollingWindow(
   windowMs: number,
   capUsd: number,
 ): SpendWindow {
-  const since = nowMs - windowMs;
+  const windowStartMs = nowMs - windowMs;
   let usd = 0;
   let oldestMs: number | null = null;
   for (const event of events) {
-    if (event.atMs <= since || event.atMs > nowMs) continue;
+    const eventIsOutsideWindow = event.atMs <= windowStartMs || event.atMs > nowMs;
+    if (eventIsOutsideWindow) continue;
     usd += event.usd;
     if (oldestMs === null || event.atMs < oldestMs) oldestMs = event.atMs;
   }
+  const oldestSpendAgesOutAtMs = oldestMs === null ? null : oldestMs + windowMs;
   return {
     usd,
     capUsd,
     percent: percentOf(usd, capUsd),
-    resetAtMs: oldestMs === null ? null : oldestMs + windowMs,
+    resetAtMs: oldestSpendAgesOutAtMs,
   };
 }
 
@@ -90,20 +92,30 @@ function monthlyWindow(
   anchorMs: number | null,
 ): SpendWindow {
   const anchorDay = anchorMs === null ? 1 : new Date(anchorMs).getDate();
-  let start = anchorDate(now.getFullYear(), now.getMonth(), anchorDay);
-  if (start.getTime() > now.getTime()) {
-    start = anchorDate(now.getFullYear(), now.getMonth() - 1, anchorDay);
+  let windowStart = anchorDate(now.getFullYear(), now.getMonth(), anchorDay);
+  if (windowStart.getTime() > now.getTime()) {
+    windowStart = anchorDate(now.getFullYear(), now.getMonth() - 1, anchorDay);
   }
-  const next = anchorDate(start.getFullYear(), start.getMonth() + 1, anchorDay);
+  const nextWindowStart = anchorDate(
+    windowStart.getFullYear(),
+    windowStart.getMonth() + 1,
+    anchorDay,
+  );
 
-  const startMs = start.getTime();
+  const windowStartMs = windowStart.getTime();
   const nowMs = now.getTime();
   let usd = 0;
   for (const event of events) {
-    if (event.atMs < startMs || event.atMs > nowMs) continue;
+    const eventIsOutsideWindow = event.atMs < windowStartMs || event.atMs > nowMs;
+    if (eventIsOutsideWindow) continue;
     usd += event.usd;
   }
-  return { usd, capUsd, percent: percentOf(usd, capUsd), resetAtMs: next.getTime() };
+  return {
+    usd,
+    capUsd,
+    percent: percentOf(usd, capUsd),
+    resetAtMs: nextWindowStart.getTime(),
+  };
 }
 
 /**

@@ -17,6 +17,10 @@ export const SERVER_FUNCTION_IDS = {
 const AUTH_COOKIE_NAMES = ["auth", "__Host-auth"];
 
 const DEFAULT_TIMEOUT_MS = 8_000;
+const PERCENT_KEYS = ["usagePercent", "usedPercent", "percentUsed", "percent"];
+const RESET_KEYS = ["resetInSec", "resetInSeconds", "resetSeconds", "resetsInSec"];
+const WINDOW_PERCENT_PATTERN = /usagePercent\s*:\s*([0-9]+(?:\.[0-9]+)?)/;
+const WINDOW_RESET_PATTERN = /resetInSec\s*:\s*([0-9]+)/;
 
 // A control character in a pasted cookie makes fetch throw a header-validation
 // error that can quote the offending value, so such cookies are refused here.
@@ -62,35 +66,32 @@ function normalizePercent(value: number): number {
   return Math.min(100, Math.max(0, value));
 }
 
-function windowFromRecord(value: unknown): UsageWindowReading | null {
-  if (!isRecord(value)) return null;
-  const percentKeys = ["usagePercent", "usedPercent", "percentUsed", "percent"];
-  const resetKeys = ["resetInSec", "resetInSeconds", "resetSeconds", "resetsInSec"];
-
-  let percent: number | null = null;
-  for (const key of percentKeys) {
-    const candidate = value[key];
-    if (typeof candidate === "number" && Number.isFinite(candidate)) {
-      percent = normalizePercent(candidate);
-      break;
-    }
-  }
-  if (percent === null) {
-    const used = value.used;
-    const limit = value.limit;
-    if (typeof used === "number" && typeof limit === "number" && limit > 0) {
-      percent = Math.min(100, Math.max(0, (used / limit) * 100));
-    }
-  }
-  if (percent === null) return null;
-
-  for (const key of resetKeys) {
-    const candidate = value[key];
-    if (typeof candidate === "number" && Number.isFinite(candidate)) {
-      return { percent, resetInSec: Math.max(0, candidate) };
-    }
+function firstFiniteNumber(record: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const candidate = record[key];
+    if (typeof candidate === "number" && Number.isFinite(candidate)) return candidate;
   }
   return null;
+}
+
+function percentFromRecord(value: Record<string, unknown>): number | null {
+  const explicitPercent = firstFiniteNumber(value, PERCENT_KEYS);
+  if (explicitPercent !== null) return normalizePercent(explicitPercent);
+
+  const used = value.used;
+  const limit = value.limit;
+  if (typeof used !== "number" || typeof limit !== "number" || limit <= 0) return null;
+  return normalizePercent((used / limit) * 100);
+}
+
+function windowFromRecord(value: unknown): UsageWindowReading | null {
+  if (!isRecord(value)) return null;
+  const percent = percentFromRecord(value);
+  if (percent === null) return null;
+
+  const resetInSec = firstFiniteNumber(value, RESET_KEYS);
+  if (resetInSec === null) return null;
+  return { percent, resetInSec: Math.max(0, resetInSec) };
 }
 
 /**
@@ -100,37 +101,34 @@ function windowFromRecord(value: unknown): UsageWindowReading | null {
  * back-reference, and scanning past that would read the NEXT window's values.
  */
 function windowFromText(text: string, key: string): UsageWindowReading | null {
-  const block = new RegExp(`${key}\\s*:\\s*(?:\\$R\\[\\d+\\]\\s*=\\s*)?\\{[^{}]*\\}`).exec(
-    text,
-  )?.[0];
+  const objectAfterKey = `${key}\\s*:\\s*(?:\\$R\\[\\d+\\]\\s*=\\s*)?\\{[^{}]*\\}`;
+  const block = new RegExp(objectAfterKey).exec(text)?.[0];
   if (!block) return null;
-  const percent = /usagePercent\s*:\s*([0-9]+(?:\.[0-9]+)?)/.exec(block)?.[1];
-  const reset = /resetInSec\s*:\s*([0-9]+)/.exec(block)?.[1];
-  if (percent === undefined || reset === undefined) return null;
-  return { percent: normalizePercent(Number(percent)), resetInSec: Number(reset) };
+  const percentText = WINDOW_PERCENT_PATTERN.exec(block)?.[1];
+  const resetText = WINDOW_RESET_PATTERN.exec(block)?.[1];
+  if (percentText === undefined || resetText === undefined) return null;
+  return { percent: normalizePercent(Number(percentText)), resetInSec: Number(resetText) };
 }
 
-/**
- * Accepts either JSON or the serialized-JS form. The rolling window is
- * required; absent weekly and monthly windows are tolerated.
- */
-export function parseSubscription(text: string): OpencodeSubscription | null {
+function subscriptionFromJson(text: string): OpencodeSubscription | null {
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(text);
-    if (isRecord(parsed)) {
-      const rolling = windowFromRecord(parsed.rollingUsage);
-      if (rolling) {
-        return {
-          rolling,
-          weekly: windowFromRecord(parsed.weeklyUsage),
-          monthly: windowFromRecord(parsed.monthlyUsage),
-        };
-      }
-    }
+    parsed = JSON.parse(text);
   } catch {
-    // Not JSON - fall through to the serialized-JS reader below.
+    return null;
   }
+  if (!isRecord(parsed)) return null;
 
+  const rolling = windowFromRecord(parsed.rollingUsage);
+  if (!rolling) return null;
+  return {
+    rolling,
+    weekly: windowFromRecord(parsed.weeklyUsage),
+    monthly: windowFromRecord(parsed.monthlyUsage),
+  };
+}
+
+function subscriptionFromSerializedText(text: string): OpencodeSubscription | null {
   const rolling = windowFromText(text, "rollingUsage");
   if (!rolling) return null;
   return {
@@ -138,6 +136,14 @@ export function parseSubscription(text: string): OpencodeSubscription | null {
     weekly: windowFromText(text, "weeklyUsage"),
     monthly: windowFromText(text, "monthlyUsage"),
   };
+}
+
+/**
+ * Accepts either JSON or the serialized-JS form. The rolling window is
+ * required; absent weekly and monthly windows are tolerated.
+ */
+export function parseSubscription(text: string): OpencodeSubscription | null {
+  return subscriptionFromJson(text) ?? subscriptionFromSerializedText(text);
 }
 
 /** Phrases the dashboard returns instead of data once a session lapses. */
@@ -272,15 +278,19 @@ export async function fetchGoServerLimits(
   if (!subscription) throw new OpencodeServerError("no usage in response", "parse");
 
   const nowMs = now.getTime();
+  const weeklyResetAtMs = subscription.weekly
+    ? nowMs + subscription.weekly.resetInSec * 1000
+    : null;
+  const monthlyResetAtMs = subscription.monthly
+    ? nowMs + subscription.monthly.resetInSec * 1000
+    : null;
   return {
     rollingPercent: subscription.rolling.percent,
     rollingResetAtMs: nowMs + subscription.rolling.resetInSec * 1000,
     weeklyPercent: subscription.weekly?.percent ?? null,
-    weeklyResetAtMs:
-      subscription.weekly === null ? null : nowMs + subscription.weekly.resetInSec * 1000,
+    weeklyResetAtMs,
     monthlyPercent: subscription.monthly?.percent ?? null,
-    monthlyResetAtMs:
-      subscription.monthly === null ? null : nowMs + subscription.monthly.resetInSec * 1000,
+    monthlyResetAtMs,
     fetchedAtMs: nowMs,
   };
 }

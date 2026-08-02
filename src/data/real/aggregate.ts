@@ -9,9 +9,13 @@ const BURN_WINDOW_HOURS = 3;
 /** Token totals bucketed by floor(epochMs / HOUR_MS) - enough for every series. */
 export type HourBuckets = Map<number, number>;
 
+function hourBucketKey(epochMs: number): number {
+  return Math.floor(epochMs / HOUR_MS);
+}
+
 export function addToBucket(buckets: HourBuckets, epochMs: number, tokens: number): void {
   if (!Number.isFinite(epochMs) || !Number.isFinite(tokens) || tokens <= 0) return;
-  const hour = Math.floor(epochMs / HOUR_MS);
+  const hour = hourBucketKey(epochMs);
   buckets.set(hour, (buckets.get(hour) ?? 0) + tokens);
 }
 
@@ -30,9 +34,12 @@ export function localDateKey(date: Date): string {
 
 /** The last `days` local dates ending today, oldest first. */
 export function dailyDateKeys(now: Date, days = 30): string[] {
-  return Array.from({ length: days }, (_, index) =>
-    localDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1 - index))),
-  );
+  const firstDayOffset = days - 1;
+  return Array.from({ length: days }, (_, index) => {
+    const dayOffset = index - firstDayOffset;
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset);
+    return localDateKey(date);
+  });
 }
 
 /** Charts and formatTokens hold token counts in millions. */
@@ -66,7 +73,7 @@ export function tokensPerHour(
   now: Date,
   windowHours = BURN_WINDOW_HOURS,
 ): number {
-  const currentHour = Math.floor(now.getTime() / HOUR_MS);
+  const currentHour = hourBucketKey(now.getTime());
   let total = 0;
   for (let hour = currentHour - windowHours + 1; hour <= currentHour; hour++) {
     total += buckets.get(hour) ?? 0;

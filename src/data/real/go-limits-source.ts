@@ -72,10 +72,16 @@ export function createGoLimitsSource(
   let note: string | null = null;
   let nextPollAtMs = 0;
 
+  function readFreshCache(): GoServerLimits | null {
+    if (!cached) return null;
+    const cacheAgeMs = Date.now() - cached.fetchedAtMs;
+    return cacheAgeMs <= STALE_MS ? cached : null;
+  }
+
   return {
     // An offline machine must fall back to the local estimate rather than keep
     // showing an old percentage as if it were current.
-    read: () => (cached && Date.now() - cached.fetchedAtMs <= STALE_MS ? cached : null),
+    read: readFreshCache,
     note: () => note,
     cookieExpiresAtMs: () => {
       const cookie = readCookie(configPath, env);
@@ -83,7 +89,8 @@ export function createGoLimitsSource(
     },
     async poll(now, signal) {
       const nowMs = now.getTime();
-      if (nowMs < nextPollAtMs) return;
+      const pollIsThrottled = nowMs < nextPollAtMs;
+      if (pollIsThrottled) return;
 
       const cookie = readCookie(configPath, env);
       if (!cookie) {
@@ -93,7 +100,8 @@ export function createGoLimitsSource(
       }
       // A paste missing the auth cookie is a different fix from an expired
       // session, so it must not be reported as one.
-      if (!filterCookieHeader(cookie)) {
+      const cookieHasAuth = filterCookieHeader(cookie) !== null;
+      if (!cookieHasAuth) {
         cached = null;
         note = "no auth cookie found - re-copy the opencode.ai cookie header";
         nextPollAtMs = nowMs + MIN_POLL_MS;

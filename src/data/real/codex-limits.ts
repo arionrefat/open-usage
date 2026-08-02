@@ -43,12 +43,19 @@ export function createCodexLimitsSource(
   let note: string | null = null;
   let nextPollAtMs = 0;
 
+  function readFreshCache(): CodexAccountLimits | null {
+    if (!cached) return null;
+    const cacheAgeMs = Date.now() - cached.fetchedAtMs;
+    return cacheAgeMs <= STALE_MS ? cached : null;
+  }
+
   return {
-    read: () => (cached && Date.now() - cached.fetchedAtMs <= STALE_MS ? cached : null),
+    read: readFreshCache,
     note: () => note,
     async poll(now, signal) {
       const nowMs = now.getTime();
-      if (nowMs < nextPollAtMs) return;
+      const pollIsThrottled = nowMs < nextPollAtMs;
+      if (pollIsThrottled) return;
       nextPollAtMs = nowMs + MIN_POLL_MS;
 
       try {

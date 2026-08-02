@@ -60,13 +60,25 @@ function windowFrom(value: unknown): CodexWindow | null {
   if (typeof used !== "number" || !Number.isFinite(used)) return null;
   const resets = value.resetsAt;
   const minutes = value.windowDurationMins;
+  const resetsAtMs =
+    typeof resets === "number" && Number.isFinite(resets) ? resets * 1000 : null;
+  const windowMinutes =
+    typeof minutes === "number" && Number.isFinite(minutes) ? minutes : null;
   return {
     usedPercent: Math.min(100, Math.max(0, used)),
     // resetsAt is unix seconds.
-    resetsAtMs: typeof resets === "number" && Number.isFinite(resets) ? resets * 1000 : null,
-    windowMinutes:
-      typeof minutes === "number" && Number.isFinite(minutes) ? minutes : null,
+    resetsAtMs,
+    windowMinutes,
   };
+}
+
+function isSessionWindow(
+  window: CodexWindow,
+  index: number,
+  secondary: CodexWindow | null,
+): boolean {
+  if (window.windowMinutes !== null) return window.windowMinutes <= SESSION_MAX_MINUTES;
+  return index === 0 && secondary !== null;
 }
 
 /**
@@ -86,9 +98,7 @@ export function parseRateLimits(result: unknown, fetchedAtMs: number): CodexAcco
   let weekly: CodexWindow | null = null;
   for (const [index, window] of [primary, secondary].entries()) {
     if (!window) continue;
-    const isSession =
-      window.windowMinutes === null ? index === 0 && secondary !== null : window.windowMinutes <= SESSION_MAX_MINUTES;
-    if (isSession) session ??= window;
+    if (isSessionWindow(window, index, secondary)) session ??= window;
     else weekly ??= window;
   }
 
@@ -127,13 +137,14 @@ export function parseUsageHistory(result: unknown): CodexUsageHistory | null {
   }
 
   const raw = result.summary;
-  const summary: CodexUsageSummary | null = isRecord(raw)
-    ? {
-        lifetimeTokens: positiveNumber(raw.lifetimeTokens),
-        peakDailyTokens: positiveNumber(raw.peakDailyTokens),
-        longestStreakDays: positiveNumber(raw.longestStreakDays),
-      }
-    : null;
+  let summary: CodexUsageSummary | null = null;
+  if (isRecord(raw)) {
+    summary = {
+      lifetimeTokens: positiveNumber(raw.lifetimeTokens),
+      peakDailyTokens: positiveNumber(raw.peakDailyTokens),
+      longestStreakDays: positiveNumber(raw.longestStreakDays),
+    };
+  }
 
   if (dailyTokens.size === 0 && summary === null) return null;
   return { dailyTokens, summary };
@@ -152,6 +163,11 @@ interface RpcOutcome {
   errors: Map<number, unknown>;
 }
 
+interface RpcRequest {
+  id: number;
+  method: string;
+}
+
 const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
@@ -167,8 +183,39 @@ function spawnAppServer() {
   });
 }
 
+function writeRpcMessage(
+  stdin: ReturnType<typeof spawnAppServer>["stdin"],
+  id: number,
+  method: string,
+  params: Record<string, unknown>,
+): void {
+  stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+}
+
+function collectRpcLine(
+  line: string,
+  wanted: Set<number>,
+  results: Map<number, unknown>,
+  errors: Map<number, unknown>,
+): void {
+  if (!line) return;
+
+  let message: unknown;
+  try {
+    message = JSON.parse(line);
+  } catch {
+    // Banner or log noise on stdout is not fatal.
+    return;
+  }
+  if (!isRecord(message) || typeof message.id !== "number") return;
+
+  if (message.error !== undefined) errors.set(message.id, message.error);
+  else results.set(message.id, message.result);
+  wanted.delete(message.id);
+}
+
 async function runRequests(
-  requests: Array<{ id: number; method: string }>,
+  requests: RpcRequest[],
   timeoutMs: number,
 ): Promise<RpcOutcome> {
   let proc: ReturnType<typeof spawnAppServer>;
@@ -183,46 +230,29 @@ async function runRequests(
   const wanted = new Set(requests.map((request) => request.id));
 
   try {
-    proc.stdin.write(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: 0,
-        method: "initialize",
-        params: { clientInfo: { name: "limitless", title: "Limitless", version: "0" } },
-      }) + "\n",
-    );
-    for (const request of requests) {
-      proc.stdin.write(
-        JSON.stringify({ jsonrpc: "2.0", id: request.id, method: request.method, params: {} }) +
-          "\n",
-      );
+    writeRpcMessage(proc.stdin, 0, "initialize", {
+      clientInfo: { name: "limitless", title: "Limitless", version: "0" },
+    });
+    for (const { id, method } of requests) {
+      writeRpcMessage(proc.stdin, id, method, {});
     }
     await proc.stdin.flush();
 
-    const deadline = Date.now() + timeoutMs;
+    const timeoutAtMs = Date.now() + timeoutMs;
     const decoder = new TextDecoder();
-    let buffer = "";
+    let pendingText = "";
 
     for await (const chunk of proc.stdout) {
-      buffer += decoder.decode(chunk as Uint8Array);
-      let newline: number;
-      while ((newline = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (!line) continue;
-        let message: unknown;
-        try {
-          message = JSON.parse(line);
-        } catch {
-          continue; // Banner or log noise on stdout is not fatal.
-        }
-        if (!isRecord(message) || typeof message.id !== "number") continue;
-        if (message.error !== undefined) errors.set(message.id, message.error);
-        else results.set(message.id, message.result);
-        wanted.delete(message.id);
+      pendingText += decoder.decode(chunk as Uint8Array);
+      let newlineIndex = pendingText.indexOf("\n");
+      while (newlineIndex >= 0) {
+        const line = pendingText.slice(0, newlineIndex).trim();
+        pendingText = pendingText.slice(newlineIndex + 1);
+        collectRpcLine(line, wanted, results, errors);
+        newlineIndex = pendingText.indexOf("\n");
       }
       if (wanted.size === 0) break;
-      if (Date.now() > deadline) {
+      if (Date.now() > timeoutAtMs) {
         throw new CodexProbeError("timeout", "codex app-server did not answer in time");
       }
     }

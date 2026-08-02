@@ -102,8 +102,9 @@ export function readClaudeTranscripts(projectsDir: string): TranscriptAggregate 
     try {
       const stats = statSync(path);
       const cached = fileCache.get(path);
-      let entry =
-        cached && cached.size === stats.size && cached.mtimeMs === stats.mtimeMs ? cached : null;
+      const cacheMatchesFile =
+        cached !== undefined && cached.size === stats.size && cached.mtimeMs === stats.mtimeMs;
+      let entry = cacheMatchesFile ? cached : null;
       if (!entry) {
         entry = {
           size: stats.size,
