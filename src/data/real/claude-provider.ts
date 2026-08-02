@@ -1,9 +1,9 @@
 import { COLORS } from "../../theme";
-import type { ProviderMeta, ProviderUsage, UsageLimit } from "../types";
+import type { DetailRow, DetailSection, ProviderMeta, ProviderUsage, UsageLimit } from "../types";
 import { HOUR_MS, formatAge, formatClock, formatCountdown, formatRate, seriesFromBuckets, tokensPerHour } from "./aggregate";
 import type { HistoryStats } from "./claude-history";
 import type { TranscriptAggregate } from "./claude-transcripts";
-import { NO_CAP_DATA, capLessLimit, localBurn, resetText } from "./provider-helpers";
+import { NO_CAP_DATA, capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
 import { SNAPSHOT_FRESH_MS, type RateWindowReading, type SnapshotFile, type WeeklyTrend } from "./statusline-snapshot";
 
 export function createClaudeMeta(): ProviderMeta {
@@ -146,6 +146,76 @@ interface ClaudeProviderInput {
   now: Date;
 }
 
+function sessionDetails(snapshotFile: SnapshotFile | null): DetailSection | null {
+  if (!snapshotFile || snapshotFile.ageMs >= SNAPSHOT_FRESH_MS) return null;
+  const { model, contextWindow, cost, effort } = snapshotFile.reading;
+  const rows: DetailRow[] = [];
+  const modelName = model?.displayName ?? model?.id;
+  if (modelName) rows.push({ label: "model", value: modelName });
+  if (
+    contextWindow !== null &&
+    contextWindow.usedPercentage !== null &&
+    contextWindow.totalInputTokens !== null &&
+    contextWindow.totalOutputTokens !== null &&
+    contextWindow.contextWindowSize !== null
+  ) {
+    const used = contextWindow.totalInputTokens + contextWindow.totalOutputTokens;
+    rows.push({
+      label: "context used",
+      value: `${formatTokenCount(used)} of ${formatTokenCount(contextWindow.contextWindowSize)}`,
+      percent: contextWindow.usedPercentage,
+    });
+  }
+  if (cost !== null && cost.totalCostUsd !== null) {
+    rows.push({ label: "session cost", value: `$${cost.totalCostUsd.toFixed(2)}` });
+  }
+  if (cost !== null && (cost.totalLinesAdded !== null || cost.totalLinesRemoved !== null)) {
+    rows.push({
+      label: "lines",
+      value: `+${cost.totalLinesAdded ?? 0} / -${cost.totalLinesRemoved ?? 0}`,
+    });
+  }
+  if (effort) rows.push({ label: "effort", value: effort });
+  return rows.length > 0 ? { title: "session", rows } : null;
+}
+
+function transcriptDetails(transcripts: TranscriptAggregate): DetailSection[] {
+  const modelRows = [...transcripts.modelTokens]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 3);
+  const modelTotal = [...transcripts.modelTokens.values()].reduce((sum, value) => sum + value, 0);
+  const models: DetailSection | null = modelRows.length
+    ? {
+        title: "models 30d",
+        rows: modelRows.map(([label, value]) => ({
+          label,
+          value: formatTokenCount(value),
+          percent: modelTotal > 0 ? (value / modelTotal) * 100 : 0,
+        })),
+      }
+    : null;
+
+  const split = transcripts.tokenSplit;
+  const tokenRows = [
+    { label: "input", value: split.input },
+    { label: "output", value: split.output },
+    { label: "cache read", value: split.cacheRead },
+    { label: "cache write", value: split.cacheWrite },
+  ];
+  const tokenTotal = tokenRows.reduce((sum, row) => sum + row.value, 0);
+  const tokens: DetailSection | null = tokenTotal > 0
+    ? {
+        title: "tokens 30d",
+        rows: tokenRows.map((row) => ({
+          label: row.label,
+          value: formatTokenCount(row.value),
+          percent: (row.value / tokenTotal) * 100,
+        })),
+      }
+    : null;
+  return [models, tokens].filter((section): section is DetailSection => section !== null);
+}
+
 export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
   const { meta, transcripts, history, snapshotFile, hasStatusline, trend, dates, now } = input;
   const nowMs = now.getTime();
@@ -157,6 +227,9 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
   const trendRate =
     isFresh && seven !== null ? trend.observe(snapshotFile.writtenAtMs, seven.percent) : null;
   const projection = projectWeekly(seven, trendRate, nowMs);
+  const details = [sessionDetails(snapshotFile), ...transcriptDetails(transcripts)].filter(
+    (section): section is DetailSection => section !== null,
+  );
 
   return {
     id: "cl",
@@ -187,6 +260,7 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
           capsOutAt: projection.capsOutAt,
         }
       : localBurn(rate),
+    ...(details.length > 0 ? { details } : {}),
     ...(isFresh
       ? {}
       : {

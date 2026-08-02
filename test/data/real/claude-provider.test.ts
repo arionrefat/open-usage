@@ -13,6 +13,21 @@ function snapshot(ageMs: number, weeklyPercent = 40): SnapshotFile {
     reading: {
       fiveHour: { percent: 25.4, resetsAtMs: NOW_MS + HOUR_MS },
       sevenDay: { percent: weeklyPercent, resetsAtMs: NOW_MS + 10 * HOUR_MS },
+      model: { id: "claude-sonnet-4-5", displayName: "Sonnet 4.5" },
+      effort: "high",
+      cost: {
+        totalCostUsd: 2.6,
+        totalDurationMs: 120_000,
+        totalLinesAdded: 0,
+        totalLinesRemoved: 1,
+      },
+      contextWindow: {
+        totalInputTokens: 120_000,
+        totalOutputTokens: 5_000,
+        contextWindowSize: 1_000_000,
+        usedPercentage: 12.5,
+        currentUsage: null,
+      },
     },
   };
 }
@@ -28,7 +43,15 @@ function build(options: {
 } = {}) {
   return buildClaudeProvider({
     meta: createClaudeMeta(),
-    transcripts: { buckets: new Map(), latestMs: 0 },
+    transcripts: {
+      buckets: new Map(),
+      latestMs: 0,
+      modelTokens: new Map([
+        ["sonnet", 700],
+        ["opus", 300],
+      ]),
+      tokenSplit: { input: 100, output: 200, cacheRead: 600, cacheWrite: 100 },
+    },
     history: { prompts: 0, sessions: 0, latestMs: 0 },
     snapshotFile: options.snapshotFile ?? null,
     hasStatusline: options.hasStatusline ?? true,
@@ -68,5 +91,38 @@ describe("buildClaudeProvider", () => {
 
     expect(safe.limits[1]?.alert).toBeUndefined();
     expect(over.limits[1]?.alert?.text).toContain("projected 110% before reset");
+  });
+
+  test("adds session, model, and token detail sections for fresh data", () => {
+    const provider = build({ snapshotFile: snapshot(60_000) });
+
+    expect(provider.details?.map((section) => section.title)).toEqual([
+      "session",
+      "models 30d",
+      "tokens 30d",
+    ]);
+    expect(provider.details?.[0]?.rows).toEqual([
+      { label: "model", value: "Sonnet 4.5" },
+      { label: "context used", value: "125K of 1.0M", percent: 12.5 },
+      { label: "session cost", value: "$2.60" },
+      { label: "lines", value: "+0 / -1" },
+      { label: "effort", value: "high" },
+    ]);
+    expect(provider.details?.[1]?.rows[0]).toEqual({ label: "sonnet", value: "700", percent: 70 });
+  });
+
+  test("skips the session section without a fresh snapshot", () => {
+    expect(build({ snapshotFile: null }).details?.[0]?.title).toBe("models 30d");
+    expect(build({ snapshotFile: snapshot(11 * 60_000) }).details?.[0]?.title).toBe("models 30d");
+  });
+
+  test("omits absent session rows", () => {
+    const partial = snapshot(60_000);
+    partial.reading.model = null;
+    partial.reading.cost = null;
+    partial.reading.effort = null;
+    expect(build({ snapshotFile: partial }).details?.[0]?.rows).toEqual([
+      { label: "context used", value: "125K of 1.0M", percent: 12.5 },
+    ]);
   });
 });

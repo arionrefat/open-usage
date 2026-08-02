@@ -77,13 +77,39 @@ describe("aggregateTranscriptLines", () => {
 
     // Claude Code re-logs a message as it streams; on real transcripts this
     // triple-counting inflated totals by about 3x.
-    const { buckets } = aggregateTranscriptLines([
+    const { buckets, tokenSplit } = aggregateTranscriptLines([
       line("msg_1", 100),
       line("msg_1", 100),
       line("msg_1", 100),
       line("msg_2", 50),
     ]);
     expect([...buckets.values()][0]).toBe(150);
+    expect(tokenSplit.output).toBe(150);
+  });
+
+  test("totals the four token kinds and models for 30 days", () => {
+    const line = (id: string, model: string, usage: Record<string, number>) =>
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-07-30T10:15:00.000Z",
+        message: { id, model, usage },
+      });
+    const aggregate = aggregateTranscriptLines(
+      [
+        line("one", "sonnet", {
+          input_tokens: 10,
+          output_tokens: 20,
+          cache_read_input_tokens: 30,
+          cache_creation_input_tokens: 40,
+        }),
+        line("one", "sonnet", { output_tokens: 999 }),
+        line("two", "opus", { input_tokens: 5, cache_read_input_tokens: 15 }),
+      ],
+      new Date("2026-08-02T00:00:00Z"),
+    );
+
+    expect(aggregate.modelTokens).toEqual(new Map([["sonnet", 100], ["opus", 20]]));
+    expect(aggregate.tokenSplit).toEqual({ input: 15, output: 20, cacheRead: 45, cacheWrite: 40 });
   });
 
   test("still counts messages that carry no id", () => {

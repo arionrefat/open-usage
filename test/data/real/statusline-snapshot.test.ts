@@ -4,6 +4,46 @@ import { createWeeklyTrend, parseUsageSnapshot } from "../../../src/data/real/st
 const HOUR_MS = 3_600_000;
 
 describe("parseUsageSnapshot", () => {
+  test("reads the full statusline payload", () => {
+    const reading = parseUsageSnapshot({
+      model: { id: "claude-opus-4-1", display_name: "Opus 4.1" },
+      effort: { level: "high" },
+      cost: {
+        total_cost_usd: 2.6,
+        total_duration_ms: 42_000,
+        total_lines_added: 0,
+        total_lines_removed: 1,
+      },
+      context_window: {
+        total_input_tokens: 120_000,
+        total_output_tokens: 5_000,
+        context_window_size: 1_000_000,
+        used_percentage: 12.5,
+        current_usage: {
+          input_tokens: 10,
+          output_tokens: 20,
+          cache_creation_input_tokens: 30,
+          cache_read_input_tokens: 40,
+        },
+      },
+    });
+
+    expect(reading?.model).toEqual({ id: "claude-opus-4-1", displayName: "Opus 4.1" });
+    expect(reading?.effort).toBe("high");
+    expect(reading?.cost).toEqual({
+      totalCostUsd: 2.6,
+      totalDurationMs: 42_000,
+      totalLinesAdded: 0,
+      totalLinesRemoved: 1,
+    });
+    expect(reading?.contextWindow?.currentUsage).toEqual({
+      inputTokens: 10,
+      outputTokens: 20,
+      cacheCreationInputTokens: 30,
+      cacheReadInputTokens: 40,
+    });
+  });
+
   test("reads both windows with epoch-second resets", () => {
     const reading = parseUsageSnapshot({
       rate_limits: {
@@ -34,6 +74,8 @@ describe("parseUsageSnapshot", () => {
     expect(reading?.fiveHour?.percent).toBe(12);
     expect(reading?.fiveHour?.resetsAtMs).toBeNull();
     expect(reading?.sevenDay).toBeNull();
+    expect(reading?.model).toBeNull();
+    expect(reading?.contextWindow).toBeNull();
   });
 
   test("returns null when nothing usable is present", () => {

@@ -8,14 +8,29 @@ export interface TranscriptEvent {
   tokens: number;
   /** Assistant message id; the same message is logged more than once. */
   id: string | null;
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+export interface TranscriptTokenSplit {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
 }
 
 export interface TranscriptAggregate {
   buckets: HourBuckets;
   latestMs: number;
+  modelTokens: Map<string, number>;
+  tokenSplit: TranscriptTokenSplit;
 }
 
 const ASSISTANT_MARKER = '"type":"assistant"';
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 function tokenCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
@@ -40,13 +55,15 @@ export function parseTranscriptLine(line: string): TranscriptEvent | null {
   const usage = message.usage;
   if (!isRecord(usage)) return null;
 
-  const tokens =
-    tokenCount(usage.input_tokens) +
-    tokenCount(usage.output_tokens) +
-    tokenCount(usage.cache_creation_input_tokens);
+  const inputTokens = tokenCount(usage.input_tokens);
+  const outputTokens = tokenCount(usage.output_tokens);
+  const cacheReadTokens = tokenCount(usage.cache_read_input_tokens);
+  const cacheWriteTokens = tokenCount(usage.cache_creation_input_tokens);
+  const tokens = inputTokens + outputTokens + cacheWriteTokens;
   if (tokens <= 0) return null;
   const id = typeof message.id === "string" ? message.id : null;
-  return { epochMs, tokens, id };
+  const model = typeof message.model === "string" ? message.model : null;
+  return { epochMs, tokens, id, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
 }
 
 /**
@@ -54,8 +71,13 @@ export function parseTranscriptLine(line: string): TranscriptEvent | null {
  * several identical usage blocks per message. Counting every line inflates the
  * totals by roughly 3x, so each message id is banked once.
  */
-export function aggregateTranscriptLines(lines: Iterable<string>): TranscriptAggregate {
+export function aggregateTranscriptLines(
+  lines: Iterable<string>,
+  now: Date = new Date(),
+): TranscriptAggregate {
   const buckets: HourBuckets = new Map();
+  const modelTokens = new Map<string, number>();
+  const tokenSplit: TranscriptTokenSplit = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const seen = new Set<string>();
   let latestMs = 0;
   for (const line of lines) {
@@ -66,9 +88,19 @@ export function aggregateTranscriptLines(lines: Iterable<string>): TranscriptAgg
       seen.add(event.id);
     }
     addToBucket(buckets, event.epochMs, event.tokens);
+    if (event.epochMs >= now.getTime() - THIRTY_DAYS_MS) {
+      if (event.model !== null) {
+        const allTokens = event.inputTokens + event.outputTokens + event.cacheReadTokens + event.cacheWriteTokens;
+        modelTokens.set(event.model, (modelTokens.get(event.model) ?? 0) + allTokens);
+      }
+      tokenSplit.input += event.inputTokens;
+      tokenSplit.output += event.outputTokens;
+      tokenSplit.cacheRead += event.cacheReadTokens;
+      tokenSplit.cacheWrite += event.cacheWriteTokens;
+    }
     latestMs = Math.max(latestMs, event.epochMs);
   }
-  return { buckets, latestMs };
+  return { buckets, latestMs, modelTokens, tokenSplit };
 }
 
 interface FileCacheEntry {
@@ -84,14 +116,16 @@ const fileCache = new Map<string, FileCacheEntry>();
 /** Sums assistant token usage across every transcript under `projectsDir`. */
 export function readClaudeTranscripts(projectsDir: string): TranscriptAggregate {
   const combined: HourBuckets = new Map();
+  const modelTokens = new Map<string, number>();
+  const tokenSplit: TranscriptTokenSplit = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let latestMs = 0;
-  if (!existsSync(projectsDir)) return { buckets: combined, latestMs };
+  if (!existsSync(projectsDir)) return { buckets: combined, latestMs, modelTokens, tokenSplit };
 
   let entries: string[];
   try {
     entries = readdirSync(projectsDir, { recursive: true, encoding: "utf8" });
   } catch {
-    return { buckets: combined, latestMs };
+    return { buckets: combined, latestMs, modelTokens, tokenSplit };
   }
 
   const seen = new Set<string>();
@@ -114,11 +148,18 @@ export function readClaudeTranscripts(projectsDir: string): TranscriptAggregate 
         fileCache.set(path, entry);
       }
       mergeBuckets(combined, entry.aggregate.buckets);
+      for (const [model, tokens] of entry.aggregate.modelTokens) {
+        modelTokens.set(model, (modelTokens.get(model) ?? 0) + tokens);
+      }
+      tokenSplit.input += entry.aggregate.tokenSplit.input;
+      tokenSplit.output += entry.aggregate.tokenSplit.output;
+      tokenSplit.cacheRead += entry.aggregate.tokenSplit.cacheRead;
+      tokenSplit.cacheWrite += entry.aggregate.tokenSplit.cacheWrite;
       latestMs = Math.max(latestMs, entry.aggregate.latestMs);
     } catch {
       // The cleanup job prunes transcripts between readdir and stat; skip the gap.
     }
   }
   for (const path of fileCache.keys()) if (!seen.has(path)) fileCache.delete(path);
-  return { buckets: combined, latestMs };
+  return { buckets: combined, latestMs, modelTokens, tokenSplit };
 }
