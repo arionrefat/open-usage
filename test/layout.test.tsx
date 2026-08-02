@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
-import { App } from "./app";
-import { mockUsageProvider } from "./data/mock-provider";
-import { VIEW_KEYS, type OverviewMode, type ViewKey } from "./state/app-state";
+import { App } from "../src/app";
+import { mockUsageProvider } from "../src/data/mock-provider";
+import {
+  VIEW_KEYS,
+  type OverviewMode,
+  type ViewKey,
+} from "../src/state/app-state";
 
 /** 60 is the narrowest width the chrome is expected to stay legible at. */
 const WIDTHS = [60, 80, 100, 140];

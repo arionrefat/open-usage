@@ -29,7 +29,7 @@ flowchart LR
 | `bun run production` | Real mode with provider polling. |
 | `bun run preview` | Headless text frame for reviewing the UI without a terminal session. |
 | `bun run shot` | Headless HTML screenshot for reviewing colors and chart geometry. |
-| `bun test` | Runs all 187 tests. |
+| `bun test` | Runs all 210 tests under the top-level `test/` directory. |
 | `bun run typecheck` | Runs `tsc --noEmit`. |
 
 The main UI entry points accept `--mock`, `--real`, `--no-poll`, `--screen`, `--view`, and `--mode`.
@@ -103,7 +103,7 @@ Masks credentials for display: 24 chars or shorter become all bullets, longer ke
 
 **`app-state.ts`**
 All UI state in one struct (`AppState`: view, mode, scope, filter, onboarding wizard, settings cursor, connections) and one pure reducer over ~30 action types.
-No timers, no filesystem, no terminal, which is why it has direct unit tests.
+No timers, no filesystem, no terminal, which is why `test/state/app-state.test.ts` can test it directly.
 Touch when: adding any new interaction or piece of UI state.
 
 **`derive.ts`**

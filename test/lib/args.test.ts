@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { isFlagEnabled, providerModeFromFlags, readFlags, startupFromFlags } from "./args";
+import {
+  isFlagEnabled,
+  providerModeFromFlags,
+  readFlags,
+  startupFromFlags,
+} from "../../src/lib/args";
 
 describe("CLI flags", () => {
   test("does not consume the next flag as a boolean value", () => {
