@@ -22,6 +22,8 @@ function account(overrides: Partial<CodexAccountLimits> = {}): CodexAccountLimit
     weekly: { usedPercent: 60, resetsAtMs: NOW_MS + 2 * HOUR_MS, windowMinutes: 10_080 },
     planType: "plus",
     resetCredits: 0,
+    additionalRateLimits: [],
+    credits: null,
     usage: null,
     fetchedAtMs: NOW_MS,
     ...overrides,
@@ -81,5 +83,58 @@ describe("buildCodexProvider", () => {
 
     expect(provider.series.daily).toEqual([2.5]);
     expect(provider.series.hourly.some((value) => value === 1)).toBe(true);
+  });
+
+  test("moves usage summary records out of the footer", () => {
+    const provider = build(account({
+      usage: {
+        dailyTokens: new Map(),
+        summary: {
+          lifetimeTokens: 401_496_457,
+          peakDailyTokens: 110_289_890,
+          longestRunningTurnSec: 3_782,
+          currentStreakDays: 2,
+          longestStreakDays: 3,
+        },
+      },
+    }));
+
+    expect(provider.details?.[0]).toEqual({
+      title: "records",
+      rows: [
+        { label: "lifetime tokens", value: "401M" },
+        { label: "peak day", value: "110M" },
+        { label: "longest turn", value: "1h 3m" },
+        { label: "current streak", value: "2d" },
+        { label: "longest streak", value: "3d" },
+      ],
+    });
+    expect(provider.detailFooter).toBeUndefined();
+  });
+
+  test("shows one share row for each per-model limit", () => {
+    const provider = build(account({
+      additionalRateLimits: [
+        { name: "codex mini", usedPercent: 37.4, resetsAtMs: null, windowMinutes: 10080 },
+        { name: "gpt-5", usedPercent: 81, resetsAtMs: null, windowMinutes: 10080 },
+      ],
+    }));
+
+    expect(provider.details).toEqual([{
+      title: "per-model limits",
+      rows: [
+        { label: "codex mini", value: "37%", percent: 37.4 },
+        { label: "gpt-5", value: "81%", percent: 81 },
+      ],
+    }]);
+  });
+
+  test("hides a zero credit balance and shows unlimited credits", () => {
+    expect(build(account({ credits: { balance: 0, unlimited: false } })).details).toBeUndefined();
+
+    expect(build(account({ credits: { balance: 0, unlimited: true } })).details).toEqual([{
+      title: "credits",
+      rows: [{ label: "balance", value: "unlimited" }],
+    }]);
   });
 });

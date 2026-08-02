@@ -15,7 +15,18 @@ export interface CodexWindow {
 export interface CodexUsageSummary {
   lifetimeTokens: number;
   peakDailyTokens: number;
+  longestRunningTurnSec: number;
+  currentStreakDays: number;
   longestStreakDays: number;
+}
+
+export interface CodexAdditionalRateLimit extends CodexWindow {
+  name: string;
+}
+
+export interface CodexCredits {
+  balance: number | null;
+  unlimited: boolean;
 }
 
 export interface CodexUsageHistory {
@@ -30,6 +41,8 @@ export interface CodexAccountLimits {
   planType: string | null;
   /** Free "reset my limits" grants the account currently holds. */
   resetCredits: number;
+  additionalRateLimits: CodexAdditionalRateLimit[];
+  credits: CodexCredits | null;
   usage: CodexUsageHistory | null;
   fetchedAtMs: number;
 }
@@ -72,6 +85,29 @@ function windowFrom(value: unknown): CodexWindow | null {
   };
 }
 
+function additionalRateLimitsFrom(value: unknown): CodexAdditionalRateLimit[] {
+  if (!Array.isArray(value)) return [];
+  const limits: CodexAdditionalRateLimit[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const nameValue = item.limitName ?? item.modelName ?? item.model ?? item.limitId;
+    const window = windowFrom(item) ?? windowFrom(item.primary);
+    if (typeof nameValue !== "string" || nameValue.length === 0 || !window) continue;
+    limits.push({ name: nameValue, ...window });
+  }
+  return limits;
+}
+
+function creditsFrom(value: unknown): CodexCredits | null {
+  if (!isRecord(value)) return null;
+  const numericBalance =
+    typeof value.balance === "number" ? value.balance : Number(value.balance);
+  return {
+    balance: Number.isFinite(numericBalance) ? numericBalance : null,
+    unlimited: value.unlimited === true,
+  };
+}
+
 function isSessionWindow(
   window: CodexWindow,
   index: number,
@@ -103,6 +139,8 @@ export function parseRateLimits(result: unknown, fetchedAtMs: number): CodexAcco
   }
 
   const plan = snapshot.planType;
+  const additionalRateLimits = additionalRateLimitsFrom(snapshot.additionalRateLimits);
+  const accountCredits = creditsFrom(snapshot.credits);
   const credits = isRecord(result.rateLimitResetCredits)
     ? result.rateLimitResetCredits.availableCount
     : null;
@@ -112,6 +150,8 @@ export function parseRateLimits(result: unknown, fetchedAtMs: number): CodexAcco
     weekly,
     planType: typeof plan === "string" ? plan : null,
     resetCredits: typeof credits === "number" && Number.isFinite(credits) ? credits : 0,
+    additionalRateLimits,
+    credits: accountCredits,
     usage: null,
     fetchedAtMs,
   };
@@ -142,6 +182,8 @@ export function parseUsageHistory(result: unknown): CodexUsageHistory | null {
     summary = {
       lifetimeTokens: positiveNumber(raw.lifetimeTokens),
       peakDailyTokens: positiveNumber(raw.peakDailyTokens),
+      longestRunningTurnSec: positiveNumber(raw.longestRunningTurnSec),
+      currentStreakDays: positiveNumber(raw.currentStreakDays),
       longestStreakDays: positiveNumber(raw.longestStreakDays),
     };
   }

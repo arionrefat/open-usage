@@ -1,7 +1,7 @@
 import { COLORS } from "../../theme";
-import type { ProviderMeta, ProviderUsage, UsageLimit } from "../types";
+import type { DetailSection, ProviderMeta, ProviderUsage, UsageLimit } from "../types";
 import { formatAge, formatClock, seriesFromBuckets, toMillions, tokensPerHour, type HourBuckets } from "./aggregate";
-import type { CodexAccountLimits, CodexUsageSummary, CodexWindow } from "./codex-app-server";
+import type { CodexAccountLimits, CodexWindow } from "./codex-app-server";
 import type { CodexLimitsSource } from "./codex-limits";
 import type { OpencodeSessionStats } from "./opencode-db";
 import { capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
@@ -21,15 +21,60 @@ export function createCodexMeta(): ProviderMeta {
   };
 }
 
-function codexSummaryFooter(summary: CodexUsageSummary): string | undefined {
-  if (summary.lifetimeTokens <= 0) return undefined;
-  const parts = [
-    `lifetime ${formatTokenCount(summary.lifetimeTokens)}`,
-    `peak day ${formatTokenCount(summary.peakDailyTokens)}`,
-    ...(summary.longestStreakDays > 0 ? [`longest streak ${summary.longestStreakDays}d`] : []),
-    "from codex",
-  ];
-  return parts.join(" ▏ ");
+function compactDuration(totalSeconds: number): string {
+  const seconds = Math.floor(totalSeconds);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  if (hours > 0) return `${hours}h${minutes > 0 ? ` ${minutes}m` : ""}`;
+  if (minutes > 0) return `${minutes}m${remainder > 0 ? ` ${remainder}s` : ""}`;
+  return `${remainder}s`;
+}
+
+function codexDetails(limits: CodexAccountLimits): DetailSection[] | undefined {
+  const sections: DetailSection[] = [];
+  const summary = limits.usage?.summary;
+  if (summary) {
+    const rows = [
+      ...(summary.lifetimeTokens > 0
+        ? [{ label: "lifetime tokens", value: formatTokenCount(summary.lifetimeTokens) }]
+        : []),
+      ...(summary.peakDailyTokens > 0
+        ? [{ label: "peak day", value: formatTokenCount(summary.peakDailyTokens) }]
+        : []),
+      ...(summary.longestRunningTurnSec > 0
+        ? [{ label: "longest turn", value: compactDuration(summary.longestRunningTurnSec) }]
+        : []),
+      ...(summary.currentStreakDays > 0
+        ? [{ label: "current streak", value: `${summary.currentStreakDays}d` }]
+        : []),
+      ...(summary.longestStreakDays > 0
+        ? [{ label: "longest streak", value: `${summary.longestStreakDays}d` }]
+        : []),
+    ];
+    if (rows.length > 0) sections.push({ title: "records", rows });
+  }
+  if (limits.additionalRateLimits.length > 0) {
+    sections.push({
+      title: "per-model limits",
+      rows: limits.additionalRateLimits.slice(0, 5).map((limit) => ({
+        label: limit.name,
+        value: `${Math.round(limit.usedPercent)}%`,
+        percent: limit.usedPercent,
+      })),
+    });
+  }
+  const credits = limits.credits;
+  if (credits && (credits.unlimited || (credits.balance ?? 0) > 0)) {
+    sections.push({
+      title: "credits",
+      rows: [{
+        label: "balance",
+        value: credits.unlimited ? "unlimited" : `$${credits.balance?.toFixed(2)}`,
+      }],
+    });
+  }
+  return sections.length > 0 ? sections : undefined;
 }
 
 /** "plus" reads as a plan name, not a sentence, so only the case changes. */
@@ -149,7 +194,8 @@ export function buildCodexProvider(input: CodexProviderInput): ProviderUsage {
           },
     },
     burn: localBurn(tokensPerHour(buckets, now)),
-    detailFooter: usage?.summary ? codexSummaryFooter(usage.summary) : localStatsFooter(stats, nowMs),
+    details: limits ? codexDetails(limits) : undefined,
+    detailFooter: usage ? undefined : localStatsFooter(stats, nowMs),
   };
 }
 

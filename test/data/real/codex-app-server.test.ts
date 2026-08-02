@@ -13,6 +13,15 @@ const LIVE_RESPONSE = {
     spendControlReached: false,
     planType: "plus",
     rateLimitReachedType: null,
+    additionalRateLimits: [
+      {
+        limitId: "codex-mini-latest",
+        limitName: "codex mini",
+        usedPercent: 37.4,
+        windowDurationMins: 10080,
+        resetsAt: 1786212362,
+      },
+    ],
   },
   rateLimitsByLimitId: { codex: { limitId: "codex" } },
   rateLimitResetCredits: {
@@ -35,6 +44,15 @@ describe("parseRateLimits", () => {
     });
     expect(limits?.planType).toBe("plus");
     expect(limits?.resetCredits).toBe(1);
+    expect(limits?.additionalRateLimits).toEqual([
+      {
+        name: "codex mini",
+        usedPercent: 37.4,
+        resetsAtMs: 1786212362 * 1000,
+        windowMinutes: 10080,
+      },
+    ]);
+    expect(limits?.credits).toEqual({ balance: 0, unlimited: false });
   });
 
   test("splits a short and a long window into the right scopes", () => {
@@ -81,6 +99,8 @@ describe("parseRateLimits", () => {
     expect(limits?.weekly?.resetsAtMs).toBeNull();
     expect(limits?.resetCredits).toBe(0);
     expect(limits?.planType).toBeNull();
+    expect(limits?.additionalRateLimits).toEqual([]);
+    expect(limits?.credits).toBeNull();
   });
 
   test("rejects replies without a rate limit snapshot", () => {
@@ -113,6 +133,8 @@ describe("parseUsageHistory", () => {
     // Idle days are simply absent rather than zero-filled.
     expect(usage?.dailyTokens.has("2026-07-06")).toBe(false);
     expect(usage?.summary?.lifetimeTokens).toBe(401496457);
+    expect(usage?.summary?.longestRunningTurnSec).toBe(1802);
+    expect(usage?.summary?.currentStreakDays).toBe(0);
     expect(usage?.summary?.longestStreakDays).toBe(3);
   });
 
