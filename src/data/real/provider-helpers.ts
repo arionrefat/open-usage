@@ -31,7 +31,7 @@ export function resetText(resetsAtMs: number | null, nowMs: number): string {
 /** Like formatTokens but keeps sub-million counts readable ("442K", "1.9M"). */
 export function formatTokenCount(tokens: number): string {
   if (tokens >= 10_000_000) return formatTokens(tokens / 1_000_000);
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 999_500) return `${(tokens / 1_000_000).toFixed(1)}M`;
   if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
   return `${Math.round(tokens)}`;
 }
