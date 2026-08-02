@@ -19,13 +19,13 @@ function providerWith(details: DetailSection[] | undefined): UsageProvider {
   };
 }
 
-async function renderDetails(details: DetailSection[] | undefined): Promise<string> {
+async function renderDetails(details: DetailSection[] | undefined, width = WIDTH): Promise<string> {
   const setup = await testRender(
     <App
       provider={providerWith(details)}
       startup={{ screen: "app", view: "claude", mode: "detailed", useSeverityColors: false }}
     />,
-    { width: WIDTH, height: HEIGHT },
+    { width, height: HEIGHT },
   );
   try {
     await act(async () => {
@@ -71,4 +71,44 @@ test("long detail labels truncate without wrapping", async () => {
   expect(valueRow).toContain("…");
   expect(valueRow).toContain("123");
   for (const row of rows) expect(Bun.stringWidth(row)).toBeLessThanOrEqual(WIDTH);
+});
+
+test("frames the token chart with peak and dates on its borders", async () => {
+  const frame = await renderDetails(undefined);
+  const rows = frame.split("\n");
+  const top = rows.find((row) => row.includes("tokens last 30 days"));
+  const bottom = rows.find((row) => row.includes("Jun 28"));
+
+  expect(top?.trim()).toMatch(/^┌─ tokens last 30 days .* peak \d+[MKB]? ─┐$/);
+  expect(bottom?.trim()).toMatch(/^└─ Jun 28 .* Jul 27 ─┘$/);
+  const topIndex = rows.findIndex((row) => row.includes("tokens last 30 days"));
+  expect(rows.slice(topIndex + 1, topIndex + 9).every((row) => row.trim().startsWith("│"))).toBe(true);
+  expect(rows.slice(topIndex + 1, topIndex + 9).every((row) => row.trimEnd().endsWith("│"))).toBe(true);
+});
+
+test("lays up to three detail sections in a band and wraps the fourth", async () => {
+  const frame = await renderDetails([
+    { title: "first", rows: [{ label: "one", value: "1" }] },
+    { title: "second", rows: [{ label: "two", value: "2" }] },
+    { title: "third", rows: [{ label: "three", value: "3" }] },
+    { title: "fourth", rows: [{ label: "four", value: "4" }] },
+  ], 140);
+  const rows = frame.split("\n");
+  const firstBand = rows.find((row) => row.includes("first"));
+
+  expect(firstBand).toContain("second");
+  expect(firstBand).toContain("third");
+  expect(firstBand).not.toContain("fourth");
+  expect(rows.findIndex((row) => row.includes("fourth"))).toBeGreaterThan(
+    rows.findIndex((row) => row.includes("first")),
+  );
+});
+
+test("caps stacked detail rows on narrow screens", async () => {
+  const frame = await renderDetails([
+    { title: "records", rows: [{ label: "sessions", value: "41" }] },
+  ], 100);
+  const row = frame.split("\n").find((line) => line.includes("sessions"));
+
+  expect(row?.indexOf("41")).toBeLessThan(65);
 });

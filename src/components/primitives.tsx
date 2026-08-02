@@ -153,13 +153,22 @@ interface SplitLineProps {
   background?: string;
   /** Character used for the gap; the design leaves it blank. */
   filler?: string;
+  /** Color used for the filler. */
+  fillerColor?: string;
 }
 
 /**
  * One line with `left` flush left and `right` flush right. The gap is computed
  * rather than flexed so column alignment stays exact in a monospace grid.
  */
-export function SplitLine({ width, left, right = [], background, filler = " " }: SplitLineProps) {
+export function SplitLine({
+  width,
+  left,
+  right = [],
+  background,
+  filler = " ",
+  fillerColor = COLORS.rule,
+}: SplitLineProps) {
   const fit = fitSplit(left, right, width);
   const rightWidth = segmentsWidth(fit.right);
   const rightStart = width - rightWidth;
@@ -168,7 +177,7 @@ export function SplitLine({ width, left, right = [], background, filler = " " }:
   return (
     <text bg={background} onMouseDown={clickHandler(ranges)}>
       {renderSegments(fit.left, "l")}
-      <span fg={COLORS.rule}>{filler.repeat(fit.gap)}</span>
+      <span fg={fillerColor}>{filler.repeat(fit.gap)}</span>
       {renderSegments(fit.right, "r")}
     </text>
   );
