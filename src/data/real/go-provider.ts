@@ -1,5 +1,5 @@
 import { COLORS } from "../../theme";
-import type { ProviderMeta, ProviderUsage, UsageLimit } from "../types";
+import type { ProviderMeta, ProviderUsage, ScopeSummary, UsageLimit } from "../types";
 import { DAY_MS, formatCountdown, seriesFromBuckets, tokensPerHour, type HourBuckets } from "./aggregate";
 import type { GoLimitsSource } from "./go-limits-source";
 import type { OpencodeAuth } from "./opencode-auth";
@@ -95,6 +95,91 @@ function sessionsFooter(stats: OpencodeSessionStats | undefined): string | undef
   return `sessions 30d ${stats.sessions} ▏ avg per session ${formatTokenCount(stats.tokens / stats.sessions)} ▏ tokens from opencode.db`;
 }
 
+function goNoticeText(
+  note: string | null,
+  cookieExpiresAtMs: number | null,
+  nowMs: number,
+): string | null {
+  if (note) return note;
+  if (cookieExpiresAtMs === null) return null;
+
+  const timeLeftMs = cookieExpiresAtMs - nowMs;
+  if (timeLeftMs > COOKIE_WARNING_MS) return null;
+  if (timeLeftMs < 0) return "opencode cookie expired - paste a fresh one";
+  return `opencode cookie expires in ${formatCountdown(timeLeftMs)} - paste a fresh one`;
+}
+
+function goLimits(
+  server: GoServerLimits | null,
+  spend: GoSpend | null,
+  note: string | null,
+  nowMs: number,
+): UsageLimit[] {
+  if (server) return serverGoLimits(server, spend, nowMs);
+  if (!spend) {
+    return [
+      capLessLimit(
+        "usage",
+        "plan usage",
+        "plan usage",
+        note ?? "no local usage",
+        GO_LIMIT_FOOTNOTE,
+      ),
+    ];
+  }
+  return [
+    spendLimit("session", "rolling 5h", "rolling 5h limit", spend.session, nowMs),
+    spendLimit("weekly", "rolling 7d", "rolling 7d limit", spend.weekly, nowMs),
+    spendLimit("monthly", "this cycle", "monthly limit", spend.monthly, nowMs, false),
+  ];
+}
+
+function sessionScope(
+  server: GoServerLimits | null,
+  spend: GoSpend | null,
+  note: string | null,
+  nowMs: number,
+): ScopeSummary {
+  if (server) {
+    return {
+      percent: Math.round(server.rollingPercent),
+      window: "5h rolling · opencode",
+      reset: resetText(server.rollingResetAtMs, nowMs),
+    };
+  }
+  if (spend) {
+    return {
+      percent: Math.round(spend.session.percent),
+      window: "5h rolling · spend estimate",
+      reset: spendResetText(spend.session, nowMs),
+    };
+  }
+  return { percent: null, window: "no data", reset: note ?? "no local usage" };
+}
+
+function weeklyScope(
+  server: GoServerLimits | null,
+  spend: GoSpend | null,
+  note: string | null,
+  nowMs: number,
+): ScopeSummary {
+  if (server && server.weeklyPercent !== null) {
+    return {
+      percent: Math.round(server.weeklyPercent),
+      window: "7d · opencode",
+      reset: resetText(server.weeklyResetAtMs, nowMs),
+    };
+  }
+  if (spend) {
+    return {
+      percent: Math.round(spend.weekly.percent),
+      window: "7d rolling · spend estimate",
+      reset: spendResetText(spend.weekly, nowMs),
+    };
+  }
+  return { percent: null, window: "no data", reset: note ?? GO_LIMIT_FOOTNOTE };
+}
+
 interface GoProviderInput {
   meta: ProviderMeta;
   buckets: HourBuckets;
@@ -115,15 +200,7 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
   const nowMs = now.getTime();
   const server = limitsSource.read();
   const note = limitsSource.note();
-  const cookieExpiresAtMs = limitsSource.cookieExpiresAtMs();
-  const cookieTimeLeftMs = cookieExpiresAtMs === null ? null : cookieExpiresAtMs - nowMs;
-  const noticeText = note
-    ? note
-    : cookieTimeLeftMs !== null && cookieTimeLeftMs <= COOKIE_WARNING_MS
-      ? cookieTimeLeftMs < 0
-        ? "opencode cookie expired - paste a fresh one"
-        : `opencode cookie expires in ${formatCountdown(cookieTimeLeftMs)} - paste a fresh one`
-      : null;
+  const noticeText = goNoticeText(note, limitsSource.cookieExpiresAtMs(), nowMs);
   const usesEstimate =
     !server || (spend !== null && (server.weeklyPercent === null || server.monthlyPercent === null));
   return {
@@ -132,43 +209,10 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
       id: "go",
       meta: usesEstimate ? meta : { ...meta, plan: "Go", planShort: "Go", planDetail: "Go" },
       series: seriesFromBuckets(buckets, dates, now),
-      limits: server
-        ? serverGoLimits(server, spend, nowMs)
-        : spend
-          ? [
-              spendLimit("session", "rolling 5h", "rolling 5h limit", spend.session, nowMs),
-              spendLimit("weekly", "rolling 7d", "rolling 7d limit", spend.weekly, nowMs),
-              spendLimit("monthly", "this cycle", "monthly limit", spend.monthly, nowMs, false),
-            ]
-          : [capLessLimit("usage", "plan usage", "plan usage", note ?? "no local usage", GO_LIMIT_FOOTNOTE)],
+      limits: goLimits(server, spend, note, nowMs),
       scopes: {
-        session: server
-          ? {
-              percent: Math.round(server.rollingPercent),
-              window: "5h rolling · opencode",
-              reset: resetText(server.rollingResetAtMs, nowMs),
-            }
-          : spend
-            ? {
-                percent: Math.round(spend.session.percent),
-                window: "5h rolling · spend estimate",
-                reset: spendResetText(spend.session, nowMs),
-              }
-            : { percent: null, window: "no data", reset: note ?? "no local usage" },
-        weekly:
-          server && server.weeklyPercent !== null
-            ? {
-                percent: Math.round(server.weeklyPercent),
-                window: "7d · opencode",
-                reset: resetText(server.weeklyResetAtMs, nowMs),
-              }
-            : spend
-              ? {
-                  percent: Math.round(spend.weekly.percent),
-                  window: "7d rolling · spend estimate",
-                  reset: spendResetText(spend.weekly, nowMs),
-                }
-              : { percent: null, window: "no data", reset: note ?? GO_LIMIT_FOOTNOTE },
+        session: sessionScope(server, spend, note, nowMs),
+        weekly: weeklyScope(server, spend, note, nowMs),
       },
       burn: localBurn(tokensPerHour(buckets, now)),
       ...(noticeText

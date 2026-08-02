@@ -6,7 +6,7 @@ import { isProviderLive, type AppState } from "../state/app-state";
 import type { AppActions } from "../state/actions";
 import type { DerivedState } from "../state/derive";
 import { CardLimitMeter } from "../components/limit-meter";
-import { Line, Rule, SplitLine, Spacer, leftClick } from "../components/primitives";
+import { Line, Rule, SplitLine, Spacer, leftClick, type Segment } from "../components/primitives";
 
 const CARD_MAX_WIDTH = 44;
 const CARD_GAP = 2;
@@ -30,6 +30,42 @@ function columnWidthFor(width: number, count: number): number {
 
 function columnsStack(width: number, count: number): boolean {
   return count > 1 && width < MIN_COLUMN_WIDTH * count + CARD_GAP * (count - 1);
+}
+
+function pressureColor(percent: number): string {
+  if (percent >= THRESHOLDS.danger) return COLORS.danger;
+  if (percent >= THRESHOLDS.warn) return COLORS.warn;
+  return COLORS.textGhost;
+}
+
+function closestToLimitSegments(
+  worstId: ProviderId | null,
+  worstPercent: number,
+  snapshot: UsageSnapshot,
+): Segment[] {
+  return [
+    {
+      text: worstId
+        ? `${snapshot.providers[worstId].meta.name} ${worstPercent}%`
+        : "nothing is being tracked",
+      color: COLORS.text,
+    },
+  ];
+}
+
+function mostHeadroomSegments(
+  bestId: ProviderId | null,
+  bestPercent: number,
+  snapshot: UsageSnapshot,
+): Segment[] {
+  return [
+    {
+      text: bestId
+        ? `${snapshot.providers[bestId].meta.name} ${100 - bestPercent}% free`
+        : "open settings",
+      color: COLORS.text,
+    },
+  ];
 }
 
 function ColumnGap({ isStacked }: { isStacked: boolean }) {
@@ -154,24 +190,12 @@ function SummaryTrio({
           segments={[
             {
               text: "▲ closest to running out",
-               color:
-                 worstPercent >= THRESHOLDS.danger
-                   ? COLORS.danger
-                   : worstPercent >= THRESHOLDS.warn
-                     ? COLORS.warn
-                     : COLORS.textGhost,
+              color: pressureColor(worstPercent),
               isBold: true,
             },
           ]}
         />
-        <Line
-          segments={[
-            {
-              text: worstId ? `${snapshot.providers[worstId].meta.name} ${worstPercent}%` : "nothing is being tracked",
-              color: COLORS.text,
-            },
-          ]}
-        />
+        <Line segments={closestToLimitSegments(worstId, worstPercent, snapshot)} />
         <Line
           segments={[
             {
@@ -220,14 +244,7 @@ function SummaryTrio({
             { text: "→ route here now", color: bestId ? COLORS.ok : COLORS.textFaint, isBold: true },
           ]}
         />
-        <Line
-          segments={[
-            {
-              text: bestId ? `${snapshot.providers[bestId].meta.name} ${100 - bestPercent}% free` : "open settings",
-              color: COLORS.text,
-            },
-          ]}
-        />
+        <Line segments={mostHeadroomSegments(bestId, bestPercent, snapshot)} />
         <Line
           segments={[
             {

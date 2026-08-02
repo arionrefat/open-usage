@@ -24,13 +24,15 @@ flowchart LR
 
 | Command | What runs |
 | --- | --- |
-| `bun run limit` | UI only: sample data, no polling, no file reads. `r` still fakes a refresh. |
-| `bun run production` | Real mode: reads local sources, re-polls every 60s. |
 | `bun run dev` | Real mode with `--watch` reload. |
-| `bun run preview` / `bun run shot` | Headless text frame / HTML screenshot, for eyeballing the UI without a terminal session. |
-| `bun test` / `bun run typecheck` | 180 tests / `tsc --noEmit`. |
+| `bun run limitless` | Sample data with polling disabled. |
+| `bun run production` | Real mode with provider polling. |
+| `bun run preview` | Headless text frame for reviewing the UI without a terminal session. |
+| `bun run shot` | Headless HTML screenshot for reviewing colors and chart geometry. |
+| `bun test` | Runs all 187 tests. |
+| `bun run typecheck` | Runs `tsc --noEmit`. |
 
-Flags compose with any entry point: `--mock`, `--no-poll`, `--screen`, `--view`, `--mode`.
+The main UI entry points accept `--mock`, `--real`, `--no-poll`, `--screen`, `--view`, and `--mode`.
 
 ## Module tour
 
@@ -38,7 +40,7 @@ Each entry: what it does, and when you would open it.
 
 ### Entry layer
 
-**`src/index.tsx`** (30 lines)
+**`src/index.tsx`**
 Parses flags, picks the provider, creates the terminal renderer, mounts `<App>`.
 Also installs SIGHUP/SIGINT/SIGTERM and stdin-close handlers that exit the process.
 OpenTUI's own handlers never exit, which once left orphaned sessions polling for days, so do not remove these.
@@ -48,7 +50,7 @@ Touch when: adding a CLI flag or changing startup wiring.
 Tiny flag parser (`--flag`, `--flag=value`, `--flag value`) plus helpers that turn flags into startup options.
 Touch when: adding a CLI flag.
 
-**`src/config.ts`** (4 lines)
+**`src/config.ts`**
 App name, version, poll interval.
 
 ### Data layer (`src/data/`)
@@ -60,7 +62,7 @@ Touch when: the UI needs a new piece of data; add it here first, then fill it in
 
 **`mock-provider.ts`**
 A hand-written `UsageSnapshot` with rich sample figures and a fake 1.6s refresh delay.
-This is what `bun run limit` shows.
+This is what `bun run limitless` shows.
 Touch when: designing new UI that needs sample data to look right.
 
 **`real-provider.ts`**

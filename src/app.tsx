@@ -230,6 +230,57 @@ export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
     return false;
   }, []);
 
+  const handleFilterKey = useCallback((key: KeyEvent) => {
+    const char = printableChar(key);
+    if (key.name === "escape") dispatch({ type: "filter-cancel" });
+    else if (key.name === "return") dispatch({ type: "filter-commit" });
+    else if (key.name === "backspace") dispatch({ type: "filter-backspace" });
+    else if (char) dispatch({ type: "filter-append", text: char });
+  }, []);
+
+  const handleViewKey = useCallback(
+    (key: KeyEvent, char: string | null): boolean => {
+      if (char === "o") {
+        dispatch({ type: "open-onboarding" });
+        return true;
+      }
+      if (char === ",") {
+        dispatch({ type: "set-view", view: "settings" });
+        return true;
+      }
+      return state.view === "settings" && handleSettingsKey(key);
+    },
+    [handleSettingsKey, state.view],
+  );
+
+  const handleAppShortcut = useCallback(
+    (key: KeyEvent, char: string | null): boolean => {
+      if (char === "?") dispatch({ type: "toggle-help" });
+      else if (char === "/") dispatch({ type: "start-filter" });
+      else if (char === "q") quit();
+      else if (char === "r") refresh();
+      else if (char === "t") dispatch({ type: "cycle-range" });
+      else if (char === "m") dispatch({ type: "toggle-mode" });
+      else if (char === "w") dispatch({ type: "toggle-scope" });
+      else if (key.name === "tab") dispatch({ type: "cycle-view" });
+      else return false;
+      return true;
+    },
+    [quit, refresh],
+  );
+
+  const handleSelectionKey = useCallback((key: KeyEvent, char: string | null) => {
+    if (char && char >= "1" && char <= "5") {
+      dispatch({ type: "set-view", view: VIEW_KEYS[Number(char) - 1]! });
+    } else if (key.name === "j" || key.name === "down" || key.name === "right") {
+      dispatch({ type: "move-selection", delta: 1 });
+    } else if (key.name === "k" || key.name === "up" || key.name === "left") {
+      dispatch({ type: "move-selection", delta: -1 });
+    } else if (key.name === "return") {
+      dispatch({ type: "open-selected" });
+    }
+  }, []);
+
   useKeyboard(
     useCallback(
       (key: KeyEvent) => {
@@ -245,11 +296,7 @@ export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
         }
 
         if (state.isFiltering) {
-          const char = printableChar(key);
-          if (key.name === "escape") dispatch({ type: "filter-cancel" });
-          else if (key.name === "return") dispatch({ type: "filter-commit" });
-          else if (key.name === "backspace") dispatch({ type: "filter-backspace" });
-          else if (char) dispatch({ type: "filter-append", text: char });
+          handleFilterKey(key);
           return;
         }
 
@@ -259,35 +306,11 @@ export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
         }
 
         const char = printableChar(key);
-        if (char === "o") {
-          dispatch({ type: "open-onboarding" });
-          return;
-        }
-        if (char === ",") {
-          dispatch({ type: "set-view", view: "settings" });
-          return;
-        }
-        if (state.view === "settings" && handleSettingsKey(key)) return;
-
-        if (char === "?") dispatch({ type: "toggle-help" });
-        else if (char === "/") dispatch({ type: "start-filter" });
-        else if (char === "q") quit();
-        else if (char === "r") refresh();
-        else if (char === "t") dispatch({ type: "cycle-range" });
-        else if (char === "m") dispatch({ type: "toggle-mode" });
-        else if (char === "w") dispatch({ type: "toggle-scope" });
-        else if (key.name === "tab") dispatch({ type: "cycle-view" });
-        else if (char && char >= "1" && char <= "5") {
-          dispatch({ type: "set-view", view: VIEW_KEYS[Number(char) - 1]! });
-        } else if (key.name === "j" || key.name === "down" || key.name === "right") {
-          dispatch({ type: "move-selection", delta: 1 });
-        } else if (key.name === "k" || key.name === "up" || key.name === "left") {
-          dispatch({ type: "move-selection", delta: -1 });
-        } else if (key.name === "return") {
-          dispatch({ type: "open-selected" });
-        }
+        if (handleViewKey(key, char)) return;
+        if (handleAppShortcut(key, char)) return;
+        handleSelectionKey(key, char);
       },
-      [handleOnboardingKey, handleSettingsKey, quit, refresh, state.isFiltering, state.isHelpOpen, state.screen, state.view],
+      [handleAppShortcut, handleFilterKey, handleOnboardingKey, handleSelectionKey, handleViewKey, quit, state.isFiltering, state.isHelpOpen, state.screen],
     ),
   );
 

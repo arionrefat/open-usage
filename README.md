@@ -49,9 +49,10 @@ The mouse wheel scrolls views taller than the terminal.
 ## Data
 
 The UI reads everything through the `UsageProvider` interface in `src/data/types.ts`.
-`src/data/mock-provider.ts` is the adapter currently wired up; it serves fixed sample figures and keeps settings changes in memory for the current session.
+Production mode reads local provider sources through `src/data/real-provider.ts`.
+The `limitless`, `preview`, and `shot` scripts use `src/data/mock-provider.ts` for fixed sample figures.
 The mock adapter masks pasted credentials but does not authenticate or persist them.
-A live adapter can provide vendor snapshots without changing the screens; secure credential persistence and authentication would require extending the provider interface.
+Settings changes remain in memory for the current session.
 
 ## Width
 

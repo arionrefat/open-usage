@@ -128,6 +128,12 @@ function providerBuckets(
   return opencode?.buckets.get(providerId) ?? new Map();
 }
 
+function latestSourceTimestamp(nowMs: number, timestamps: number[]): number {
+  const latestTimestamp = Math.max(...timestamps);
+  if (latestTimestamp === 0) return nowMs;
+  return Math.min(nowMs, latestTimestamp);
+}
+
 function buildSnapshot(
   paths: RealProviderPaths,
   meta: Record<ProviderId, ProviderMeta>,
@@ -170,15 +176,12 @@ function buildSnapshot(
     dates,
     now,
   });
-  const fetchedAt = Math.min(
-    nowMs,
-    Math.max(
-      opencode?.latestMs ?? 0,
-      transcripts.latestMs,
-      history.latestMs,
-      snapshotFile?.writtenAtMs ?? 0,
-    ) || nowMs,
-  );
+  const fetchedAt = latestSourceTimestamp(nowMs, [
+    opencode?.latestMs ?? 0,
+    transcripts.latestMs,
+    history.latestMs,
+    snapshotFile?.writtenAtMs ?? 0,
+  ]);
 
   return {
     providers: { cl, cx, go: goResult.provider },

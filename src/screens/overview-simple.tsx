@@ -46,6 +46,65 @@ interface LegendEntry {
   slice: string;
 }
 
+function unavailablePercentLabel(state: AppState, id: ProviderId): string {
+  const connection = state.connections[id];
+  if (!connection.isEnabled) return "off";
+  if (connection.status !== "active") return "-";
+  return "n/a";
+}
+
+function unavailableWindow(state: AppState, id: ProviderId): string {
+  const connection = state.connections[id];
+  return connection.isEnabled ? STATUS_PRESENTATION[connection.status].label : "hidden in settings";
+}
+
+function unavailableReset(state: AppState, id: ProviderId): string {
+  const connection = state.connections[id];
+  return connection.isEnabled ? connection.note : "space in settings to show it again";
+}
+
+function pressureColor(percent: number): string {
+  if (percent >= THRESHOLDS.danger) return COLORS.danger;
+  if (percent >= THRESHOLDS.warn) return COLORS.warn;
+  return COLORS.textGhost;
+}
+
+function closestToLimitSegments(
+  worstId: ProviderId | null,
+  worstPercent: number,
+  snapshot: UsageSnapshot,
+): Segment[] {
+  const providerLabel = worstId
+    ? `${snapshot.providers[worstId].meta.name} ${worstPercent}%`
+    : "nothing is being tracked";
+  return [
+    { text: "▲ ", color: pressureColor(worstPercent) },
+    { text: providerLabel, color: COLORS.text },
+    {
+      text: worstId ? " closest to cap" : " - every provider is off or disconnected",
+      color: COLORS.textFaint,
+    },
+  ];
+}
+
+function mostHeadroomSegments(
+  bestId: ProviderId | null,
+  bestPercent: number,
+  snapshot: UsageSnapshot,
+): Segment[] {
+  const providerLabel = bestId
+    ? `${snapshot.providers[bestId].meta.name} ${100 - bestPercent}% free`
+    : "open settings";
+  return [
+    { text: "→ ", color: COLORS.ok },
+    { text: providerLabel, color: COLORS.text },
+    {
+      text: bestId ? " most headroom" : " to enable a provider or paste a key",
+      color: COLORS.textFaint,
+    },
+  ];
+}
+
 function buildLegend(
   id: ProviderId,
   state: AppState,
@@ -64,23 +123,13 @@ function buildLegend(
     : emptyMeter(barWidth);
 
   return {
-    percentLabel: hasCap
-      ? meter.percentLabel
-      : !connection.isEnabled
-        ? "off"
-        : connection.status !== "active"
-          ? "-"
-          : "n/a",
+    percentLabel: hasCap ? meter.percentLabel : unavailablePercentLabel(state, id),
     percentColor: hasCap ? meter.percentColor : status.color,
     fill: meter.fill,
     track: meter.track,
     fillColor: meter.color,
-    window: isLive ? scope.window : !connection.isEnabled ? "hidden in settings" : status.label,
-    reset: isLive
-      ? scope.reset
-      : !connection.isEnabled
-        ? "space in settings to show it again"
-        : connection.note,
+    window: isLive ? scope.window : unavailableWindow(state, id),
+    reset: isLive ? scope.reset : unavailableReset(state, id),
     slice:
       hasCap && consumptionTotal > 0
         ? `${Math.round((consumption[id] / consumptionTotal) * 100)}%`
@@ -251,43 +300,11 @@ export function OverviewSimple({
           <Rule width={legendWidth} />
           <Line
             width={legendWidth}
-            segments={[
-              {
-                text: "▲ ",
-                 color:
-                   worstPercent >= THRESHOLDS.danger
-                     ? COLORS.danger
-                     : worstPercent >= THRESHOLDS.warn
-                       ? COLORS.warn
-                       : COLORS.textGhost,
-              },
-              {
-                text: worstId
-                  ? `${snapshot.providers[worstId].meta.name} ${worstPercent}%`
-                  : "nothing is being tracked",
-                color: COLORS.text,
-              },
-              {
-                text: worstId ? " closest to cap" : " - every provider is off or disconnected",
-                color: COLORS.textFaint,
-              },
-            ]}
+            segments={closestToLimitSegments(worstId, worstPercent, snapshot)}
           />
           <Line
             width={legendWidth}
-            segments={[
-              { text: "→ ", color: COLORS.ok },
-              {
-                text: bestId
-                  ? `${snapshot.providers[bestId].meta.name} ${100 - bestPercent}% free`
-                  : "open settings",
-                color: COLORS.text,
-              },
-              {
-                text: bestId ? " most headroom" : " to enable a provider or paste a key",
-                color: COLORS.textFaint,
-              },
-            ]}
+            segments={mostHeadroomSegments(bestId, bestPercent, snapshot)}
           />
           <Line
             width={legendWidth}

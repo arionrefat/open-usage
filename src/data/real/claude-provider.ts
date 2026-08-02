@@ -45,6 +45,70 @@ function projectWeekly(
   return { projectedPercent, capsOutAt: formatClock(nowMs + hoursToCap * HOUR_MS) };
 }
 
+function staleSnapshotNote(snapshotFile: SnapshotFile | null, hasStatusline: boolean): string {
+  if (snapshotFile) {
+    return `statusline snapshot stale (${formatAge(snapshotFile.ageMs)} old) - open a claude code session to refresh`;
+  }
+  return hasStatusline
+    ? "statusline snapshot missing - open a claude code session to refresh"
+    : "no statusline configured - claude code writes limits from one";
+}
+
+function sessionLimit(
+  five: RateWindowReading | null,
+  isFresh: boolean,
+  staleNote: string,
+  nowMs: number,
+): UsageLimit {
+  if (!five) {
+    return capLessLimit("session", "current session", "current session", "no snapshot", staleNote);
+  }
+
+  const limit: UsageLimit = {
+    id: "session",
+    label: "current session",
+    percent: Math.round(five.percent),
+    reset: resetText(five.resetsAtMs, nowMs),
+  };
+  if (!isFresh) limit.footnote = staleNote;
+  return limit;
+}
+
+function weeklyLimit(
+  seven: RateWindowReading | null,
+  projection: ClaudeProjection,
+  rateLabel: string,
+  staleNote: string,
+  nowMs: number,
+): UsageLimit {
+  if (!seven) {
+    return capLessLimit(
+      "weekly",
+      "weekly · all models",
+      "weekly · all models",
+      "no snapshot",
+      staleNote,
+    );
+  }
+
+  const limit: UsageLimit = {
+    id: "weekly",
+    label: "weekly · all models",
+    percent: Math.round(seven.percent),
+    reset: resetText(seven.resetsAtMs, nowMs),
+  };
+  if (seven.resetsAtMs !== null) {
+    limit.resetLong = `${resetText(seven.resetsAtMs, nowMs)} · ${formatClock(seven.resetsAtMs)}`;
+  }
+  if (projection.projectedPercent > 100) {
+    limit.alert = {
+      text: `▲ burn ${rateLabel} → projected ${projection.projectedPercent}% before reset`,
+      color: COLORS.danger,
+    };
+  }
+  return limit;
+}
+
 function claudeLimits(
   snapshotFile: SnapshotFile | null,
   projection: ClaudeProjection,
@@ -52,45 +116,23 @@ function claudeLimits(
   nowMs: number,
   hasStatusline: boolean,
 ): UsageLimit[] {
-  const staleNote =
-    snapshotFile === null
-      ? hasStatusline
-        ? "statusline snapshot missing - open a claude code session to refresh"
-        : "no statusline configured - claude code writes limits from one"
-      : `statusline snapshot stale (${formatAge(snapshotFile.ageMs)} old) - open a claude code session to refresh`;
+  const staleNote = staleSnapshotNote(snapshotFile, hasStatusline);
   const isFresh = snapshotFile !== null && snapshotFile.ageMs < SNAPSHOT_FRESH_MS;
   const five = snapshotFile?.reading.fiveHour ?? null;
   const seven = snapshotFile?.reading.sevenDay ?? null;
-  const session: UsageLimit = five
-    ? {
-        id: "session",
-        label: "current session",
-        percent: Math.round(five.percent),
-        reset: resetText(five.resetsAtMs, nowMs),
-        ...(isFresh ? {} : { footnote: staleNote }),
-      }
-    : capLessLimit("session", "current session", "current session", "no snapshot", staleNote);
-  const weekly: UsageLimit = seven
-    ? {
-        id: "weekly",
-        label: "weekly · all models",
-        percent: Math.round(seven.percent),
-        reset: resetText(seven.resetsAtMs, nowMs),
-        resetLong:
-          seven.resetsAtMs !== null
-            ? `${resetText(seven.resetsAtMs, nowMs)} · ${formatClock(seven.resetsAtMs)}`
-            : undefined,
-        ...(projection.projectedPercent > 100
-          ? {
-              alert: {
-                text: `▲ burn ${rateLabel} → projected ${projection.projectedPercent}% before reset`,
-                color: COLORS.danger,
-              },
-            }
-          : {}),
-      }
-    : capLessLimit("weekly", "weekly · all models", "weekly · all models", "no snapshot", staleNote);
+  const session = sessionLimit(five, isFresh, staleNote, nowMs);
+  const weekly = weeklyLimit(seven, projection, rateLabel, staleNote, nowMs);
   return [session, weekly];
+}
+
+function claudeNoticeText(snapshotFile: SnapshotFile | null, hasStatusline: boolean): string {
+  if (snapshotFile) {
+    return "statusline snapshot stale - open a claude code session to refresh limits";
+  }
+  if (hasStatusline) {
+    return "statusline snapshot missing - open a claude code session to refresh limits";
+  }
+  return "no statusline configured - claude code writes its limits from a statusline command";
 }
 
 interface ClaudeProviderInput {
@@ -153,12 +195,7 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
             iconColor: COLORS.info,
             segments: [
               {
-                text:
-                  snapshotFile !== null
-                    ? "statusline snapshot stale - open a claude code session to refresh limits"
-                    : hasStatusline
-                      ? "statusline snapshot missing - open a claude code session to refresh limits"
-                      : "no statusline configured - claude code writes its limits from a statusline command",
+                text: claudeNoticeText(snapshotFile, hasStatusline),
               },
             ],
           },
