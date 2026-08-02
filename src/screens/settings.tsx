@@ -95,7 +95,7 @@ function ProviderRow({
 }
 
 function modeToggleSegments(mode: OverviewMode, actions: AppActions): Segment[] {
-  return toggleSegments(MODE_OPTIONS, mode, COLORS.accent, (value) => actions.setMode(value));
+  return toggleSegments(MODE_OPTIONS, mode, (value) => actions.setMode(value));
 }
 
 function SettingLine({

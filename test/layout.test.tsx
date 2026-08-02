@@ -2,12 +2,34 @@ import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 import { App } from "../src/app";
+import { toggleSegments } from "../src/components/toggle";
 import { mockUsageProvider } from "../src/data/mock-provider";
 import {
   VIEW_KEYS,
   type OverviewMode,
   type ViewKey,
 } from "../src/state/app-state";
+import { COLORS } from "../src/theme";
+
+test("toggle pills have only a plain gap and share the accent background", () => {
+  const options = [
+    { label: "first", value: "first" },
+    { label: "second", value: "second" },
+  ];
+  const firstActive = toggleSegments(options, "first", () => {});
+  const secondActive = toggleSegments(options, "second", () => {});
+
+  expect(firstActive).toHaveLength(3);
+  expect(firstActive.map((segment) => segment.text)).toEqual([" first ", " ", " second "]);
+  expect(firstActive[0]?.background).toBe(COLORS.accent);
+  expect(firstActive[0]?.onClick).toBeFunction();
+  expect(firstActive[1]?.background).toBeUndefined();
+  expect(firstActive[1]?.onClick).toBeUndefined();
+  expect(firstActive[2]?.background).toBe(COLORS.bgChip);
+  expect(firstActive[2]?.onClick).toBeFunction();
+  expect(secondActive[0]?.background).toBe(COLORS.bgChip);
+  expect(secondActive[2]?.background).toBe(COLORS.accent);
+});
 
 /** 60 is the narrowest width the chrome is expected to stay legible at. */
 const WIDTHS = [60, 80, 100, 140];

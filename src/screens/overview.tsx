@@ -24,7 +24,7 @@ export const MODE_OPTIONS: ToggleOption<OverviewMode>[] = [
 
 function modeToggleSegments(mode: OverviewMode, actions: AppActions): Segment[] {
   return [
-    ...toggleSegments(MODE_OPTIONS, mode, COLORS.accent, (value) => actions.setMode(value)),
+    ...toggleSegments(MODE_OPTIONS, mode, (value) => actions.setMode(value)),
     ...toggleChip("m", () => actions.toggleMode()),
   ];
 }

@@ -323,7 +323,7 @@ const SCOPE_OPTIONS: ToggleOption<ScopeKey>[] = [
 
 function scopeToggleSegments(scope: ScopeKey, actions: AppActions): Segment[] {
   return [
-    ...toggleSegments(SCOPE_OPTIONS, scope, COLORS.info, (value) => actions.setScope(value)),
+    ...toggleSegments(SCOPE_OPTIONS, scope, (value) => actions.setScope(value)),
     ...toggleChip("w", () => actions.toggleScope()),
   ];
 }

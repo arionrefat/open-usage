@@ -6,35 +6,25 @@ export interface ToggleOption<T> {
   value: T;
 }
 
-/**
- * The design draws a segmented control as a rounded, outlined capsule holding
- * two pills. A cell grid has neither rounded corners nor hairline borders, so
- * the capsule is carried by an unbroken background instead: the padding either
- * side and the gap between pills share the container colour, which is what makes
- * the group read as one control rather than two floating labels.
- */
 export function toggleSegments<T>(
   options: ToggleOption<T>[],
   current: T,
-  activeBackground: string,
   onSelect: (value: T) => void,
 ): Segment[] {
-  const pad: Segment = { text: " ", background: COLORS.bgRowActive };
-  const segments: Segment[] = [pad];
+  const segments: Segment[] = [];
 
   options.forEach((option, index) => {
-    if (index > 0) segments.push(pad);
+    if (index > 0) segments.push({ text: " " });
     const isActive = option.value === current;
     segments.push({
       text: ` ${option.label} `,
       color: isActive ? COLORS.bg : COLORS.textSoft,
-      background: isActive ? activeBackground : COLORS.bgRowActive,
-      isBold: true,
+      background: isActive ? COLORS.accent : COLORS.bgChip,
+      isBold: isActive,
       onClick: () => onSelect(option.value),
     });
   });
 
-  segments.push(pad);
   return segments;
 }
 
