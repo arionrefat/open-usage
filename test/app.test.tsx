@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
-import { App } from "./app";
-import { mockUsageProvider } from "./data/mock-provider";
-import type { UsageProvider } from "./data/types";
+import { App } from "../src/app";
+import { mockUsageProvider } from "../src/data/mock-provider";
+import type { UsageProvider } from "../src/data/types";
 
 function pendingProvider(onRefresh?: (signal?: AbortSignal) => void): UsageProvider {
   return {

@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { bars, formatTokens, planChart, sparkline, stackedBar, type ChartRow } from "./chart";
-import { buildMeter } from "./meter";
-import { COLORS } from "../theme";
+import {
+  bars,
+  formatTokens,
+  planChart,
+  sparkline,
+  stackedBar,
+  type ChartRow,
+} from "../../src/lib/chart";
+import { buildMeter } from "../../src/lib/meter";
+import { COLORS } from "../../src/theme";
 
 function rowText(row: ChartRow): string {
   return row.segments.map((segment) => segment.text).join("");

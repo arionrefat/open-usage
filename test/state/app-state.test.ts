@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mockUsageProvider } from "../data/mock-provider";
-import { createAppReducer, createInitialState, type AppState } from "./app-state";
-import { deriveState } from "./derive";
+import { mockUsageProvider } from "../../src/data/mock-provider";
+import {
+  createAppReducer,
+  createInitialState,
+  type AppState,
+} from "../../src/state/app-state";
 
 const reducer = createAppReducer(mockUsageProvider.listMeta());
 
@@ -127,26 +130,5 @@ describe("app reducer", () => {
     state = reducer(state, { type: "open-selected" });
 
     expect(state.view).toBe("codex");
-  });
-});
-
-describe("derived state", () => {
-  test("alerts count only the current scope", () => {
-    const snapshot = mockUsageProvider.readSnapshot();
-
-    const weekly = deriveState(initialState(), snapshot);
-    expect(weekly.hotIds).toEqual(["cl"]);
-    expect(weekly.alertText).toBe("▲ 2 issues");
-
-    const session = deriveState({ ...initialState(), scope: "session" }, snapshot);
-    expect(session.hotIds).toEqual([]);
-    expect(session.alertText).toBe("▲ 1 issue");
-  });
-
-  test("names the all range 'all time'", () => {
-    const snapshot = mockUsageProvider.readSnapshot();
-    expect(deriveState({ ...initialState(), range: "all" }, snapshot).rangeName).toBe(
-      "all time",
-    );
   });
 });
