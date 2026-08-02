@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { COLORS } from "../theme";
 import { DAY_MS, HOUR_MS } from "./real/aggregate";
 import { stubCodexLimitsSource } from "./real/codex-limits";
 import { dormantGoLimitsSource } from "./real/go-limits-source";
@@ -155,6 +156,7 @@ describe("opencode go spend limits", () => {
         goLimits: {
           read: () => serverWithoutMonthly,
           note: () => null,
+          cookieExpiresAtMs: () => null,
           poll: () => Promise.resolve(),
         },
       });
@@ -164,6 +166,20 @@ describe("opencode go spend limits", () => {
       expect(monthly?.detailValueLabel).toContain("of $60");
       expect(monthly?.footnote).toBe("local estimate - cookie unlocks exact %");
       expect(serverProvider.readSnapshot().providers.go.meta.planDetail).toContain("estimate");
+
+      const expiredProvider = createRealUsageProvider({
+        paths: { ...MISSING_PATHS, opencodeDb: dbPath },
+        ...OFFLINE,
+        goLimits: {
+          read: () => null,
+          note: () => "opencode session expired - paste a fresh cookie",
+          cookieExpiresAtMs: () => null,
+          poll: () => Promise.resolve(),
+        },
+      });
+      const expiredGo = expiredProvider.readSnapshot().providers.go;
+      expect(expiredGo.limits[0]?.detailValueLabel).toBe("$3.00 of $12");
+      expect(expiredGo.notice?.segments[0]?.text).toContain("session expired");
     } finally {
       rmSync(dbPath, { force: true });
     }
@@ -185,7 +201,12 @@ describe("opencode go server limits", () => {
     const provider = createRealUsageProvider({
       paths: MISSING_PATHS,
       ...OFFLINE,
-      goLimits: { read: () => serverLimits, note: () => null, poll: () => Promise.resolve() },
+      goLimits: {
+        read: () => serverLimits,
+        note: () => null,
+        cookieExpiresAtMs: () => null,
+        poll: () => Promise.resolve(),
+      },
     });
     const go = provider.readSnapshot().providers.go;
 
@@ -209,11 +230,102 @@ describe("opencode go server limits", () => {
       goLimits: {
         read: () => null,
         note: () => "opencode session expired - paste a fresh cookie",
+        cookieExpiresAtMs: () => null,
         poll: () => Promise.resolve(),
       },
     });
     const go = provider.readSnapshot().providers.go;
     expect(go.limits[0]?.reset).toContain("session expired");
+    expect(go.notice).toEqual({
+      icon: "▲",
+      iconColor: COLORS.warn,
+      segments: [{ text: "opencode session expired - paste a fresh cookie" }],
+    });
+  });
+
+  test("every source degradation becomes a warning notice", () => {
+    const notes = [
+      "opencode session expired - paste a fresh cookie",
+      "no auth cookie found - re-copy the opencode.ai cookie header",
+      "opencode dashboard changed - showing local estimate",
+      "opencode unreachable - showing local estimate",
+    ];
+    for (const note of notes) {
+      const provider = createRealUsageProvider({
+        paths: MISSING_PATHS,
+        ...OFFLINE,
+        goLimits: {
+          read: () => null,
+          note: () => note,
+          cookieExpiresAtMs: () => null,
+          poll: () => Promise.resolve(),
+        },
+      });
+      expect(provider.readSnapshot().providers.go.notice?.segments[0]?.text).toBe(note);
+    }
+  });
+
+  test("warns when the cookie expires within seven days", () => {
+    const provider = createRealUsageProvider({
+      paths: MISSING_PATHS,
+      ...OFFLINE,
+      goLimits: {
+        read: () => serverLimits,
+        note: () => null,
+        cookieExpiresAtMs: () => Date.now() + 2 * DAY_MS,
+        poll: () => Promise.resolve(),
+      },
+    });
+    const notice = provider.readSnapshot().providers.go.notice;
+    expect(notice?.iconColor).toBe(COLORS.warn);
+    expect(notice?.segments[0]?.text).toContain("opencode cookie expires in");
+    expect(notice?.segments[0]?.text).toContain("paste a fresh one");
+  });
+
+  test("a failure note wins over an expiry warning", () => {
+    const provider = createRealUsageProvider({
+      paths: MISSING_PATHS,
+      ...OFFLINE,
+      goLimits: {
+        read: () => null,
+        note: () => "opencode unreachable - showing local estimate",
+        cookieExpiresAtMs: () => Date.now() - DAY_MS,
+        poll: () => Promise.resolve(),
+      },
+    });
+    expect(provider.readSnapshot().providers.go.notice?.segments[0]?.text).toBe(
+      "opencode unreachable - showing local estimate",
+    );
+  });
+
+  test("an already-expired cookie uses the expired wording", () => {
+    const provider = createRealUsageProvider({
+      paths: MISSING_PATHS,
+      ...OFFLINE,
+      goLimits: {
+        read: () => serverLimits,
+        note: () => null,
+        cookieExpiresAtMs: () => Date.now() - DAY_MS,
+        poll: () => Promise.resolve(),
+      },
+    });
+    expect(provider.readSnapshot().providers.go.notice?.segments[0]?.text).toBe(
+      "opencode cookie expired - paste a fresh one",
+    );
+  });
+
+  test("a healthy far-future cookie has no notice", () => {
+    const provider = createRealUsageProvider({
+      paths: MISSING_PATHS,
+      ...OFFLINE,
+      goLimits: {
+        read: () => serverLimits,
+        note: () => null,
+        cookieExpiresAtMs: () => Date.now() + 30 * DAY_MS,
+        poll: () => Promise.resolve(),
+      },
+    });
+    expect(provider.readSnapshot().providers.go.notice).toBeUndefined();
   });
 
   test("a failing poll leaves the local snapshot intact", async () => {
@@ -223,6 +335,7 @@ describe("opencode go server limits", () => {
       goLimits: {
         read: () => null,
         note: () => null,
+        cookieExpiresAtMs: () => null,
         poll: () => Promise.reject(new Error("network down")),
       },
     });

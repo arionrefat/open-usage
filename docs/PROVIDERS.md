@@ -197,6 +197,8 @@ export LIMITLESS_OPENCODE_COOKIE='auth=<value>'
 ```
 
 Only the `auth` / `__Host-auth` cookies are sent; anything else in a pasted header is stripped before the request.
+The cookie's Iron seal carries its own expiry, and the app warns during its final seven days.
+Any session failure produces the same visible warning while the local estimate continues.
 Without a cookie the app shows the local estimate and says so, which is why the cookie is optional rather than a setup step.
 
 ### Known fragility

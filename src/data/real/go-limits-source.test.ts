@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { COOKIE_ENV_VAR, createGoLimitsSource, readCookie } from "./go-limits-source";
+import {
+  COOKIE_ENV_VAR,
+  cookieExpiryMs,
+  createGoLimitsSource,
+  readCookie,
+} from "./go-limits-source";
 import { OpencodeServerError, type GoServerLimits } from "./opencode-server";
 
 function tempConfigFile(contents: string): string {
@@ -49,6 +54,23 @@ describe("readCookie", () => {
   });
 });
 
+describe("cookieExpiryMs", () => {
+  test("reads the expiry from a real-shaped Iron seal", () => {
+    const expiryMs = 1_814_553_561_725;
+    expect(cookieExpiryMs(`auth=Fe26.2**macSalt*iv*payload*${expiryMs}*sealSalt*mac`)).toBe(
+      expiryMs,
+    );
+  });
+
+  test("rejects malformed or non-auth cookie values", () => {
+    expect(cookieExpiryMs("")).toBeNull();
+    expect(cookieExpiryMs("ph_session=value")).toBeNull();
+    expect(cookieExpiryMs("auth=Fe26.2**too*few")).toBeNull();
+    expect(cookieExpiryMs("auth=Fe26.2**macSalt*iv*payload*never*sealSalt*mac")).toBeNull();
+    expect(cookieExpiryMs("auth=plain-value")).toBeNull();
+  });
+});
+
 describe("createGoLimitsSource", () => {
   test("stays dormant and silent without a cookie", async () => {
     const source = createGoLimitsSource("/nonexistent/config.json", {});
@@ -69,6 +91,7 @@ describe("createGoLimitsSource", () => {
     const start = new Date();
     await source.poll(start);
     expect(source.read()?.rollingPercent).toBe(17);
+    expect(source.cookieExpiresAtMs()).toBeNull();
     expect(calls).toBe(1);
 
     // Ten seconds later the minimum interval has not elapsed.

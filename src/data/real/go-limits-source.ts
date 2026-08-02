@@ -16,6 +16,7 @@ export interface GoLimitsSource {
   read(): GoServerLimits | null;
   /** Why server limits are missing, or null when they are present. */
   note(): string | null;
+  cookieExpiresAtMs(): number | null;
   poll(now: Date, signal?: AbortSignal): Promise<void>;
 }
 
@@ -39,9 +40,22 @@ export function readCookie(path: string, env: Record<string, string | undefined>
   }
 }
 
+export function cookieExpiryMs(cookieHeader: string): number | null {
+  const filtered = filterCookieHeader(cookieHeader);
+  if (!filtered) return null;
+  const firstCookie = filtered.split(";", 1)[0];
+  const equals = firstCookie?.indexOf("=") ?? -1;
+  if (equals < 1) return null;
+  const expiryField = firstCookie?.slice(equals + 1).split("*")[5];
+  if (!expiryField || !/^\d+$/.test(expiryField)) return null;
+  const expiryMs = Number(expiryField);
+  return Number.isFinite(expiryMs) && expiryMs > 0 ? expiryMs : null;
+}
+
 export const dormantGoLimitsSource: GoLimitsSource = {
   read: () => null,
   note: () => null,
+  cookieExpiresAtMs: () => null,
   poll: () => Promise.resolve(),
 };
 
@@ -63,6 +77,10 @@ export function createGoLimitsSource(
     // showing an old percentage as if it were current.
     read: () => (cached && Date.now() - cached.fetchedAtMs <= STALE_MS ? cached : null),
     note: () => note,
+    cookieExpiresAtMs: () => {
+      const cookie = readCookie(configPath, env);
+      return cookie ? cookieExpiryMs(cookie) : null;
+    },
     async poll(now, signal) {
       const nowMs = now.getTime();
       if (nowMs < nextPollAtMs) return;

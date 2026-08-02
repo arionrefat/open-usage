@@ -1,5 +1,6 @@
+import { COLORS } from "../../theme";
 import type { ProviderMeta, ProviderUsage, UsageLimit } from "../types";
-import { formatCountdown, seriesFromBuckets, tokensPerHour, type HourBuckets } from "./aggregate";
+import { DAY_MS, formatCountdown, seriesFromBuckets, tokensPerHour, type HourBuckets } from "./aggregate";
 import type { GoLimitsSource } from "./go-limits-source";
 import type { OpencodeAuth } from "./opencode-auth";
 import type { OpencodeSessionStats } from "./opencode-db";
@@ -8,6 +9,7 @@ import type { GoServerLimits } from "./opencode-server";
 import { capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
 
 const GO_LIMIT_FOOTNOTE = "local estimate - cookie unlocks exact %";
+const COOKIE_WARNING_MS = 7 * DAY_MS;
 
 export function createGoMeta(auth: OpencodeAuth): ProviderMeta {
   return {
@@ -113,6 +115,15 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
   const nowMs = now.getTime();
   const server = limitsSource.read();
   const note = limitsSource.note();
+  const cookieExpiresAtMs = limitsSource.cookieExpiresAtMs();
+  const cookieTimeLeftMs = cookieExpiresAtMs === null ? null : cookieExpiresAtMs - nowMs;
+  const noticeText = note
+    ? note
+    : cookieTimeLeftMs !== null && cookieTimeLeftMs <= COOKIE_WARNING_MS
+      ? cookieTimeLeftMs < 0
+        ? "opencode cookie expired - paste a fresh one"
+        : `opencode cookie expires in ${formatCountdown(cookieTimeLeftMs)} - paste a fresh one`
+      : null;
   const usesEstimate =
     !server || (spend !== null && (server.weeklyPercent === null || server.monthlyPercent === null));
   return {
@@ -160,6 +171,15 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
               : { percent: null, window: "no data", reset: note ?? GO_LIMIT_FOOTNOTE },
       },
       burn: localBurn(tokensPerHour(buckets, now)),
+      ...(noticeText
+        ? {
+            notice: {
+              icon: "▲",
+              iconColor: COLORS.warn,
+              segments: [{ text: noticeText }],
+            },
+          }
+        : {}),
       detailFooter: sessionsFooter(stats),
     },
   };
