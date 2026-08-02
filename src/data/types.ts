@@ -100,6 +100,19 @@ export interface UsageSeries {
   hourly: number[];
 }
 
+export interface DetailRow {
+  label: string;
+  value: string;
+  /** 0-100 renders a small share bar next to the value; null/absent renders none. */
+  percent?: number | null;
+  color?: string;
+}
+
+export interface DetailSection {
+  title: string;
+  rows: DetailRow[];
+}
+
 export interface ProviderUsage {
   id: ProviderId;
   meta: ProviderMeta;
@@ -108,6 +121,7 @@ export interface ProviderUsage {
   burn: BurnRate;
   series: UsageSeries;
   notice?: ProviderNotice;
+  details?: DetailSection[];
   /** Extra stat line under the detail chart, e.g. codex code-review runs. */
   detailFooter?: string;
 }
