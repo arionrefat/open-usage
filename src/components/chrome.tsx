@@ -108,6 +108,13 @@ function visibleTabs(tabs: TabCell[], activeIndex: number, budget: number): TabC
   }
 }
 
+function visibleQueryText(query: string, budget: number): string {
+  const characters = [...query];
+  if (characters.length <= budget) return query;
+  if (budget === 1) return "…";
+  return `…${characters.slice(-(budget - 1)).join("")}`;
+}
+
 export function Tabs({ width, activeView, rangeLabel, actions }: TabsProps) {
   const cycleRange = () => actions.cycleRange();
   const right: Segment[] = [
@@ -120,11 +127,9 @@ export function Tabs({ width, activeView, rangeLabel, actions }: TabsProps) {
     const label = ` ${index + 1} ${TAB_LABELS[view]} `;
     return { view, label, isActive: view === activeView, width: columnWidth(label) };
   });
-  const tabs = visibleTabs(
-    allTabs,
-    VIEW_KEYS.indexOf(activeView),
-    Math.max(0, width - segmentsWidth(right) - 1),
-  );
+  const activeIndex = VIEW_KEYS.indexOf(activeView);
+  const tabBudget = Math.max(0, width - segmentsWidth(right) - 1);
+  const tabs = visibleTabs(allTabs, activeIndex, tabBudget);
 
   const left: Segment[] = tabs.flatMap((tab) => {
     const background = tab.isActive ? COLORS.bgTabActive : COLORS.bgTabIdle;
@@ -170,13 +175,7 @@ interface FilterBarProps {
 
 export function FilterBar({ width, query, matchCount, isCursorVisible }: FilterBarProps) {
   const queryBudget = Math.max(1, Math.floor(width * 0.6) - 4);
-  const queryChars = [...query];
-  const visibleQuery =
-    queryChars.length > queryBudget
-      ? queryBudget === 1
-        ? "…"
-        : `…${queryChars.slice(-(queryBudget - 1)).join("")}`
-      : query;
+  const visibleQuery = visibleQueryText(query, queryBudget);
   return (
     <box flexDirection="column" flexShrink={0}>
       <Rule width={width} color={COLORS.border} />
@@ -226,7 +225,9 @@ export function StatusBar({ width, actions }: { width: number; actions: AppActio
   const left: Segment[] = [];
   let used = 0;
   for (const [key, description, onClick] of hints) {
-    const cost = columnWidth(key) + columnWidth(description) + 1 + (left.length > 0 ? SEPARATOR_WIDTH : 0);
+    const labelWidth = columnWidth(key) + 1 + columnWidth(description);
+    const separatorWidth = left.length > 0 ? SEPARATOR_WIDTH : 0;
+    const cost = labelWidth + separatorWidth;
     if (used + cost > budget) break;
     if (left.length > 0) left.push({ text: " · ", color: COLORS.footerSeparator });
     left.push({ text: key, color: COLORS.textSoft, onClick });

@@ -93,11 +93,11 @@ function fitSplit(left: Segment[], right: Segment[], width: number): SplitFit {
 /** Maps each clickable segment onto the column range it occupies. */
 function hitRanges(segments: Segment[], offset: number): HitRange[] {
   const ranges: HitRange[] = [];
-  let column = offset;
+  let start = offset;
   for (const segment of segments) {
-    const end = column + columnWidth(segment.text);
-    if (segment.onClick) ranges.push({ start: column, end, onClick: segment.onClick });
-    column = end;
+    const end = start + columnWidth(segment.text);
+    if (segment.onClick) ranges.push({ start, end, onClick: segment.onClick });
+    start = end;
   }
   return ranges;
 }
@@ -110,8 +110,10 @@ function clickHandler(ranges: HitRange[]) {
   if (ranges.length === 0) return undefined;
   return (event: MouseEvent) => {
     if (event.button !== MouseButton.LEFT || !event.target) return;
-    const column = event.x - event.target.x;
-    const hit = ranges.find((range) => column >= range.start && column < range.end);
+    const targetColumn = event.x - event.target.x;
+    const hit = ranges.find(
+      (range) => targetColumn >= range.start && targetColumn < range.end,
+    );
     if (!hit) return;
     event.stopPropagation();
     hit.onClick();
@@ -160,7 +162,8 @@ interface SplitLineProps {
 export function SplitLine({ width, left, right = [], background, filler = " " }: SplitLineProps) {
   const fit = fitSplit(left, right, width);
   const rightWidth = segmentsWidth(fit.right);
-  const ranges = [...hitRanges(fit.left, 0), ...hitRanges(fit.right, width - rightWidth)];
+  const rightStart = width - rightWidth;
+  const ranges = [...hitRanges(fit.left, 0), ...hitRanges(fit.right, rightStart)];
 
   return (
     <text bg={background} onMouseDown={clickHandler(ranges)}>
