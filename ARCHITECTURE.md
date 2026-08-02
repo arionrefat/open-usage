@@ -28,7 +28,7 @@ flowchart LR
 | `bun run production` | Real mode: reads local sources, re-polls every 60s. |
 | `bun run dev` | Real mode with `--watch` reload. |
 | `bun run preview` / `bun run shot` | Headless text frame / HTML screenshot, for eyeballing the UI without a terminal session. |
-| `bun test` / `bun run typecheck` | 118 tests / `tsc --noEmit`. |
+| `bun test` / `bun run typecheck` | 180 tests / `tsc --noEmit`. |
 
 Flags compose with any entry point: `--mock`, `--no-poll`, `--screen`, `--view`, `--mode`.
 
@@ -64,9 +64,21 @@ This is what `bun run limit` shows.
 Touch when: designing new UI that needs sample data to look right.
 
 **`real-provider.ts`**
-The composer: calls every reader in `real/`, assembles their outputs into a `UsageSnapshot`, formats labels, and computes the weekly burn projection.
-Also owns fallback logic: no local sources found means mock data with a visible "sample data" banner.
-Touch when: changing what real data shows up or how it is worded.
+The composer: calls every reader in `real/`, passes their outputs to the three provider builders, and combines the results into a `UsageSnapshot`.
+It owns paths, connection state, refresh polling, timestamps, and provider selection.
+It also owns fallback logic: no local sources found means mock data with a visible "sample data" banner.
+Touch when: changing source wiring, refresh behavior, or fallback selection.
+
+**`real/claude-provider.ts`**, **`real/codex-provider.ts`**, **`real/go-provider.ts`**
+Each file owns one provider's metadata and pure `ProviderUsage` assembly.
+Claude owns statusline limits, projection, notice, scopes, burn, and transcript footer.
+Codex owns app-server limits, window labels, plan metadata, scopes, and summary footer.
+OpenCode Go owns server-versus-spend selection, estimate labeling, limit rows, scopes, and footer.
+Touch one of these when changing how that provider's data is presented.
+
+**`real/provider-helpers.ts`**
+Small display helpers shared by at least two provider builders: cap-less rows, reset text, token formatting, and local burn state.
+Touch when a shared provider presentation primitive changes.
 
 **`real/` - one reader per local source, all pure and path-injected:**
 

@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
+  SERVER_FUNCTION_IDS,
+  fetchGoServerLimits,
   filterCookieHeader,
   isSignedOut,
   parseSubscription,
@@ -15,7 +17,8 @@ const WORKSPACE_JS =
 const SUBSCRIPTION_JS =
   "$R[16]($R[30],$R[41]={" +
   'rollingUsage:$R[42]={status:"ok",resetInSec:5944,usagePercent:17},' +
-  'weeklyUsage:$R[43]={status:"ok",resetInSec:278201,usagePercent:75}' +
+  'weeklyUsage:$R[43]={status:"ok",resetInSec:278201,usagePercent:75},' +
+  'monthlyUsage:$R[44]={status:"ok",resetInSec:90061,usagePercent:99}' +
   "});";
 
 describe("parseWorkspaceId", () => {
@@ -29,10 +32,11 @@ describe("parseWorkspaceId", () => {
 });
 
 describe("parseSubscription", () => {
-  test("reads both windows out of serialized javascript", () => {
+  test("reads all windows out of serialized javascript, including $R[n]= bindings", () => {
     const parsed = parseSubscription(SUBSCRIPTION_JS);
     expect(parsed?.rolling).toEqual({ percent: 17, resetInSec: 5944 });
     expect(parsed?.weekly).toEqual({ percent: 75, resetInSec: 278201 });
+    expect(parsed?.monthly).toEqual({ percent: 99, resetInSec: 90061 });
   });
 
   test("reads the json form too", () => {
@@ -40,10 +44,12 @@ describe("parseSubscription", () => {
       JSON.stringify({
         rollingUsage: { usagePercent: 17, resetInSec: 5944 },
         weeklyUsage: { usagePercent: 75, resetInSec: 278201 },
+        monthlyUsage: { usagePercent: 99, resetInSec: 90061 },
       }),
     );
     expect(parsed?.rolling.percent).toBe(17);
     expect(parsed?.weekly?.percent).toBe(75);
+    expect(parsed?.monthly?.percent).toBe(99);
   });
 
   test("reads small percentages literally instead of rescaling them", () => {
@@ -73,11 +79,12 @@ describe("parseSubscription", () => {
     expect(parsed?.rolling.percent).toBe(25);
   });
 
-  test("tolerates a missing weekly window but requires the rolling one", () => {
+  test("tolerates missing weekly and monthly windows but requires the rolling one", () => {
     const weeklyless = parseSubscription(
       JSON.stringify({ rollingUsage: { usagePercent: 17, resetInSec: 5944 } }),
     );
     expect(weeklyless?.weekly).toBeNull();
+    expect(weeklyless?.monthly).toBeNull();
 
     expect(parseSubscription(JSON.stringify({ weeklyUsage: { usagePercent: 5 } }))).toBeNull();
     expect(parseSubscription("null")).toBeNull();
@@ -108,6 +115,58 @@ describe("parseSubscription", () => {
       'rollingUsage:$R[42]={status:"ok",resetInSec:5944,usagePercent:17}',
     );
     expect(parsed?.rolling).toEqual({ percent: 17, resetInSec: 5944 });
+  });
+});
+
+describe("fetchGoServerLimits", () => {
+  test("uses an id-only GET for workspaces and exact seroval args for subscription", async () => {
+    const urls: URL[] = [];
+    const methods: Array<string | undefined> = [];
+    const headers: Headers[] = [];
+    let call = 0;
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        (input: string | URL | Request, init?: RequestInit | BunFetchRequestInit) => {
+          urls.push(new URL(input.toString()));
+          methods.push(init?.method);
+          headers.push(new Headers(init?.headers));
+          call += 1;
+          const body =
+            call === 1
+              ? WORKSPACE_JS
+              : JSON.stringify({
+                  rollingUsage: { usagePercent: 0, resetInSec: 18_000 },
+                  weeklyUsage: { usagePercent: 15, resetInSec: 100_800 },
+                  monthlyUsage: { usagePercent: 99, resetInSec: 90_000 },
+                });
+          return Promise.resolve(
+            new Response(body, { headers: { "Content-Type": "application/json" } }),
+          );
+        },
+        { preconnect: (_url: string | URL) => undefined },
+      ),
+    );
+
+    try {
+      const now = new Date("2026-08-02T00:00:00Z");
+      const limits = await fetchGoServerLimits("auth=secret", now);
+      expect(methods).toEqual(["GET", "GET"]);
+      expect(headers[0]?.get("X-Server-Id")).toBe(SERVER_FUNCTION_IDS.workspaces);
+      expect(headers[1]?.get("X-Server-Id")).toBe(SERVER_FUNCTION_IDS.liteSubscription);
+      for (const requestHeaders of headers) {
+        expect(requestHeaders.get("X-Server-Instance")).toMatch(/^server-fn:[0-9a-f-]+$/);
+      }
+      expect(urls[0]?.searchParams.get("id")).toBe(SERVER_FUNCTION_IDS.workspaces);
+      expect(urls[0]?.searchParams.has("args")).toBe(false);
+      expect(urls[1]?.searchParams.get("id")).toBe(SERVER_FUNCTION_IDS.liteSubscription);
+      expect(urls[1]?.searchParams.get("args")).toBe(
+        '{"t":{"t":9,"i":0,"l":1,"a":[{"t":1,"s":"wrk_01K6AR1ZET89H8NB691FQ2C2VB"}],"o":0},"f":31,"m":[]}',
+      );
+      expect(limits.monthlyPercent).toBe(99);
+      expect(limits.monthlyResetAtMs).toBe(now.getTime() + 90_000_000);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
 

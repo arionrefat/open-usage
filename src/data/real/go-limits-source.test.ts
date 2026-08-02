@@ -5,11 +5,15 @@ import { join } from "node:path";
 import { COOKIE_ENV_VAR, createGoLimitsSource, readCookie } from "./go-limits-source";
 import { OpencodeServerError, type GoServerLimits } from "./opencode-server";
 
-function tempCookieFile(contents: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "limitless-cookie-"));
-  const path = join(dir, "opencode-cookie");
+function tempConfigFile(contents: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "limitless-config-"));
+  const path = join(dir, "config.json");
   writeFileSync(path, contents);
   return path;
+}
+
+function configWithCookie(cookie: string): string {
+  return tempConfigFile(JSON.stringify({ opencodeCookie: cookie }));
 }
 
 function reading(fetchedAtMs: number): GoServerLimits {
@@ -18,31 +22,36 @@ function reading(fetchedAtMs: number): GoServerLimits {
     rollingResetAtMs: fetchedAtMs + 5_944_000,
     weeklyPercent: 75,
     weeklyResetAtMs: fetchedAtMs + 278_201_000,
+    monthlyPercent: 99,
+    monthlyResetAtMs: fetchedAtMs + 90_000,
     fetchedAtMs,
   };
 }
 
 describe("readCookie", () => {
   test("prefers the environment over the file", () => {
-    const path = tempCookieFile("auth=from-file");
+    const path = configWithCookie("auth=from-file");
     expect(readCookie(path, { [COOKIE_ENV_VAR]: "auth=from-env" })).toBe("auth=from-env");
   });
 
-  test("falls back to the file and trims it", () => {
-    const path = tempCookieFile("  auth=from-file\n");
+  test("falls back to the json config and trims the field", () => {
+    const path = configWithCookie("  auth=from-file\n");
     expect(readCookie(path, {})).toBe("auth=from-file");
   });
 
-  test("treats blank and missing sources as absent", () => {
-    expect(readCookie(tempCookieFile("   \n"), {})).toBeNull();
-    expect(readCookie("/nonexistent/cookie", {})).toBeNull();
-    expect(readCookie("/nonexistent/cookie", { [COOKIE_ENV_VAR]: "   " })).toBeNull();
+  test("treats malformed or incomplete config as absent", () => {
+    expect(readCookie(tempConfigFile("not json"), {})).toBeNull();
+    expect(readCookie(tempConfigFile("{}"), {})).toBeNull();
+    expect(readCookie(tempConfigFile('{"opencodeCookie":42}'), {})).toBeNull();
+    expect(readCookie(configWithCookie("   "), {})).toBeNull();
+    expect(readCookie("/nonexistent/config.json", {})).toBeNull();
+    expect(readCookie("/nonexistent/config.json", { [COOKIE_ENV_VAR]: "   " })).toBeNull();
   });
 });
 
 describe("createGoLimitsSource", () => {
   test("stays dormant and silent without a cookie", async () => {
-    const source = createGoLimitsSource("/nonexistent/cookie", {});
+    const source = createGoLimitsSource("/nonexistent/config.json", {});
     await source.poll(new Date());
     expect(source.read()).toBeNull();
     // No cookie is a normal unconfigured state, not an error worth showing.
@@ -50,7 +59,7 @@ describe("createGoLimitsSource", () => {
   });
 
   test("caches a successful reading and respects the poll interval", async () => {
-    const path = tempCookieFile("auth=tok");
+    const path = configWithCookie("auth=tok");
     let calls = 0;
     const source = createGoLimitsSource(path, {}, (_cookie, now) => {
       calls += 1;
@@ -71,7 +80,7 @@ describe("createGoLimitsSource", () => {
   });
 
   test("a reading older than the staleness window stops counting as server truth", async () => {
-    const path = tempCookieFile("auth=tok");
+    const path = configWithCookie("auth=tok");
     const stale = Date.now() - 20 * 60_000;
     const source = createGoLimitsSource(path, {}, () => Promise.resolve(reading(stale)));
 
@@ -82,7 +91,7 @@ describe("createGoLimitsSource", () => {
   });
 
   test("a network failure backs off without discarding a fresh reading", async () => {
-    const path = tempCookieFile("auth=tok");
+    const path = configWithCookie("auth=tok");
     let calls = 0;
     const source = createGoLimitsSource(path, {}, (_cookie, now) => {
       calls += 1;
@@ -102,7 +111,7 @@ describe("createGoLimitsSource", () => {
   });
 
   test("an expired session clears the reading and says how to fix it", async () => {
-    const path = tempCookieFile("auth=tok");
+    const path = configWithCookie("auth=tok");
     const source = createGoLimitsSource(path, {}, () =>
       Promise.reject(new OpencodeServerError("opencode session expired", "credentials")),
     );
@@ -112,7 +121,7 @@ describe("createGoLimitsSource", () => {
   });
 
   test("a cancelled poll neither backs off nor blames the network", async () => {
-    const path = tempCookieFile("auth=tok");
+    const path = configWithCookie("auth=tok");
     let calls = 0;
     const controller = new AbortController();
     const source = createGoLimitsSource(path, {}, () => {
@@ -137,7 +146,7 @@ describe("createGoLimitsSource", () => {
   });
 
   test("a paste with no auth cookie says so instead of blaming the session", async () => {
-    const source = createGoLimitsSource("/nonexistent/cookie", {
+    const source = createGoLimitsSource("/nonexistent/config.json", {
       [COOKIE_ENV_VAR]: "_ga=1; ph_session=abc",
     });
     await source.poll(new Date());

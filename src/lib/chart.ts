@@ -32,7 +32,7 @@ function mergeCells(cells: Cell[]): ChartSegment[] {
 }
 
 /** Linearly resamples a series onto exactly `width` columns. */
-export function resample(values: number[], width: number): number[] {
+function resample(values: number[], width: number): number[] {
   if (width <= 0) return [];
   if (values.length === width) return values.slice();
   if (values.length === 0) return new Array(width).fill(0);
@@ -149,7 +149,7 @@ export function planChart(items: PlanChartItem[]): PlanChart {
       color: item.value === null ? COLORS.textGhost : COLORS.textMuted,
     });
     values.push({
-      text: gap + centerPad(item.value === null ? "—" : `${item.value}%`, PLAN_BAR_WIDTH),
+      text: gap + centerPad(item.value === null ? "-" : `${item.value}%`, PLAN_BAR_WIDTH),
       color: item.value === null ? COLORS.textGhost : item.color,
     });
   });
@@ -174,7 +174,7 @@ export function sparkline(values: number[], width: number): string {
 
 /**
  * One 100%-stacked bar: each entry's share of the row's total. `char` defaults
- * to a half-height block so stacked rows keep a gap between them — a full block
+ * to a half-height block so stacked rows keep a gap between them - a full block
  * would fuse consecutive rows into a single slab on terminals with no extra
  * line spacing.
  */

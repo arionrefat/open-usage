@@ -162,14 +162,14 @@ Burning a scarce credit from a background poller - or from a mis-keyed keystroke
 | --- | --- | --- | --- | --- |
 | `~/.local/share/opencode/opencode.db` | SQLite | none | `session` table: `cost` (USD), `tokens_input/output/reasoning/cache_*`, `model`, `time_created`; `message`/`part` JSON blobs | Official local store, already read by the app; 154MB and active on this machine |
 | Published Go plan caps | docs | none | $12 per 5h, $30 per week, $60 per month (Go plan, 2026 pricing; verify against the dashboard before shipping) | Documented but must be re-checked when plans change |
-| `https://opencode.ai/auth` dashboard | HTML | browser session | live usage, limits, reset | No API; community tools scrape it with headless Chromium, which is fragile and heavy; skip |
+| `https://opencode.ai/_server` | Internal server query | browser session cookie | rolling, weekly, and monthly usage percent and reset | Exact dashboard values; server-function ids can change on deploy |
 | Gateway `x-ratelimit-*` headers | HTTP | API key | undocumented | Unverified; capture opportunistically if we ever proxy a request, do not depend on it |
 
 ### Key finding
 
-OpenCode publishes no usage API at all; percent-of-limit is not available from any endpoint.
-But because the Go plan caps are dollar-denominated and `opencode.db` records per-session cost, Limitless can compute percent used per window locally: sum `session.cost` inside each rolling window and divide by the cap.
-This makes opencode go a computed estimate rather than a server truth, and the UI should label it as such.
+OpenCode's internal server query publishes exact percent-of-limit and reset data to an authenticated dashboard session.
+Without a session cookie, Limitless computes an estimate locally by summing `message.cost` inside each window and dividing by the Go plan cap.
+The UI labels only locally computed windows as estimates.
 
 ### Implemented
 
@@ -179,8 +179,10 @@ Both paths now ship, with the server one preferred and the estimate as the alway
 Rolling windows report when the oldest spend in them ages out ("frees up in"), since a rolling window never resets wholesale.
 The monthly window is anchored to the day-of-month of the first spend ever recorded rather than the 1st, because the billing cycle follows the subscription date - without that anchor a cycle that just rolled over reads near-zero while the weekly window reads high.
 
-`src/data/real/opencode-server.ts` ports CodexBar's `POST https://opencode.ai/_server` integration: the two server-function ids, the header set, and a parser that reads both the serialized-JavaScript and JSON response forms.
-It is verified against CodexBar's own fixture strings.
+`src/data/real/opencode-server.ts` sends the dashboard's `GET https://opencode.ai/_server?id=<functionId>&args=<seroval>` query form with the filtered session cookie.
+The workspaces query uses id `def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f` and omits `args`.
+The `queryLiteSubscription_query` query uses id `c7389bd0e731f80f49593e5ee53835475f4e28594dd6bd83eb229bab753498cd` and receives one workspace id in a seroval array envelope.
+The parser reads rolling, weekly, and monthly windows from both JSON and serialized-JavaScript response forms.
 `go-limits-source.ts` polls it at most once a minute, backs off five minutes on failure, and degrades to the estimate on any error.
 
 ### Enabling server limits
@@ -189,7 +191,7 @@ Server limits need an opencode.ai session cookie, which the app only ever reads:
 
 ```bash
 # from a logged-in opencode.ai tab: devtools > application > cookies
-echo 'auth=<value>' > ~/.config/limitless/opencode-cookie
+echo '{ "opencodeCookie": "auth=<value>" }' > ~/.config/limitless/config.json
 # or, per-shell:
 export LIMITLESS_OPENCODE_COOKIE='auth=<value>'
 ```

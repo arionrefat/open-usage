@@ -6,11 +6,11 @@ import { isRecord } from "./json";
  * opencode.ai redeploys, so a parse failure here is expected drift, not a bug -
  * callers fall back to the local spend estimate.
  */
-export const OPENCODE_SERVER_URL = "https://opencode.ai/_server";
+const OPENCODE_SERVER_URL = "https://opencode.ai/_server";
 
 export const SERVER_FUNCTION_IDS = {
   workspaces: "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f",
-  subscriptionGet: "7abeebee372f304e050aaaf92be863f4a86490e382f8c79db68fd94040d691b4",
+  liteSubscription: "c7389bd0e731f80f49593e5ee53835475f4e28594dd6bd83eb229bab753498cd",
 } as const;
 
 /** Only the session cookies carry auth; everything else is noise we must not send. */
@@ -31,6 +31,7 @@ export interface UsageWindowReading {
 export interface OpencodeSubscription {
   rolling: UsageWindowReading;
   weekly: UsageWindowReading | null;
+  monthly: UsageWindowReading | null;
 }
 
 /** Keeps only the auth cookies from a pasted Cookie header. */
@@ -111,14 +112,20 @@ function windowFromText(text: string, key: string): UsageWindowReading | null {
 
 /**
  * Accepts either JSON or the serialized-JS form. The rolling window is
- * required; an absent weekly window is tolerated, matching the dashboard.
+ * required; absent weekly and monthly windows are tolerated.
  */
 export function parseSubscription(text: string): OpencodeSubscription | null {
   try {
     const parsed: unknown = JSON.parse(text);
     if (isRecord(parsed)) {
       const rolling = windowFromRecord(parsed.rollingUsage);
-      if (rolling) return { rolling, weekly: windowFromRecord(parsed.weeklyUsage) };
+      if (rolling) {
+        return {
+          rolling,
+          weekly: windowFromRecord(parsed.weeklyUsage),
+          monthly: windowFromRecord(parsed.monthlyUsage),
+        };
+      }
     }
   } catch {
     // Not JSON - fall through to the serialized-JS reader below.
@@ -126,7 +133,11 @@ export function parseSubscription(text: string): OpencodeSubscription | null {
 
   const rolling = windowFromText(text, "rollingUsage");
   if (!rolling) return null;
-  return { rolling, weekly: windowFromText(text, "weeklyUsage") };
+  return {
+    rolling,
+    weekly: windowFromText(text, "weeklyUsage"),
+    monthly: windowFromText(text, "monthlyUsage"),
+  };
 }
 
 /** Phrases the dashboard returns instead of data once a session lapses. */
@@ -152,15 +163,24 @@ export class OpencodeServerError extends Error {
 
 async function callServer(
   functionId: string,
-  args: unknown[],
+  args: string[],
   cookie: string,
   referer: string,
   signal?: AbortSignal,
 ): Promise<string> {
+  const url = new URL(OPENCODE_SERVER_URL);
+  url.searchParams.set("id", functionId);
+  if (args.length > 0) {
+    const elements = args.map((value) => ({ t: 1, s: value }));
+    url.searchParams.set(
+      "args",
+      JSON.stringify({ t: { t: 9, i: 0, l: elements.length, a: elements, o: 0 }, f: 31, m: [] }),
+    );
+  }
   let response: Response;
   try {
-    response = await fetch(OPENCODE_SERVER_URL, {
-      method: "POST",
+    response = await fetch(url, {
+      method: "GET",
       headers: {
         Cookie: cookie,
         "X-Server-Id": functionId,
@@ -168,9 +188,7 @@ async function callServer(
         Origin: "https://opencode.ai",
         Referer: referer,
         Accept: "text/javascript, application/json;q=0.9, */*;q=0.8",
-        "Content-Type": "application/json",
       },
-      body: JSON.stringify(args),
       // This RPC never legitimately redirects; refusing keeps the session
       // cookie from following a redirect to another host.
       redirect: "error",
@@ -193,6 +211,9 @@ async function callServer(
   if (isSignedOut(text)) {
     throw new OpencodeServerError("opencode session expired", "credentials");
   }
+  if (response.headers.has("X-Error")) {
+    throw new OpencodeServerError("error payload in response", "parse");
+  }
   return text;
 }
 
@@ -201,6 +222,8 @@ export interface GoServerLimits {
   rollingResetAtMs: number;
   weeklyPercent: number | null;
   weeklyResetAtMs: number | null;
+  monthlyPercent: number | null;
+  monthlyResetAtMs: number | null;
   fetchedAtMs: number;
 }
 
@@ -239,7 +262,7 @@ export async function fetchGoServerLimits(
   }
 
   const body = await callServer(
-    SERVER_FUNCTION_IDS.subscriptionGet,
+    SERVER_FUNCTION_IDS.liteSubscription,
     [workspaceId],
     cookie,
     `https://opencode.ai/workspace/${workspaceId}/billing`,
@@ -255,6 +278,9 @@ export async function fetchGoServerLimits(
     weeklyPercent: subscription.weekly?.percent ?? null,
     weeklyResetAtMs:
       subscription.weekly === null ? null : nowMs + subscription.weekly.resetInSec * 1000,
+    monthlyPercent: subscription.monthly?.percent ?? null,
+    monthlyResetAtMs:
+      subscription.monthly === null ? null : nowMs + subscription.monthly.resetInSec * 1000,
     fetchedAtMs: nowMs,
   };
 }

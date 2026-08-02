@@ -18,7 +18,7 @@ import { mockUsageProvider } from "./mock-provider";
 const MISSING_PATHS: RealProviderPaths = {
   opencodeDb: "/nonexistent/opencode.db",
   opencodeAuth: "/nonexistent/auth.json",
-  opencodeCookie: "/nonexistent/opencode-cookie",
+  configFile: "/nonexistent/config.json",
   claudeProjects: "/nonexistent/projects",
   claudeHistory: "/nonexistent/history.jsonl",
   claudeSettings: "/nonexistent/settings.json",
@@ -77,7 +77,7 @@ describe("createRealUsageProvider with no sources", () => {
     expect(snapshot.providers.cx.limits[0]?.percent).toBeNull();
     expect(snapshot.providers.cx.limits[0]?.reset).toBe("codex limits not connected");
     expect(snapshot.providers.go.limits[0]?.percent).toBeNull();
-    expect(snapshot.providers.go.limits[0]?.footnote).toContain("no usage api");
+    expect(snapshot.providers.go.limits[0]?.footnote).toContain("cookie unlocks exact %");
   });
 
   test("refresh resolves and honors an already-aborted signal", async () => {
@@ -138,7 +138,32 @@ describe("opencode go spend limits", () => {
       expect(go.scopes.session.percent).toBe(25);
       expect(go.scopes.weekly.percent).toBe(30);
       expect(go.limits[0]?.detailValueLabel).toBe("$3.00 of $12");
-      expect(go.limits[0]?.footnote).toContain("estimated from local spend");
+      expect(go.limits[0]?.footnote).toBe("local estimate - cookie unlocks exact %");
+
+      const serverWithoutMonthly = {
+        rollingPercent: 17,
+        rollingResetAtMs: nowMs + 5_944_000,
+        weeklyPercent: 75,
+        weeklyResetAtMs: nowMs + 278_201_000,
+        monthlyPercent: null,
+        monthlyResetAtMs: null,
+        fetchedAtMs: nowMs,
+      };
+      const serverProvider = createRealUsageProvider({
+        paths: { ...MISSING_PATHS, opencodeDb: dbPath },
+        ...OFFLINE,
+        goLimits: {
+          read: () => serverWithoutMonthly,
+          note: () => null,
+          poll: () => Promise.resolve(),
+        },
+      });
+      const monthly = serverProvider.readSnapshot().providers.go.limits.find(
+        (limit) => limit.id === "monthly",
+      );
+      expect(monthly?.detailValueLabel).toContain("of $60");
+      expect(monthly?.footnote).toBe("local estimate - cookie unlocks exact %");
+      expect(serverProvider.readSnapshot().providers.go.meta.planDetail).toContain("estimate");
     } finally {
       rmSync(dbPath, { force: true });
     }
@@ -151,6 +176,8 @@ describe("opencode go server limits", () => {
     rollingResetAtMs: Date.now() + 5_944_000,
     weeklyPercent: 75,
     weeklyResetAtMs: Date.now() + 278_201_000,
+    monthlyPercent: 99,
+    monthlyResetAtMs: Date.now() + 90_061_000,
     fetchedAtMs: Date.now(),
   };
 
@@ -167,6 +194,12 @@ describe("opencode go server limits", () => {
     expect(go.scopes.weekly.window).toContain("opencode");
     // The estimate's hedging language must not survive alongside server truth.
     expect(go.scopes.weekly.window).not.toContain("estimate");
+    const monthly = go.limits.find((limit) => limit.id === "monthly");
+    expect(monthly?.percent).toBe(99);
+    expect(monthly?.reset).toContain("resets in");
+    expect(monthly?.detailValueLabel).toBeUndefined();
+    expect(monthly?.footnote).toBeUndefined();
+    expect(go.meta.planDetail).toBe("Go");
   });
 
   test("a source note surfaces when there are no limits at all", () => {

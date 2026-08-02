@@ -54,8 +54,8 @@ function StaleBanner({ id, state, width }: { id: ProviderId; state: AppState; wi
   const label = connection.isEnabled ? status.label : "hidden in settings";
   const color = connection.isEnabled ? status.color : COLORS.textFaint;
   const note = connection.isEnabled
-    ? `${connection.note} — figures below are the last values read`
-    : "the credential is preserved — figures below are the last values read";
+    ? `${connection.note} - figures below are the last values read`
+    : "the credential is preserved - figures below are the last values read";
   return (
     <box
       flexDirection="column"

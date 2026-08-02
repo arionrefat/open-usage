@@ -6,7 +6,7 @@ import { Line, Rule, SplitLine, Spacer, leftClick } from "../components/primitiv
 const PANEL_WIDTH = 62;
 const KEY_COLUMN = 12;
 /** Translucent scrim so the app behind the keymap reads as backgrounded. */
-const SCRIM_COLOR = "#050505b8";
+const SCRIM_COLOR = "#15161eb8";
 
 const KEYMAP: Array<[string, string]> = [
   ["1 – 5", "jump to view · 5 is settings"],

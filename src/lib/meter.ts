@@ -6,7 +6,7 @@ export interface Meter {
   /** Color of the filled portion. */
   color: string;
   percentLabel: string;
-  /** Color of the numeric readout — always severity-driven when past a threshold. */
+  /** Color of the numeric readout - always severity-driven when past a threshold. */
   percentColor: string;
 }
 
@@ -47,7 +47,7 @@ export function emptyMeter(width: number): Meter {
     fill: "",
     track: "█".repeat(meterWidth),
     color: COLORS.track,
-    percentLabel: "—",
+    percentLabel: "-",
     percentColor: COLORS.textDisabled,
   };
 }

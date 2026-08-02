@@ -111,7 +111,7 @@ describe("planChart", () => {
       expect(rowText(row).slice(18, 26)).toBe(" ".repeat(8));
     }
     expect(chart.names[1]).toEqual({ text: `${" ".repeat(5)} codex  `, color: COLORS.textGhost });
-    expect(chart.values[1]).toEqual({ text: `${" ".repeat(5)}   —    `, color: COLORS.textGhost });
+    expect(chart.values[1]).toEqual({ text: `${" ".repeat(5)}   -    `, color: COLORS.textGhost });
     expect(chart.values[0]).toEqual({ text: `${" ".repeat(5)}  88%   `, color: "orange" });
   });
 });

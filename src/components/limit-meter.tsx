@@ -58,7 +58,7 @@ export function DetailLimitMeter({ limit, width, accentColor, useSeverityColors 
   const valueColumn = hasCustomValue ? DETAIL_CUSTOM_COLUMN : DETAIL_PERCENT_COLUMN;
   const value =
     limit.detailValueLabel ??
-    (limit.percent === null ? (limit.valueLabel ?? "—") : `${meter.percentLabel} used`);
+    (limit.percent === null ? (limit.valueLabel ?? "-") : `${meter.percentLabel} used`);
   const valueColor = limit.valueColor ?? meter.percentColor;
 
   return (

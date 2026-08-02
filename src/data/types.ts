@@ -1,3 +1,5 @@
+import { COLORS } from "../theme";
+
 export type ProviderId = "cl" | "cx" | "go";
 
 export const PROVIDER_IDS: readonly ProviderId[] = ["cl", "cx", "go"] as const;
@@ -92,7 +94,7 @@ export interface ProviderNotice {
 }
 
 export interface UsageSeries {
-  /** One value per day, oldest first — 30 days of history. */
+  /** One value per day, oldest first - 30 days of history. */
   daily: number[];
   /** One value per hour of today, 24 entries. */
   hourly: number[];
@@ -138,7 +140,7 @@ export const STATUS_PRESENTATION: Record<
   ConnectionStatus,
   { label: string; color: string; dot: string }
 > = {
-  active: { label: "active", color: "#3fb950", dot: "●" },
-  expired: { label: "subscription ended", color: "#d29922", dot: "◍" },
-  none: { label: "not connected", color: "#5c5c5c", dot: "○" },
+  active: { label: "active", color: COLORS.ok, dot: "●" },
+  expired: { label: "subscription ended", color: COLORS.warn, dot: "◍" },
+  none: { label: "not connected", color: COLORS.textFaint, dot: "○" },
 };

@@ -74,7 +74,7 @@ function ProviderRow({
           { text: "   " },
           { text: padEnd("credential", LABEL_COLUMN), color: COLORS.textFaint },
           {
-            text: connection.credential || "— none stored —",
+            text: connection.credential || "- none stored -",
             color: connection.credential ? COLORS.textMuted : COLORS.textFaint,
             onClick: () => actions.settingsPasteKey(id),
           },
@@ -131,7 +131,7 @@ export function Settings(props: SettingsProps) {
           { text: " ▏ ", color: COLORS.rule },
           { text: "providers, credentials, subscriptions", color: COLORS.textFaint },
         ]}
-        right={[{ text: "~/.config/limits/config.toml", color: COLORS.textGhost }]}
+        right={[{ text: "~/.config/limitless/config.json", color: COLORS.textGhost }]}
       />
       <Spacer />
       <SplitLine

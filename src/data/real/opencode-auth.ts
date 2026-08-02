@@ -8,7 +8,7 @@ export interface OpencodeAuth {
   opencodeGo: { maskedKey: string } | null;
 }
 
-export const EMPTY_AUTH: OpencodeAuth = { openai: null, opencodeGo: null };
+const EMPTY_AUTH: OpencodeAuth = { openai: null, opencodeGo: null };
 
 export function parseOpencodeAuth(value: unknown): OpencodeAuth {
   if (!isRecord(value)) return EMPTY_AUTH;

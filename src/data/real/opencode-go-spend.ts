@@ -8,16 +8,16 @@ import { isRecord } from "./json";
  * cost opencode.db records per assistant message against the published caps.
  * Caps move with the plan, so they are overridable rather than constants.
  */
-export interface GoPlanCaps {
+interface GoPlanCaps {
   sessionUsd: number;
   weeklyUsd: number;
   monthlyUsd: number;
 }
 
-export const GO_PLAN_CAPS: GoPlanCaps = { sessionUsd: 12, weeklyUsd: 30, monthlyUsd: 60 };
+const GO_PLAN_CAPS: GoPlanCaps = { sessionUsd: 12, weeklyUsd: 30, monthlyUsd: 60 };
 
 export const GO_SESSION_MS = 5 * HOUR_MS;
-export const GO_WEEK_MS = 7 * DAY_MS;
+const GO_WEEK_MS = 7 * DAY_MS;
 
 const QUERY_WINDOW_MS = 62 * DAY_MS;
 

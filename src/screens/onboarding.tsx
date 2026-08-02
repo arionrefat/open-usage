@@ -36,7 +36,7 @@ function PickStep({ state, snapshot, width, actions }: OnboardingProps) {
       <Line
         segments={[
           {
-            text: "pick the ones you pay for — you can change this later in settings",
+            text: "pick the ones you pay for - you can change this later in settings",
             color: COLORS.textFaint,
           },
         ]}
@@ -185,7 +185,7 @@ function SummaryStep({ state, snapshot, width, actions }: OnboardingProps) {
       <Line
         segments={[
           {
-            text: "skipped or expired providers stay listed in settings — nothing is lost",
+            text: "skipped or expired providers stay listed in settings - nothing is lost",
             color: COLORS.textFaint,
           },
         ]}
@@ -204,7 +204,7 @@ function SummaryStep({ state, snapshot, width, actions }: OnboardingProps) {
               { text: padEnd(connection.isEnabled ? status.dot : "○", 3), color: statusColor },
               { text: padEnd(snapshot.providers[id].meta.name, NAME_COLUMN), color: COLORS.text },
               { text: padEnd(statusLabel, STATUS_COLUMN), color: statusColor },
-              { text: connection.credential || "—", color: COLORS.textFaint },
+              { text: connection.credential || "-", color: COLORS.textFaint },
             ]}
           />
         );

@@ -5,6 +5,7 @@ import {
   filterCookieHeader,
   type GoServerLimits,
 } from "./opencode-server";
+import { isRecord } from "./json";
 
 /**
  * Server-truth go limits, polled out-of-band because the UI reads snapshots
@@ -29,8 +30,10 @@ export function readCookie(path: string, env: Record<string, string | undefined>
   const fromEnv = env[COOKIE_ENV_VAR]?.trim();
   if (fromEnv) return fromEnv;
   try {
-    const fromFile = readFileSync(path, "utf8").trim();
-    return fromFile.length > 0 ? fromFile : null;
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (!isRecord(parsed) || typeof parsed.opencodeCookie !== "string") return null;
+    const fromConfig = parsed.opencodeCookie.trim();
+    return fromConfig.length > 0 ? fromConfig : null;
   } catch {
     return null;
   }
@@ -43,10 +46,10 @@ export const dormantGoLimitsSource: GoLimitsSource = {
 };
 
 /** Injectable so tests can drive the cache, backoff and staleness rules. */
-export type GoLimitsFetcher = typeof fetchGoServerLimits;
+type GoLimitsFetcher = typeof fetchGoServerLimits;
 
 export function createGoLimitsSource(
-  cookiePath: string,
+  configPath: string,
   env: Record<string, string | undefined> = process.env,
   fetcher: GoLimitsFetcher = fetchGoServerLimits,
 ): GoLimitsSource {
@@ -64,7 +67,7 @@ export function createGoLimitsSource(
       const nowMs = now.getTime();
       if (nowMs < nextPollAtMs) return;
 
-      const cookie = readCookie(cookiePath, env);
+      const cookie = readCookie(configPath, env);
       if (!cookie) {
         cached = null;
         note = null;

@@ -34,7 +34,7 @@ export const stubCodexLimitsSource: CodexLimitsSource = {
   poll: () => Promise.resolve(),
 };
 
-export type CodexLimitsReader = typeof readCodexLimits;
+type CodexLimitsReader = typeof readCodexLimits;
 
 export function createCodexLimitsSource(
   reader: CodexLimitsReader = readCodexLimits,

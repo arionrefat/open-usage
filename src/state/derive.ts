@@ -31,7 +31,7 @@ export interface DerivedState {
   /** Enabled providers whose credential currently works. */
   liveIds: ProviderId[];
   enabledCount: number;
-  /** Enabled but unusable — expired or missing credential. */
+  /** Enabled but unusable - expired or missing credential. */
   disconnectedIds: ProviderId[];
   /** Live providers at or past the danger threshold in the current scope. */
   hotIds: ProviderId[];
@@ -136,10 +136,10 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
     visibleIds.length === 0 && query
       ? `no providers match “${state.filterQuery.trim()}”`
       : liveIds.length === 0
-      ? "no live provider — 5 settings to enable one, or o to re-run setup"
+      ? "no live provider - 5 settings to enable one, or o to re-run setup"
       : disconnectedIds.length > 0
         ? disconnectedIds
-            .map((id) => `${snapshot.providers[id].meta.name} — ${STATUS_PRESENTATION[state.connections[id].status].label}`)
+            .map((id) => `${snapshot.providers[id].meta.name} - ${STATUS_PRESENTATION[state.connections[id].status].label}`)
             .join("   ")
         : snapshot.windowNote;
 

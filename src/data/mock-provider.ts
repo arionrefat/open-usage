@@ -130,7 +130,7 @@ const SNAPSHOT: UsageSnapshot = {
           detailValueLabel: "66% remaining",
           reset: "resets in 3d 4h",
           resetLong: "resets in 3d 4h · 66% remaining",
-          alert: { text: "✓ most headroom — route new work here", color: COLORS.ok },
+          alert: { text: "✓ most headroom - route new work here", color: COLORS.ok },
         },
         {
           id: "credits",

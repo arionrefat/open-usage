@@ -69,7 +69,7 @@ function buildLegend(
       : !connection.isEnabled
         ? "off"
         : connection.status !== "active"
-          ? "—"
+          ? "-"
           : "n/a",
     percentColor: hasCap ? meter.percentColor : status.color,
     fill: meter.fill,
@@ -84,7 +84,7 @@ function buildLegend(
     slice:
       hasCap && consumptionTotal > 0
         ? `${Math.round((consumption[id] / consumptionTotal) * 100)}%`
-        : "—",
+        : "-",
   };
 }
 
@@ -109,7 +109,7 @@ function ProviderLegend({
           { text: "▎", color: PROVIDER_COLORS[id] },
           { text: name, color: COLORS.textBright, isBold: true },
         ]}
-        right={entry.slice === "—" ? [] : [{ text: `${entry.slice} share`, color: COLORS.textGhost }]}
+        right={entry.slice === "-" ? [] : [{ text: `${entry.slice} share`, color: COLORS.textGhost }]}
       />
       <Line
         segments={[
@@ -207,7 +207,7 @@ export function OverviewSimple({
     }),
   );
 
-  const leadLine = consumptionTotal ? "" : "nothing connected — 5 settings to enable a provider";
+  const leadLine = consumptionTotal ? "" : "nothing connected - 5 settings to enable a provider";
 
   const showChart = width >= PLAN_CHART_MIN_CONTENT_WIDTH;
   const legendWidth = showChart ? width - chart.width - PLAN_CHART_GAP : width;
@@ -268,7 +268,7 @@ export function OverviewSimple({
                 color: COLORS.text,
               },
               {
-                text: worstId ? " closest to cap" : " — every provider is off or disconnected",
+                text: worstId ? " closest to cap" : " - every provider is off or disconnected",
                 color: COLORS.textFaint,
               },
             ]}

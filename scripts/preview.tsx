@@ -15,7 +15,7 @@ const DEFAULT_WIDTH = 140;
 const DEFAULT_HEIGHT = 46;
 const INPUT_SETTLE_MS = 30;
 
-// React's act() advisory is noise here — this harness drives real input, not a test.
+// React's act() advisory is noise here - this harness drives real input, not a test.
 const reportError = console.error;
 console.error = (...args: unknown[]) => {
   if (typeof args[0] === "string" && args[0].includes("act(...)")) return;

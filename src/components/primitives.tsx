@@ -41,7 +41,7 @@ export function segmentsWidth(segments: Segment[]): number {
 }
 
 /** Clips a segment list to `width` columns, ellipsizing the one that straddles it. */
-export function fitSegments(segments: Segment[], width: number): Segment[] {
+function fitSegments(segments: Segment[], width: number): Segment[] {
   if (width <= 0) return [];
   const fitted: Segment[] = [];
   let used = 0;
@@ -242,7 +242,7 @@ export function Spacer({ height = 1 }: { height?: number }) {
 }
 
 /** A boxed keyboard hint such as `j/k` or `space`. */
-export function keyCap(label: string, onClick?: () => void): Segment[] {
+function keyCap(label: string, onClick?: () => void): Segment[] {
   return [{ text: ` ${label} `, color: COLORS.textSoft, background: COLORS.bgChip, onClick }];
 }
 

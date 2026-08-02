@@ -65,7 +65,7 @@ function DisconnectedNotice({
       <Spacer />
       <Line
         segments={[
-          { text: "no limits to read — ", color: COLORS.textGhost, onClick: onOpenSettings },
+          { text: "no limits to read - ", color: COLORS.textGhost, onClick: onOpenSettings },
           { text: "5", color: COLORS.textSoft, onClick: onOpenSettings },
           { text: " settings to reconnect", color: COLORS.textGhost, onClick: onOpenSettings },
         ]}

@@ -10,6 +10,7 @@ import { testRender } from "@opentui/react/test-utils";
 import { App } from "../src/app";
 import { mockUsageProvider } from "../src/data/mock-provider";
 import { readFlags, startupFromFlags } from "../src/lib/args";
+import { COLORS } from "../src/theme";
 
 const DEFAULT_WIDTH = 140;
 const DEFAULT_HEIGHT = 46;
@@ -99,7 +100,7 @@ async function capture(label: string, spec: string): Promise<Shot> {
   }
 }
 
-// React's act() advisory is noise here — this harness drives real input.
+// React's act() advisory is noise here - this harness drives real input.
 const reportError = console.error;
 console.error = (...args: unknown[]) => {
   if (typeof args[0] === "string" && args[0].includes("act(...)")) return;
@@ -118,9 +119,9 @@ for (const spec of specs) {
 
 const PAGE = `<!doctype html><meta charset="utf-8">
 <style>
- body{margin:0;padding:20px;background:#161616;font-family:ui-sans-serif,system-ui}
- h2{color:#eee;font-size:13px;font-weight:600;margin:22px 0 6px}
- h2 small{color:#888;font-weight:400}
+ body{margin:0;padding:20px;background:${COLORS.bg};font-family:ui-sans-serif,system-ui}
+ h2{color:${COLORS.textBright};font-size:13px;font-weight:600;margin:22px 0 6px}
+ h2 small{color:${COLORS.textMuted};font-weight:400}
  canvas{display:block}
 </style>
 <div id="out"></div>
@@ -150,7 +151,7 @@ for (const shot of SHOTS) {
   canvas.width = shot.cols * CW;
   canvas.height = shot.rows * CH;
   const g = canvas.getContext("2d");
-  g.fillStyle = "#0b0b0b";
+  g.fillStyle = "${COLORS.bg}";
   g.fillRect(0, 0, canvas.width, canvas.height);
   shot.cells.forEach((row, y) => row.forEach((cell, x) => {
     const px = x * CW, py = y * CH;
