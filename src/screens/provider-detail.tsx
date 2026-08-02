@@ -1,6 +1,13 @@
 import { bars, formatTokens } from "../lib/chart";
+import { buildMeter } from "../lib/meter";
 import { COLORS, PROVIDER_COLORS } from "../theme";
-import { STATUS_PRESENTATION, type ProviderId, type ProviderNotice, type UsageSnapshot } from "../data/types";
+import {
+  STATUS_PRESENTATION,
+  type DetailSection,
+  type ProviderId,
+  type ProviderNotice,
+  type UsageSnapshot,
+} from "../data/types";
 import { isProviderLive, type AppState } from "../state/app-state";
 import type { DerivedState } from "../state/derive";
 import { DetailLimitMeter } from "../components/limit-meter";
@@ -78,6 +85,44 @@ function StaleBanner({ id, state, width }: { id: ProviderId; state: AppState; wi
   );
 }
 
+const DETAIL_BAR_WIDTH = 12;
+
+function Details({ sections, width, color }: { sections: DetailSection[]; width: number; color: string }) {
+  const visibleSections = sections.filter((section) => section.rows.length > 0);
+  return visibleSections.map((section, sectionIndex) => (
+    <box key={`${section.title}-${sectionIndex}`} flexDirection="column" flexShrink={0}>
+      {sectionIndex > 0 ? <Spacer /> : null}
+      <Line
+        width={width}
+        segments={[{ text: section.title, color: COLORS.textMuted, isBold: true }]}
+      />
+      {section.rows.map((row, rowIndex) => {
+        const rowColor = row.color ?? color;
+        const meter = row.percent === null || row.percent === undefined
+          ? null
+          : buildMeter(row.percent, DETAIL_BAR_WIDTH, rowColor);
+        return (
+          <SplitLine
+            key={`${row.label}-${rowIndex}`}
+            width={width}
+            left={[{ text: row.label, color: COLORS.textFaint }]}
+            right={[
+              ...(meter
+                ? [
+                    { text: meter.fill, color: rowColor },
+                    { text: meter.track, color: COLORS.track },
+                    { text: " ", color: COLORS.rule },
+                  ]
+                : []),
+              { text: row.value, color: COLORS.text },
+            ]}
+          />
+        );
+      })}
+    </box>
+  ));
+}
+
 export function ProviderDetail({
   id,
   state,
@@ -140,6 +185,13 @@ export function ProviderDetail({
         center={[{ text: `peak ${formatTokens(Math.max(0, ...series))}`, color: COLORS.textGhost }]}
         right={[{ text: derived.axis[2], color: COLORS.textGhost }]}
       />
+
+      {provider.details?.some((section) => section.rows.length > 0) ? (
+        <>
+          <Spacer />
+          <Details sections={provider.details} width={width} color={PROVIDER_COLORS[id]} />
+        </>
+      ) : null}
 
       {provider.detailFooter ? (
         <>

@@ -116,6 +116,24 @@ const SNAPSHOT: UsageSnapshot = {
           },
         ],
       },
+      details: [
+        {
+          title: "model share",
+          rows: [
+            { label: "Fable", value: "62%", percent: 62 },
+            { label: "Sonnet", value: "31%", percent: 31 },
+            { label: "Haiku", value: "7%", percent: 7 },
+          ],
+        },
+        {
+          title: "token split",
+          rows: [
+            { label: "input", value: "184.2M" },
+            { label: "output", value: "42.8M" },
+            { label: "cache read", value: "96.4M" },
+          ],
+        },
+      ],
     },
     cx: {
       id: "cx",
@@ -163,6 +181,30 @@ const SNAPSHOT: UsageSnapshot = {
         projectedPercent: 61,
         capsOutAt: "not before reset",
       },
+      details: [
+        {
+          title: "model share",
+          rows: [
+            { label: "gpt-5.2-codex", value: "71%", percent: 71 },
+            { label: "gpt-5.1-codex-mini", value: "29%", percent: 29 },
+          ],
+        },
+        {
+          title: "token split",
+          rows: [
+            { label: "input", value: "68.1M" },
+            { label: "output", value: "15.7M" },
+            { label: "cached", value: "22.3M" },
+          ],
+        },
+        {
+          title: "records",
+          rows: [
+            { label: "requests", value: "286" },
+            { label: "code reviews", value: "18" },
+          ],
+        },
+      ],
       detailFooter: "code review runs 18 ▏ avg per run 1.9M ▏ counted against the same weekly pool",
     },
     go: {
@@ -211,6 +253,30 @@ const SNAPSHOT: UsageSnapshot = {
           { text: " as the provider in your opencode configuration to use Go models." },
         ],
       },
+      details: [
+        {
+          title: "model share",
+          rows: [
+            { label: "GLM-4.5", value: "54%", percent: 54 },
+            { label: "Kimi K2", value: "28%", percent: 28 },
+            { label: "MiniMax M2", value: "18%", percent: 18 },
+          ],
+        },
+        {
+          title: "token split",
+          rows: [
+            { label: "input", value: "91.6M" },
+            { label: "output", value: "24.1M" },
+          ],
+        },
+        {
+          title: "records",
+          rows: [
+            { label: "sessions", value: "43" },
+            { label: "messages", value: "612" },
+          ],
+        },
+      ],
     },
   },
 };
