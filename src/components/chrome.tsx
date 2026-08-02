@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { APP_NAME } from "../config";
 import { useSecondsSince } from "../hooks/use-seconds-since";
 import { columnWidth } from "../lib/text";
 import { COLORS, SPINNER_FRAMES } from "../theme";
@@ -42,11 +41,12 @@ export function Header({
     <SplitLine
       width={width}
       left={[
-        { text: APP_NAME, color: COLORS.textBright, isBold: true },
-        { text: " ▏ ", color: COLORS.rule },
-        { text: providerCount, color: COLORS.textFaint },
+        { text: "LIMIT", color: COLORS.accent, isBold: true },
+        { text: "LESS", color: COLORS.info, isBold: true },
       ]}
       right={[
+        { text: providerCount, color: COLORS.textFaint },
+        { text: " ▏ ", color: COLORS.rule },
         { text: alertText, color: alertColor },
         { text: " ▏ ", color: COLORS.rule },
         { text: `updated ${updatedLabel}`, color: COLORS.textFaint },
