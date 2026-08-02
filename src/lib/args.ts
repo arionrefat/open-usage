@@ -1,4 +1,4 @@
-import { VIEW_KEYS, type AppStateOptions, type OverviewMode, type Screen, type ViewKey } from "../state/app-state";
+import { type AppStateOptions, type OverviewMode, type Screen, type ViewKey } from "../state/app-state";
 
 export function readFlags(argv: string[]): Map<string, string> {
   const flags = new Map<string, string>();
@@ -32,15 +32,30 @@ export function providerModeFromFlags(flags: Map<string, string>, fallback: Prov
   return fallback;
 }
 
+function screenFromFlag(value: string | undefined): Screen {
+  return value === "onboarding" ? "onboarding" : "app";
+}
+
+function viewFromFlag(value: string | undefined): ViewKey {
+  if (value === "claude" || value === "codex" || value === "go" || value === "settings") {
+    return value;
+  }
+  return "overview";
+}
+
+function modeFromFlag(value: string | undefined): OverviewMode {
+  return value === "simple" || value === "simplified" ? "simple" : "detailed";
+}
+
 export function startupFromFlags(flags: Map<string, string>): Omit<AppStateOptions, "connections"> {
   const screen = flags.get("screen");
   const view = flags.get("view");
   const mode = flags.get("mode");
 
   return {
-    screen: (screen === "onboarding" ? "onboarding" : "app") satisfies Screen as Screen,
-    view: (VIEW_KEYS.includes(view as ViewKey) ? view : "overview") as ViewKey,
-    mode: (mode === "simple" || mode === "simplified" ? "simple" : "detailed") as OverviewMode,
+    screen: screenFromFlag(screen),
+    view: viewFromFlag(view),
+    mode: modeFromFlag(mode),
     useSeverityColors: isFlagEnabled(flags, "severity-colors"),
     isDailySplitVisible: !isFlagEnabled(flags, "no-daily-split"),
   };

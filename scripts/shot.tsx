@@ -7,6 +7,7 @@
  *   bun run shot out.html "detailed:--mode detailed" "narrow:--width 80"
  */
 import { testRender } from "@opentui/react/test-utils";
+import type { RGBA } from "@opentui/core";
 import { App } from "../src/app";
 import { mockUsageProvider } from "../src/data/mock-provider";
 import { readFlags, startupFromFlags } from "../src/lib/args";
@@ -15,13 +16,6 @@ import { COLORS } from "../src/theme";
 const DEFAULT_WIDTH = 140;
 const DEFAULT_HEIGHT = 46;
 const INPUT_SETTLE_MS = 30;
-
-interface Rgba {
-  r: number;
-  g: number;
-  b: number;
-  a: number;
-}
 
 interface Cell {
   ch: string;
@@ -39,7 +33,7 @@ interface Shot {
 }
 
 // The renderer reports channels as 0..1 floats; older builds used 0..255.
-function toHex(color: Rgba): string {
+function toHex(color: RGBA): string {
   const channel = (value: number) =>
     Math.round((value <= 1 ? value : value / 255) * 255)
       .toString(16)
@@ -65,15 +59,29 @@ async function capture(label: string, spec: string): Promise<Shot> {
     await new Promise((resolve) => setTimeout(resolve, INPUT_SETTLE_MS));
     await setup.flush();
   };
+  const pressKey = (key: string) => {
+    switch (key) {
+      case "ENTER":
+        setup.mockInput.pressEnter();
+        break;
+      case "TAB":
+        setup.mockInput.pressTab();
+        break;
+      case "ESC":
+        setup.mockInput.pressEscape();
+        break;
+      case "SPACE":
+        setup.mockInput.pressKey(" ");
+        break;
+      default:
+        setup.mockInput.pressKey(key);
+    }
+  };
   try {
     await settle();
 
     for (const key of (flags.get("keys") ?? "").split(",").filter(Boolean)) {
-      if (key === "ENTER") setup.mockInput.pressEnter();
-      else if (key === "TAB") setup.mockInput.pressTab();
-      else if (key === "ESC") setup.mockInput.pressEscape();
-      else if (key === "SPACE") setup.mockInput.pressKey(" ");
-      else setup.mockInput.pressKey(key);
+      pressKey(key);
       await settle();
     }
 
@@ -82,8 +90,8 @@ async function capture(label: string, spec: string): Promise<Shot> {
     const cells = frame.lines.map((line) => {
       const row: Cell[] = [];
       for (const span of line.spans) {
-        const fg = toHex(span.fg as unknown as Rgba);
-        const bg = toHex(span.bg as unknown as Rgba);
+        const fg = toHex(span.fg);
+        const bg = toHex(span.bg);
         const bold = (span.attributes & 1) !== 0;
         for (const { segment } of segmenter.segment(span.text)) {
           const cellWidth = Math.max(1, Bun.stringWidth(segment));
@@ -113,8 +121,13 @@ if (!outPath) throw new Error("usage: bun run shot <out.html> \"label:--flags\" 
 const shots: Shot[] = [];
 for (const spec of specs) {
   const separator = spec.indexOf(":");
-  const label = separator === -1 ? spec : spec.slice(0, separator);
-  shots.push(await capture(label, separator === -1 ? "" : spec.slice(separator + 1)));
+  if (separator === -1) {
+    shots.push(await capture(spec, ""));
+    continue;
+  }
+  const label = spec.slice(0, separator);
+  const flags = spec.slice(separator + 1);
+  shots.push(await capture(label, flags));
 }
 
 const PAGE = `<!doctype html><meta charset="utf-8">
@@ -141,6 +154,47 @@ const QUADS = {
   "\\u259e":6, "\\u259b":7, "\\u259c":11, "\\u2599":13, "\\u259f":14
 };
 const LINES = {"\\u2500":"h","\\u2502":"v","\\u250c":"tl","\\u2510":"tr","\\u2514":"bl","\\u2518":"br"};
+function drawCell(g, cell, x, y) {
+  const px = x * CW, py = y * CH;
+  g.fillStyle = cell.bg;
+  g.fillRect(px, py, CW, CH);
+
+  const rect = RECTS[cell.ch];
+  if (rect) {
+    g.fillStyle = cell.fg;
+    g.fillRect(px + rect[0]*CW, py + rect[1]*CH, (rect[2]-rect[0])*CW, (rect[3]-rect[1])*CH);
+    return;
+  }
+
+  const quad = QUADS[cell.ch];
+  if (quad !== undefined) {
+    g.fillStyle = cell.fg;
+    if (quad & 1) g.fillRect(px, py, CW/2, CH/2);
+    if (quad & 2) g.fillRect(px + CW/2, py, CW/2, CH/2);
+    if (quad & 4) g.fillRect(px, py + CH/2, CW/2, CH/2);
+    if (quad & 8) g.fillRect(px + CW/2, py + CH/2, CW/2, CH/2);
+    return;
+  }
+
+  const line = LINES[cell.ch];
+  if (line) {
+    g.fillStyle = cell.fg;
+    if (line !== "v") {
+      const x0 = line === "tl" || line === "bl" ? px + CW/2 : px;
+      g.fillRect(x0, py + CH/2 - 1, line === "h" ? CW : CW/2, 1.5);
+    }
+    if (line !== "h") {
+      const y0 = line === "tl" || line === "tr" ? py + CH/2 : py;
+      g.fillRect(px + CW/2 - 1, y0, 1.5, line === "v" ? CH : CH/2);
+    }
+    return;
+  }
+
+  if (cell.ch === " ") return;
+  g.fillStyle = cell.fg;
+  g.font = (cell.bold ? "bold " : "") + "14px 'JetBrains Mono', Menlo, monospace";
+  g.fillText(cell.ch, px, py + CH - 5);
+}
 for (const shot of SHOTS) {
   const heading = document.createElement("h2");
   heading.textContent = shot.label + ' ';
@@ -153,43 +207,7 @@ for (const shot of SHOTS) {
   const g = canvas.getContext("2d");
   g.fillStyle = "${COLORS.bg}";
   g.fillRect(0, 0, canvas.width, canvas.height);
-  shot.cells.forEach((row, y) => row.forEach((cell, x) => {
-    const px = x * CW, py = y * CH;
-    g.fillStyle = cell.bg;
-    g.fillRect(px, py, CW, CH);
-    const rect = RECTS[cell.ch];
-    if (rect) {
-      g.fillStyle = cell.fg;
-      g.fillRect(px + rect[0]*CW, py + rect[1]*CH, (rect[2]-rect[0])*CW, (rect[3]-rect[1])*CH);
-      return;
-    }
-    const quad = QUADS[cell.ch];
-    if (quad !== undefined) {
-      g.fillStyle = cell.fg;
-      if (quad & 1) g.fillRect(px, py, CW/2, CH/2);
-      if (quad & 2) g.fillRect(px + CW/2, py, CW/2, CH/2);
-      if (quad & 4) g.fillRect(px, py + CH/2, CW/2, CH/2);
-      if (quad & 8) g.fillRect(px + CW/2, py + CH/2, CW/2, CH/2);
-      return;
-    }
-    const line = LINES[cell.ch];
-    if (line) {
-      g.fillStyle = cell.fg;
-      if (line !== "v") {
-        const x0 = line === "tl" || line === "bl" ? px + CW/2 : px;
-        g.fillRect(x0, py + CH/2 - 1, line === "h" ? CW : CW/2, 1.5);
-      }
-      if (line !== "h") {
-        const y0 = line === "tl" || line === "tr" ? py + CH/2 : py;
-        g.fillRect(px + CW/2 - 1, y0, 1.5, line === "v" ? CH : CH/2);
-      }
-      return;
-    }
-    if (cell.ch === " ") return;
-    g.fillStyle = cell.fg;
-    g.font = (cell.bold ? "bold " : "") + "14px 'JetBrains Mono', Menlo, monospace";
-    g.fillText(cell.ch, px, py + CH - 5);
-  }));
+  shot.cells.forEach((row, y) => row.forEach((cell, x) => drawCell(g, cell, x, y)));
   document.getElementById("out").append(heading, canvas);
 }
 </script>`;

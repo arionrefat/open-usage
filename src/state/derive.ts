@@ -82,6 +82,85 @@ function axisForDates(dates: string[]): [string, string, string] {
   ];
 }
 
+function seriesForRange(snapshot: UsageSnapshot, range: RangeKey, dailyStart: number) {
+  const providerSeries = (id: ProviderId) => snapshot.providers[id].series;
+  if (range === "today") {
+    return {
+      cl: providerSeries("cl").hourly,
+      cx: providerSeries("cx").hourly,
+      go: providerSeries("go").hourly,
+    };
+  }
+  return {
+    cl: providerSeries("cl").daily.slice(dailyStart),
+    cx: providerSeries("cx").daily.slice(dailyStart),
+    go: providerSeries("go").daily.slice(dailyStart),
+  };
+}
+
+function consumptionByProvider(
+  snapshot: UsageSnapshot,
+  scope: AppState["scope"],
+  visibleLiveIds: ProviderId[],
+): Record<ProviderId, number> {
+  const consumption = (id: ProviderId) => {
+    if (!visibleLiveIds.includes(id)) return 0;
+    return snapshot.providers[id].scopes[scope].percent ?? 0;
+  };
+  return { cl: consumption("cl"), cx: consumption("cx"), go: consumption("go") };
+}
+
+function rankConsumption(
+  snapshot: UsageSnapshot,
+  scope: AppState["scope"],
+  visibleLiveIds: ProviderId[],
+): ProviderId[] {
+  const percent = (id: ProviderId) => snapshot.providers[id].scopes[scope].percent;
+  return visibleLiveIds
+    .filter((id) => percent(id) !== null)
+    .sort((first, second) => (percent(second) ?? 0) - (percent(first) ?? 0));
+}
+
+function alertText(liveCount: number, issueCount: number): string {
+  if (liveCount === 0) return "○ nothing tracked";
+  if (issueCount === 0) return "✓ all clear";
+  const issueLabel = issueCount > 1 ? "issues" : "issue";
+  return `▲ ${issueCount} ${issueLabel}`;
+}
+
+function alertColor(
+  liveCount: number,
+  hotCount: number,
+  disconnectedCount: number,
+): string {
+  if (liveCount === 0) return COLORS.textFaint;
+  if (hotCount > 0) return COLORS.danger;
+  if (disconnectedCount > 0) return COLORS.warn;
+  return COLORS.ok;
+}
+
+function windowNote(
+  state: AppState,
+  snapshot: UsageSnapshot,
+  visibleIds: ProviderId[],
+  liveIds: ProviderId[],
+  disconnectedIds: ProviderId[],
+): string {
+  const query = state.filterQuery.trim();
+  if (visibleIds.length === 0 && query) return `no providers match “${query}”`;
+  if (liveIds.length === 0) {
+    return "no live provider - 5 settings to enable one, or o to re-run setup";
+  }
+  if (disconnectedIds.length === 0) return snapshot.windowNote;
+  return disconnectedIds
+    .map((id) => {
+      const name = snapshot.providers[id].meta.name;
+      const status = STATUS_PRESENTATION[state.connections[id].status].label;
+      return `${name} - ${status}`;
+    })
+    .join("   ");
+}
+
 export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedState {
   const query = state.filterQuery.trim().toLowerCase();
   const matchesFilter = (id: ProviderId) =>
@@ -99,49 +178,20 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
   const isHourly = state.range === "today";
   const dailyStart = dailyStartIndex(state.range, snapshot.dailyDates);
   const visibleDates = snapshot.dailyDates.slice(dailyStart);
-  const series = Object.fromEntries(
-    PROVIDER_IDS.map((id) => {
-      const provider = snapshot.providers[id].series;
-      return [id, isHourly ? provider.hourly : provider.daily.slice(dailyStart)];
-    }),
-  ) as Record<ProviderId, number[]>;
+  const series = seriesForRange(snapshot, state.range, dailyStart);
 
-  const totals = Object.fromEntries(
-    PROVIDER_IDS.map((id) => [id, sum(series[id])]),
-  ) as Record<ProviderId, number>;
+  const totals = { cl: sum(series.cl), cx: sum(series.cx), go: sum(series.go) };
   const visibleTotal = visibleIds.reduce((acc, id) => acc + totals[id], 0);
 
-  const scopeConsumption = Object.fromEntries(
-    PROVIDER_IDS.map((id) => {
-      const isLive = visibleLiveIds.includes(id);
-      return [id, isLive ? (snapshot.providers[id].scopes[state.scope].percent ?? 0) : 0];
-    }),
-  ) as Record<ProviderId, number>;
+  const scopeConsumption = consumptionByProvider(snapshot, state.scope, visibleLiveIds);
   const scopeTotal = visibleIds.reduce((acc, id) => acc + scopeConsumption[id], 0);
 
-  const ranked = visibleLiveIds
-    .filter((id) => snapshot.providers[id].scopes[state.scope].percent !== null)
-    .sort(
-      (a, b) =>
-        (snapshot.providers[b].scopes[state.scope].percent ?? 0) -
-        (snapshot.providers[a].scopes[state.scope].percent ?? 0),
-    );
+  const ranked = rankConsumption(snapshot, state.scope, visibleLiveIds);
 
   const hotIds = liveIds.filter(
     (id) => (snapshot.providers[id].scopes[state.scope].percent ?? 0) >= THRESHOLDS.danger,
   );
   const alertCount = hotIds.length + disconnectedIds.length;
-
-  const windowNote =
-    visibleIds.length === 0 && query
-      ? `no providers match “${state.filterQuery.trim()}”`
-      : liveIds.length === 0
-      ? "no live provider - 5 settings to enable one, or o to re-run setup"
-      : disconnectedIds.length > 0
-        ? disconnectedIds
-            .map((id) => `${snapshot.providers[id].meta.name} - ${STATUS_PRESENTATION[state.connections[id].status].label}`)
-            .join("   ")
-        : snapshot.windowNote;
 
   return {
     visibleIds,
@@ -149,20 +199,8 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
     enabledCount,
     disconnectedIds,
     hotIds,
-    alertText:
-      liveIds.length === 0
-        ? "○ nothing tracked"
-        : alertCount > 0
-          ? `▲ ${alertCount} ${alertCount > 1 ? "issues" : "issue"}`
-          : "✓ all clear",
-    alertColor:
-      liveIds.length === 0
-        ? COLORS.textFaint
-        : hotIds.length > 0
-          ? COLORS.danger
-          : disconnectedIds.length > 0
-            ? COLORS.warn
-            : COLORS.ok,
+    alertText: alertText(liveIds.length, alertCount),
+    alertColor: alertColor(liveIds.length, hotIds.length, disconnectedIds.length),
     series,
     totals,
     visibleTotal,
@@ -174,6 +212,6 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
     ranked,
     worstId: ranked[0] ?? null,
     bestId: ranked.length > 0 ? (ranked[ranked.length - 1] ?? null) : null,
-    windowNote,
+    windowNote: windowNote(state, snapshot, visibleIds, liveIds, disconnectedIds),
   };
 }

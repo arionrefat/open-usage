@@ -108,12 +108,12 @@ describe("app reducer", () => {
   });
 
   test("changing the default mode does not leave settings", () => {
-    const state = { ...initialState(), view: "settings" as const };
+    const state: AppState = { ...initialState(), view: "settings" };
     expect(reducer(state, { type: "set-mode", mode: "simple" }).view).toBe("settings");
   });
 
   test("cancelling onboarding returns to its originating view", () => {
-    const state = { ...initialState(), view: "settings" as const, screen: "onboarding" as const };
+    const state: AppState = { ...initialState(), view: "settings", screen: "onboarding" };
     const cancelled = reducer(state, { type: "onboarding-cancel" });
 
     expect(cancelled.screen).toBe("app");
@@ -138,14 +138,14 @@ describe("derived state", () => {
     expect(weekly.hotIds).toEqual(["cl"]);
     expect(weekly.alertText).toBe("▲ 2 issues");
 
-    const session = deriveState({ ...initialState(), scope: "session" as const }, snapshot);
+    const session = deriveState({ ...initialState(), scope: "session" }, snapshot);
     expect(session.hotIds).toEqual([]);
     expect(session.alertText).toBe("▲ 1 issue");
   });
 
   test("names the all range 'all time'", () => {
     const snapshot = mockUsageProvider.readSnapshot();
-    expect(deriveState({ ...initialState(), range: "all" as const }, snapshot).rangeName).toBe(
+    expect(deriveState({ ...initialState(), range: "all" }, snapshot).rangeName).toBe(
       "all time",
     );
   });

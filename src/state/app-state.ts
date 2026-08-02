@@ -11,7 +11,7 @@ import {
 
 export type ViewKey = "overview" | "claude" | "codex" | "go" | "settings";
 
-export const VIEW_KEYS: readonly ViewKey[] = ["overview", "claude", "codex", "go", "settings"] as const;
+export const VIEW_KEYS: readonly ViewKey[] = ["overview", "claude", "codex", "go", "settings"];
 
 export const PROVIDER_VIEWS: Record<ProviderId, ViewKey> = { cl: "claude", cx: "codex", go: "go" };
 
@@ -63,9 +63,11 @@ export interface AppStateOptions {
 function picksFromConnections(
   connections: Record<ProviderId, ProviderConnection>,
 ): Record<ProviderId, boolean> {
-  return Object.fromEntries(
-    PROVIDER_IDS.map((id) => [id, connections[id].isEnabled]),
-  ) as Record<ProviderId, boolean>;
+  return {
+    cl: connections.cl.isEnabled,
+    cx: connections.cx.isEnabled,
+    go: connections.go.isEnabled,
+  };
 }
 
 export function createInitialState(options: AppStateOptions): AppState {
@@ -179,9 +181,117 @@ function withConnection(
   };
 }
 
+function moveSelection(
+  state: AppState,
+  delta: number,
+  meta: Record<ProviderId, ProviderMeta>,
+): AppState {
+  const ids = selectableProviders(state, meta);
+  if (ids.length === 0) return { ...state, view: "overview" };
+
+  const currentId = PROVIDER_IDS[state.selection];
+  const currentIndex = currentId ? ids.indexOf(currentId) : -1;
+  const startingIndex = currentIndex >= 0 ? currentIndex : delta > 0 ? -1 : 0;
+  const nextId = ids[wrapIndex(startingIndex, delta, ids.length)]!;
+  return { ...state, view: "overview", selection: PROVIDER_IDS.indexOf(nextId) };
+}
+
+function commitFilter(state: AppState, meta: Record<ProviderId, ProviderMeta>): AppState {
+  const ids = selectableProviders(state, meta);
+  const currentId = PROVIDER_IDS[state.selection];
+  const nextId = currentId && ids.includes(currentId) ? currentId : ids[0];
+  return {
+    ...state,
+    isFiltering: false,
+    selection: nextId ? PROVIDER_IDS.indexOf(nextId) : state.selection,
+  };
+}
+
+function appendCredential(state: AppState, text: string): AppState {
+  if (state.onboarding.typed.length + text.length > MAX_CREDENTIAL_LENGTH) {
+    return {
+      ...state,
+      onboarding: {
+        ...state.onboarding,
+        inputError: "credential exceeds the 16,384 character limit",
+      },
+    };
+  }
+  return {
+    ...state,
+    onboarding: {
+      ...state.onboarding,
+      typed: state.onboarding.typed + text,
+      inputError: null,
+    },
+  };
+}
+
+function pasteInput(state: AppState, text: string): AppState {
+  if (state.screen === "onboarding" && state.onboarding.step === 1) {
+    return appendCredential(state, text.replace(/[\r\n]+/g, ""));
+  }
+  if (state.isFiltering) {
+    return { ...state, filterQuery: state.filterQuery + text.replace(/[\r\n]+/g, " ") };
+  }
+  return state;
+}
+
+function beginOnboardingAuth(state: AppState): AppState {
+  const queue = pickedProviders(state.onboarding.picks);
+  if (queue.length === 0) return state;
+
+  const connections: Record<ProviderId, ProviderConnection> = {
+    cl: { ...state.connections.cl, isEnabled: state.onboarding.picks.cl },
+    cx: { ...state.connections.cx, isEnabled: state.onboarding.picks.cx },
+    go: { ...state.connections.go, isEnabled: state.onboarding.picks.go },
+  };
+  return {
+    ...state,
+    connections,
+    onboarding: {
+      ...state.onboarding,
+      step: 1,
+      index: 0,
+      typed: "",
+      inputError: null,
+    },
+  };
+}
+
+function commitOnboardingCredential(
+  state: AppState,
+  maskedCredential: string | null,
+): AppState {
+  const queue = pickedProviders(state.onboarding.picks);
+  const currentId = queue[Math.min(state.onboarding.index, queue.length - 1)];
+  if (!currentId) return state;
+
+  const connection: ProviderConnection = maskedCredential
+    ? {
+        isEnabled: true,
+        status: "active",
+        credential: maskedCredential,
+        note: "added just now",
+      }
+    : state.connections[currentId];
+  const isLastProvider = state.onboarding.index >= queue.length - 1;
+  return {
+    ...withConnection(state, currentId, connection),
+    onboarding: {
+      ...state.onboarding,
+      typed: "",
+      inputError: null,
+      index: isLastProvider ? state.onboarding.index : state.onboarding.index + 1,
+      step: isLastProvider ? 2 : 1,
+    },
+  };
+}
+
 export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
   return function appReducer(state: AppState, action: AppAction): AppState {
     switch (action.type) {
+      // View, mode, and selection.
       case "set-view":
         return { ...state, view: action.view };
       case "cycle-view":
@@ -202,13 +312,7 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
       case "cycle-range":
         return { ...state, range: RANGE_KEYS[wrapIndex(RANGE_KEYS.indexOf(state.range), 1, RANGE_KEYS.length)]! };
       case "move-selection": {
-        const ids = selectableProviders(state, meta);
-        if (ids.length === 0) return { ...state, view: "overview" };
-        const currentId = PROVIDER_IDS[state.selection];
-        const currentIndex = currentId ? ids.indexOf(currentId) : -1;
-        const startIndex = currentIndex >= 0 ? currentIndex : action.delta > 0 ? -1 : 0;
-        const id = ids[wrapIndex(startIndex, action.delta, ids.length)]!;
-        return { ...state, view: "overview", selection: PROVIDER_IDS.indexOf(id) };
+        return moveSelection(state, action.delta, meta);
       }
       case "select-provider": {
         const index = PROVIDER_IDS.indexOf(action.id);
@@ -216,10 +320,10 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
       }
       case "open-selected": {
         const id = PROVIDER_IDS[state.selection];
-        return id && selectableProviders(state, meta).includes(id)
-          ? { ...state, view: PROVIDER_VIEWS[id] }
-          : state;
+        if (!id || !selectableProviders(state, meta).includes(id)) return state;
+        return { ...state, view: PROVIDER_VIEWS[id] };
       }
+      // Help and provider filtering.
       case "toggle-help":
         return { ...state, isHelpOpen: !state.isHelpOpen, isFiltering: false };
       case "close-help":
@@ -231,51 +335,20 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
       case "filter-backspace":
         return { ...state, filterQuery: state.filterQuery.slice(0, -1) };
       case "filter-commit": {
-        const ids = selectableProviders(state, meta);
-        const current = PROVIDER_IDS[state.selection];
-        const selected = current && ids.includes(current) ? current : ids[0];
-        return {
-          ...state,
-          isFiltering: false,
-          selection: selected ? PROVIDER_IDS.indexOf(selected) : state.selection,
-        };
+        return commitFilter(state, meta);
       }
       case "filter-cancel":
         return { ...state, isFiltering: false, filterQuery: "" };
       case "paste-input":
-        if (state.screen === "onboarding" && state.onboarding.step === 1) {
-          const text = action.text.replace(/[\r\n]+/g, "");
-          if (state.onboarding.typed.length + text.length > MAX_CREDENTIAL_LENGTH) {
-            return {
-              ...state,
-              onboarding: {
-                ...state.onboarding,
-                inputError: "credential exceeds the 16,384 character limit",
-              },
-            };
-          }
-          return {
-            ...state,
-            onboarding: {
-              ...state.onboarding,
-              typed: state.onboarding.typed + text,
-              inputError: null,
-            },
-          };
-        }
-        if (state.isFiltering) {
-          return {
-            ...state,
-            filterQuery: state.filterQuery + action.text.replace(/[\r\n]+/g, " "),
-          };
-        }
-        return state;
+        return pasteInput(state, action.text);
+      // Refresh lifecycle.
       case "refresh-start":
         return { ...state, isRefreshing: true, refreshError: null };
       case "refresh-success":
         return { ...state, isRefreshing: false, refreshError: null };
       case "refresh-failure":
         return { ...state, isRefreshing: false, refreshError: action.message };
+      // Onboarding wizard.
       case "open-onboarding":
         return {
           ...state,
@@ -322,44 +395,10 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
       case "onboarding-select-all":
         return { ...state, onboarding: { ...state.onboarding, picks: { cl: true, cx: true, go: true } } };
       case "onboarding-begin-auth": {
-        const queue = pickedProviders(state.onboarding.picks);
-        if (queue.length === 0) return state;
-        const connections = Object.fromEntries(
-          PROVIDER_IDS.map((id) => [
-            id,
-            { ...state.connections[id], isEnabled: state.onboarding.picks[id] },
-          ]),
-        ) as Record<ProviderId, ProviderConnection>;
-        return {
-          ...state,
-          connections,
-          onboarding: {
-            ...state.onboarding,
-            step: 1,
-            index: 0,
-            typed: "",
-            inputError: null,
-          },
-        };
+        return beginOnboardingAuth(state);
       }
       case "onboarding-append":
-        if (state.onboarding.typed.length + action.text.length > MAX_CREDENTIAL_LENGTH) {
-          return {
-            ...state,
-            onboarding: {
-              ...state.onboarding,
-              inputError: "credential exceeds the 16,384 character limit",
-            },
-          };
-        }
-        return {
-          ...state,
-          onboarding: {
-            ...state.onboarding,
-            typed: state.onboarding.typed + action.text,
-            inputError: null,
-          },
-        };
+        return appendCredential(state, action.text);
       case "onboarding-backspace":
         return {
           ...state,
@@ -375,33 +414,13 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
           onboarding: { ...state.onboarding, inputError: action.message },
         };
       case "onboarding-commit": {
-        const queue = pickedProviders(state.onboarding.picks);
-        const current = queue[Math.min(state.onboarding.index, queue.length - 1)];
-        if (!current) return state;
-        const connection: ProviderConnection = action.maskedCredential
-          ? {
-              isEnabled: true,
-              status: "active",
-              credential: action.maskedCredential,
-              note: "added just now",
-            }
-          : state.connections[current];
-        const isLast = state.onboarding.index >= queue.length - 1;
-        return {
-          ...withConnection(state, current, connection),
-          onboarding: {
-            ...state.onboarding,
-            typed: "",
-            inputError: null,
-            index: isLast ? state.onboarding.index : state.onboarding.index + 1,
-            step: isLast ? 2 : 1,
-          },
-        };
+        return commitOnboardingCredential(state, action.maskedCredential);
       }
       case "onboarding-finish":
         return { ...state, screen: "app", view: "overview" };
       case "onboarding-cancel":
         return { ...state, screen: "app" };
+      // Settings cursor and connections.
       case "settings-move":
         return {
           ...state,

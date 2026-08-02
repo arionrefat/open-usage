@@ -31,23 +31,31 @@ function mergeCells(cells: Cell[]): ChartSegment[] {
   return segments;
 }
 
-/** Linearly resamples a series onto exactly `width` columns. */
-function resample(values: number[], width: number): number[] {
-  if (width <= 0) return [];
-  if (values.length === width) return values.slice();
-  if (values.length === 0) return new Array(width).fill(0);
-  if (values.length === 1 || width === 1) return new Array(width).fill(values[0] ?? 0);
-
-  const out: number[] = [];
-  for (let i = 0; i < width; i++) {
-    const x = (i * (values.length - 1)) / (width - 1);
-    const lower = Math.floor(x);
-    const upper = Math.min(values.length - 1, lower + 1);
-    const a = values[lower] ?? 0;
-    const b = values[upper] ?? 0;
-    out.push(a + (b - a) * (x - lower));
+/** Interpolates a series onto exactly `targetWidth` columns. */
+function resampleIntoBuckets(values: number[], targetWidth: number): number[] {
+  if (targetWidth <= 0) return [];
+  if (values.length === targetWidth) return values.slice();
+  if (values.length === 0) return new Array(targetWidth).fill(0);
+  if (values.length === 1 || targetWidth === 1) {
+    return new Array(targetWidth).fill(values[0] ?? 0);
   }
-  return out;
+
+  const buckets: number[] = [];
+  for (let bucketIndex = 0; bucketIndex < targetWidth; bucketIndex++) {
+    const sourcePosition = (bucketIndex * (values.length - 1)) / (targetWidth - 1);
+    const lowerIndex = Math.floor(sourcePosition);
+    const upperIndex = Math.min(values.length - 1, lowerIndex + 1);
+    const lowerValue = values[lowerIndex] ?? 0;
+    const upperValue = values[upperIndex] ?? 0;
+    const fractionBetweenValues = sourcePosition - lowerIndex;
+    buckets.push(lowerValue + (upperValue - lowerValue) * fractionBetweenValues);
+  }
+  return buckets;
+}
+
+function filledRowCount(value: number, maximum: number, height: number): number {
+  if (value <= 0) return 0;
+  return Math.max(1, Math.round((value / maximum) * height));
 }
 
 /**
@@ -56,7 +64,7 @@ function resample(values: number[], width: number): number[] {
  */
 export function bars(values: number[], width: number, height: number, color: string): ChartRow[] {
   if (width <= 0 || height <= 0) return [];
-  const points = values.length > width ? resample(values, width) : values;
+  const points = values.length > width ? resampleIntoBuckets(values, width) : values;
   const count = points.length;
   if (count === 0) {
     return Array.from({ length: height }, () => ({
@@ -74,11 +82,12 @@ export function bars(values: number[], width: number, height: number, color: str
 
   for (let row = 0; row < height; row++) {
     const cells: Cell[] = [];
-    points.forEach((value, i) => {
-      const filled = value > 0 ? Math.max(1, Math.round((value / max) * height)) : 0;
-      const isOn = row >= height - filled;
+    points.forEach((value, pointIndex) => {
+      const filledRows = filledRowCount(value, max, height);
+      const isOn = row >= height - filledRows;
       const cell: Cell = { char: isOn ? "█" : " ", color: isOn ? color : COLORS.bg };
-      for (let z = 0; z < (barWidths[i] ?? 0); z++) cells.push(cell);
+      const barWidth = barWidths[pointIndex] ?? 0;
+      for (let column = 0; column < barWidth; column++) cells.push(cell);
     });
     rows.push({ segments: mergeCells(cells) });
   }
@@ -117,6 +126,17 @@ function centerPad(text: string, width: number): string {
   return " ".repeat(left) + text + " ".repeat(Math.max(0, width - text.length - left));
 }
 
+function planBarHeight(value: number | null): number {
+  if (value === null || value <= 0) return 0;
+  return Math.max(1, Math.round((value / 100) * PLAN_HEIGHT));
+}
+
+function planTick(row: number): string {
+  if (row === 0) return "100";
+  if (row === Math.round(PLAN_HEIGHT / 2) - 1) return " 50";
+  return "   ";
+}
+
 /** Fixed-geometry percent chart: 10 rows, 8-wide bars, 5-wide gaps, % ticks. */
 export function planChart(items: PlanChartItem[]): PlanChart {
   const rows: ChartRow[] = [];
@@ -124,17 +144,12 @@ export function planChart(items: PlanChartItem[]): PlanChart {
     const cells: Cell[] = [];
     items.forEach((item, i) => {
       if (i) for (let z = 0; z < PLAN_GAP; z++) cells.push({ char: " ", color: COLORS.bg });
-      const filled =
-        item.value === null
-          ? 0
-          : item.value > 0
-            ? Math.max(1, Math.round((item.value / 100) * PLAN_HEIGHT))
-            : 0;
+      const filled = planBarHeight(item.value);
       const isOn = row >= PLAN_HEIGHT - filled;
       const cell: Cell = { char: isOn ? "█" : " ", color: isOn ? item.color : COLORS.bg };
       for (let z = 0; z < PLAN_BAR_WIDTH; z++) cells.push(cell);
     });
-    const tick = row === 0 ? "100" : row === Math.round(PLAN_HEIGHT / 2) - 1 ? " 50" : "   ";
+    const tick = planTick(row);
     rows.push({
       segments: [{ text: `${tick} │`, color: COLORS.textDisabled }, ...mergeCells(cells)],
     });
@@ -167,8 +182,13 @@ export function planChart(items: PlanChartItem[]): PlanChart {
 /** Single-line sparkline using the eighth-block ramp. */
 export function sparkline(values: number[], width: number): string {
   const max = Math.max(1, ...values);
-  return resample(values, width)
-    .map((value) => BLOCK_RAMP[Math.max(0, Math.min(8, Math.round((value / max) * 8)))])
+  const highestRampIndex = BLOCK_RAMP.length - 1;
+  return resampleIntoBuckets(values, width)
+    .map((value) => {
+      const scaledRampIndex = Math.round((value / max) * highestRampIndex);
+      const rampIndex = Math.max(0, Math.min(highestRampIndex, scaledRampIndex));
+      return BLOCK_RAMP[rampIndex];
+    })
     .join("");
 }
 
