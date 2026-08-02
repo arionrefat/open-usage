@@ -11,7 +11,7 @@ import {
 import { isProviderLive, type AppState } from "../state/app-state";
 import type { DerivedState } from "../state/derive";
 import { DetailLimitMeter } from "../components/limit-meter";
-import { Chart, Line, Rule, SplitLine, Spacer, TripleLine, type Segment } from "../components/primitives";
+import { Chart, Line, SplitLine, Spacer, type Segment } from "../components/primitives";
 
 /** The design plots 8 chart rows; shorter terminals fall back to the clamp. */
 
@@ -86,12 +86,22 @@ function StaleBanner({ id, state, width }: { id: ProviderId; state: AppState; wi
 }
 
 const DETAIL_BAR_WIDTH = 12;
+const DETAIL_COLUMN_GAP = 2;
+const DETAIL_COLUMN_COUNT = 3;
+const DETAIL_WIDE_MINIMUM = 110;
+const DETAIL_STACKED_WIDTH = 60;
 
-function Details({ sections, width, color }: { sections: DetailSection[]; width: number; color: string }) {
-  const visibleSections = sections.filter((section) => section.rows.length > 0);
-  return visibleSections.map((section, sectionIndex) => (
-    <box key={`${section.title}-${sectionIndex}`} flexDirection="column" flexShrink={0}>
-      {sectionIndex > 0 ? <Spacer /> : null}
+function DetailSectionColumn({
+  section,
+  width,
+  color,
+}: {
+  section: DetailSection;
+  width: number;
+  color: string;
+}) {
+  return (
+    <box flexDirection="column" flexShrink={0} width={width}>
       <Line
         width={width}
         segments={[{ text: section.title, color: COLORS.textMuted, isBold: true }]}
@@ -120,6 +130,40 @@ function Details({ sections, width, color }: { sections: DetailSection[]; width:
         );
       })}
     </box>
+  );
+}
+
+function Details({ sections, width, color }: { sections: DetailSection[]; width: number; color: string }) {
+  const visibleSections = sections.filter((section) => section.rows.length > 0);
+  if (width < DETAIL_WIDE_MINIMUM) {
+    const stackedWidth = Math.min(width, DETAIL_STACKED_WIDTH);
+    return visibleSections.map((section, sectionIndex) => (
+      <box key={`${section.title}-${sectionIndex}`} flexDirection="column" flexShrink={0}>
+        {sectionIndex > 0 ? <Spacer /> : null}
+        <DetailSectionColumn section={section} width={stackedWidth} color={color} />
+      </box>
+    ));
+  }
+
+  const bands: DetailSection[][] = [];
+  for (let index = 0; index < visibleSections.length; index += DETAIL_COLUMN_COUNT) {
+    bands.push(visibleSections.slice(index, index + DETAIL_COLUMN_COUNT));
+  }
+  const columnWidth = Math.floor(
+    (width - DETAIL_COLUMN_GAP * (DETAIL_COLUMN_COUNT - 1)) / DETAIL_COLUMN_COUNT,
+  );
+  return bands.map((band, bandIndex) => (
+    <box key={`detail-band-${bandIndex}`} flexDirection="column" flexShrink={0}>
+      {bandIndex > 0 ? <Spacer /> : null}
+      <box flexDirection="row" flexShrink={0}>
+        {band.map((section, sectionIndex) => (
+          <box key={`${section.title}-${sectionIndex}`} flexDirection="row" flexShrink={0}>
+            {sectionIndex > 0 ? <box width={DETAIL_COLUMN_GAP} flexShrink={0} /> : null}
+            <DetailSectionColumn section={section} width={columnWidth} color={color} />
+          </box>
+        ))}
+      </box>
+    </box>
   ));
 }
 
@@ -135,6 +179,14 @@ export function ProviderDetail({
   const isStale = !isProviderLive(state.connections[id]);
   const limits = provider.limits.filter((limit) => !limit.isCardOnly);
   const series = derived.series[id];
+  const chartWidth = Math.max(0, width - 2);
+  const chartRows = bars(series, chartWidth, chartHeight, PROVIDER_COLORS[id]).map((row) => ({
+    segments: [
+      { text: "│", color: COLORS.borderPanel },
+      ...row.segments,
+      { text: "│", color: COLORS.borderPanel },
+    ],
+  }));
 
   return (
     <box flexDirection="column" flexShrink={0}>
@@ -175,15 +227,32 @@ export function ProviderDetail({
       ) : null}
 
       <Spacer />
-      <Line segments={[{ text: `tokens ${derived.rangeName}`, color: COLORS.textMuted, isBold: true }]} />
-      <Spacer />
-      <Chart rows={bars(series, width, chartHeight, PROVIDER_COLORS[id])} />
-      <Rule width={width} />
-      <TripleLine
+      <SplitLine
         width={width}
-        left={[{ text: derived.axis[0], color: COLORS.textGhost }]}
-        center={[{ text: `peak ${formatTokens(Math.max(0, ...series))}`, color: COLORS.textGhost }]}
-        right={[{ text: derived.axis[2], color: COLORS.textGhost }]}
+        left={[
+          { text: "┌─ ", color: COLORS.borderPanel },
+          { text: `tokens ${derived.rangeName} `, color: COLORS.textMuted, isBold: true },
+        ]}
+        right={[
+          { text: ` peak ${formatTokens(Math.max(0, ...series))} `, color: COLORS.textGhost },
+          { text: "─┐", color: COLORS.borderPanel },
+        ]}
+        filler="─"
+        fillerColor={COLORS.borderPanel}
+      />
+      <Chart rows={chartRows} />
+      <SplitLine
+        width={width}
+        left={[
+          { text: "└─ ", color: COLORS.borderPanel },
+          { text: `${derived.axis[0]} `, color: COLORS.textGhost },
+        ]}
+        right={[
+          { text: ` ${derived.axis[2]} `, color: COLORS.textGhost },
+          { text: "─┘", color: COLORS.borderPanel },
+        ]}
+        filler="─"
+        fillerColor={COLORS.borderPanel}
       />
 
       {provider.details?.some((section) => section.rows.length > 0) ? (
