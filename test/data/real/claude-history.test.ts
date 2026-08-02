@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { historyStatsFromLines, parseHistoryLine } from "./claude-history";
+import { historyStatsFromLines, parseHistoryLine } from "../../../src/data/real/claude-history";
 
 describe("parseHistoryLine", () => {
   test("reads timestamp and session id", () => {

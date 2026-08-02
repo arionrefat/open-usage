@@ -3,18 +3,18 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { COLORS } from "../theme";
-import { DAY_MS, HOUR_MS } from "./real/aggregate";
-import { stubCodexLimitsSource } from "./real/codex-limits";
-import { dormantGoLimitsSource } from "./real/go-limits-source";
-import { PROVIDER_IDS } from "./types";
+import { COLORS } from "../../src/theme";
+import { DAY_MS, HOUR_MS } from "../../src/data/real/aggregate";
+import { stubCodexLimitsSource } from "../../src/data/real/codex-limits";
+import { dormantGoLimitsSource } from "../../src/data/real/go-limits-source";
+import { PROVIDER_IDS } from "../../src/data/types";
 import {
   createRealUsageProvider,
   hasRealSources,
   selectUsageProvider,
   type RealProviderPaths,
-} from "./real-provider";
-import { mockUsageProvider } from "./mock-provider";
+} from "../../src/data/real-provider";
+import { mockUsageProvider } from "../../src/data/mock-provider";
 
 const MISSING_PATHS: RealProviderPaths = {
   opencodeDb: "/nonexistent/opencode.db",

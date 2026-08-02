@@ -7,8 +7,8 @@ import {
   cookieExpiryMs,
   createGoLimitsSource,
   readCookie,
-} from "./go-limits-source";
-import { OpencodeServerError, type GoServerLimits } from "./opencode-server";
+} from "../../../src/data/real/go-limits-source";
+import { OpencodeServerError, type GoServerLimits } from "../../../src/data/real/opencode-server";
 
 function tempConfigFile(contents: string): string {
   const dir = mkdtempSync(join(tmpdir(), "limitless-config-"));

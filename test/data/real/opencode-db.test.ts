@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readOpencodeUsage, usageFromRows } from "./opencode-db";
+import { readOpencodeUsage, usageFromRows } from "../../../src/data/real/opencode-db";
 
 describe("usageFromRows", () => {
   test("groups hour rows by provider", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { aggregateTranscriptLines, parseTranscriptLine } from "./claude-transcripts";
+import { aggregateTranscriptLines, parseTranscriptLine } from "../../../src/data/real/claude-transcripts";
 
 const ASSISTANT_LINE = JSON.stringify({
   type: "assistant",

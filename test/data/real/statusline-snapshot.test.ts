@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createWeeklyTrend, parseUsageSnapshot } from "./statusline-snapshot";
+import { createWeeklyTrend, parseUsageSnapshot } from "../../../src/data/real/statusline-snapshot";
 
 const HOUR_MS = 3_600_000;
 

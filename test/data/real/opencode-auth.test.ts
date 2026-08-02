@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseOpencodeAuth, readOpencodeAuth } from "./opencode-auth";
+import { parseOpencodeAuth, readOpencodeAuth } from "../../../src/data/real/opencode-auth";
 
 describe("parseOpencodeAuth", () => {
   test("reads oauth expiry and masks the api key", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { CodexProbeError, type CodexAccountLimits } from "./codex-app-server";
-import { createCodexLimitsSource } from "./codex-limits";
+import { CodexProbeError, type CodexAccountLimits } from "../../../src/data/real/codex-app-server";
+import { createCodexLimitsSource } from "../../../src/data/real/codex-limits";
 
 function limits(fetchedAtMs: number): CodexAccountLimits {
   return {

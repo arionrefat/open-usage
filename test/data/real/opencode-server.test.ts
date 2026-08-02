@@ -6,7 +6,7 @@ import {
   isSignedOut,
   parseSubscription,
   parseWorkspaceId,
-} from "./opencode-server";
+} from "../../../src/data/real/opencode-server";
 
 /** Verbatim response shapes from CodexBar's parser fixtures. */
 const WORKSPACE_JS =

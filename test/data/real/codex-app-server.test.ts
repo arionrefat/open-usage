@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseAccountPlan, parseRateLimits, parseUsageHistory } from "./codex-app-server";
+import { parseAccountPlan, parseRateLimits, parseUsageHistory } from "../../../src/data/real/codex-app-server";
 
 /** Captured verbatim from `account/rateLimits/read` on codex-cli 0.146.0. */
 const LIVE_RESPONSE = {

@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { HOUR_MS, DAY_MS } from "./aggregate";
+import { HOUR_MS, DAY_MS } from "../../../src/data/real/aggregate";
 import {
   GO_SESSION_MS,
   goSpendFrom,
   readGoSpend,
   spendFromRows,
   type SpendEvent,
-} from "./opencode-go-spend";
+} from "../../../src/data/real/opencode-go-spend";
 
 const NOW = new Date("2026-08-15T12:00:00Z");
 const NOW_MS = NOW.getTime();

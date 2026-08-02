@@ -9,7 +9,7 @@ import {
   seriesFromBuckets,
   tokensPerHour,
   type HourBuckets,
-} from "./aggregate";
+} from "../../../src/data/real/aggregate";
 
 const NOW = new Date(2026, 6, 30, 14, 30); // local Jul 30 2026, 14:30
 

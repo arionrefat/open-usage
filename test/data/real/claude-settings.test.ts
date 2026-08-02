@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hasStatuslineConfigured } from "./claude-settings";
+import { hasStatuslineConfigured } from "../../../src/data/real/claude-settings";
 
 function settingsFile(contents: string): string {
   const dir = mkdtempSync(join(tmpdir(), "limitless-settings-"));
