@@ -3,14 +3,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ProviderMode } from "../lib/args";
 import { COLORS } from "../theme";
-import { maskCredential } from "./mask";
 import { mockUsageProvider } from "./mock-provider";
-import { DAY_MS, dailyDateKeys, formatAge, formatCountdown, type HourBuckets } from "./real/aggregate";
+import { DAY_MS, dailyDateKeys, formatAge, type HourBuckets } from "./real/aggregate";
 import { buildClaudeProvider, createClaudeMeta } from "./real/claude-provider";
+import { createClaudeAuthSource, type ClaudeAuthSource } from "./real/claude-auth";
 import { readHistoryStats } from "./real/claude-history";
 import { hasStatuslineConfigured } from "./real/claude-settings";
 import { readClaudeTranscripts } from "./real/claude-transcripts";
+import { createClaudeLimitsSource, type ClaudeLimitsSource } from "./real/claude-usage";
 import { buildCodexProvider, codexWindowNote, createCodexMeta } from "./real/codex-provider";
+import { readCodexSessions } from "./real/codex-sessions";
 import { createCodexLimitsSource, type CodexLimitsSource } from "./real/codex-limits";
 import { buildGoProvider, createGoMeta } from "./real/go-provider";
 import { createGoLimitsSource, type GoLimitsSource } from "./real/go-limits-source";
@@ -28,6 +30,7 @@ import type {
   ProviderConnection,
   ProviderId,
   ProviderMeta,
+  RefreshRequest,
   UsageProvider,
   UsageSnapshot,
 } from "./types";
@@ -40,57 +43,65 @@ export interface RealProviderPaths {
   claudeHistory: string;
   claudeSettings: string;
   usageSnapshot: string;
+  codexHome: string;
 }
 
 export function defaultRealProviderPaths(): RealProviderPaths {
   const home = homedir();
+  const opencodeData = join(home, ".local", "share", "opencode");
+  // Both CLIs document these overrides; relative OPENCODE_DB names resolve
+  // under the opencode data directory.
+  const opencodeDbEnv = process.env.OPENCODE_DB?.trim();
+  const codexHomeEnv = process.env.CODEX_HOME?.trim();
   return {
-    opencodeDb: join(home, ".local", "share", "opencode", "opencode.db"),
-    opencodeAuth: join(home, ".local", "share", "opencode", "auth.json"),
+    opencodeDb: opencodeDbEnv
+      ? opencodeDbEnv.startsWith("/")
+        ? opencodeDbEnv
+        : join(opencodeData, opencodeDbEnv)
+      : join(opencodeData, "opencode.db"),
+    opencodeAuth: join(opencodeData, "auth.json"),
     configFile: join(home, ".config", "limitless", "config.json"),
     claudeProjects: join(home, ".claude", "projects"),
     claudeHistory: join(home, ".claude", "history.jsonl"),
     claudeSettings: join(home, ".claude", "settings.json"),
     usageSnapshot: join(home, ".claude", "usage-snapshot.json"),
+    codexHome: codexHomeEnv || join(home, ".codex"),
   };
 }
 
 export function hasRealSources(paths: RealProviderPaths): boolean {
-  return existsSync(paths.opencodeDb) || existsSync(paths.claudeProjects);
+  return existsSync(paths.opencodeDb) || existsSync(paths.claudeProjects) || existsSync(paths.codexHome);
 }
 
 const STATS_WINDOW_DAYS = 30;
 
-function buildMeta(auth: OpencodeAuth): Record<ProviderId, ProviderMeta> {
+function buildMeta(): Record<ProviderId, ProviderMeta> {
   return {
     cl: createClaudeMeta(),
     cx: createCodexMeta(),
-    go: createGoMeta(auth),
+    go: createGoMeta(),
   };
 }
 
 function claudeConnectionNote(snapshotFile: SnapshotFile | null, hasStatusline: boolean): string {
-  if (!snapshotFile) return hasStatusline ? "no statusline snapshot yet" : "no statusline configured";
+  if (!snapshotFile) {
+    return hasStatusline
+      ? "live limits via claude cli; no statusline snapshot yet"
+      : "live limits via claude cli";
+  }
   const age = formatAge(snapshotFile.ageMs);
   return snapshotFile.ageMs < SNAPSHOT_FRESH_MS
     ? `statusline snapshot ${age === "just now" ? "just written" : `${age} old`}`
-    : `snapshot ${age} old - open a claude code session`;
+    : `live limits via claude cli; statusline snapshot ${age} old`;
 }
 
 function buildConnections(
   paths: RealProviderPaths,
   auth: OpencodeAuth,
   snapshotFile: SnapshotFile | null,
-  nowMs: number,
 ): Record<ProviderId, ProviderConnection> {
   const hasClaude = existsSync(paths.claudeProjects) || existsSync(paths.claudeHistory);
-  const openaiNote = auth.openai
-    ? auth.openai.expiresMs !== null && auth.openai.expiresMs < nowMs
-      ? "access token expired - refreshes on next opencode run"
-      : auth.openai.expiresMs !== null
-        ? `access token expires in ${formatCountdown(auth.openai.expiresMs - nowMs)}`
-        : "oauth token on file"
-    : "no openai oauth in opencode auth.json";
+  const hasCodex = existsSync(paths.codexHome);
 
   return {
     cl: hasClaude
@@ -101,9 +112,19 @@ function buildConnections(
           note: claudeConnectionNote(snapshotFile, hasStatuslineConfigured(paths.claudeSettings)),
         }
       : { isEnabled: true, status: "none", credential: "", note: "claude code not found" },
-    cx: auth.openai
-      ? { isEnabled: true, status: "active", credential: "oauth · openai", note: openaiNote }
-      : { isEnabled: true, status: "none", credential: "", note: openaiNote },
+    cx: hasCodex
+      ? {
+          isEnabled: true,
+          status: "active",
+          credential: "oauth · codex cli",
+          note: "live account data loads with manual refresh",
+        }
+      : {
+          isEnabled: true,
+          status: "none",
+          credential: "",
+          note: "codex cli not signed in",
+        },
     go: auth.opencodeGo
       ? {
           isEnabled: true,
@@ -119,6 +140,8 @@ interface RealProviderOptions {
   paths?: RealProviderPaths;
   codexLimits?: CodexLimitsSource;
   goLimits?: GoLimitsSource;
+  claudeLimits?: ClaudeLimitsSource;
+  claudeAuth?: ClaudeAuthSource;
 }
 
 function providerBuckets(
@@ -137,9 +160,11 @@ function latestSourceTimestamp(nowMs: number, timestamps: number[]): number {
 function buildSnapshot(
   paths: RealProviderPaths,
   meta: Record<ProviderId, ProviderMeta>,
+  claudeLimits: ClaudeLimitsSource,
   codexLimits: CodexLimitsSource,
   goLimits: GoLimitsSource,
   trend: WeeklyTrend,
+  claudeAuth: ClaudeAuthSource,
 ): UsageSnapshot {
   const now = new Date();
   const nowMs = now.getTime();
@@ -153,15 +178,28 @@ function buildSnapshot(
     transcripts,
     history,
     snapshotFile,
+    limitsSource: claudeLimits,
     hasStatusline: hasStatuslineConfigured(paths.claudeSettings),
     trend,
     dates,
     now,
+    authSource: claudeAuth,
   });
+  // Native rollout files see every codex session on this device; opencode.db
+  // only sees what opencode itself sent to an "openai" provider, so it is
+  // merely a fallback.
+  const codexLocal = readCodexSessions(paths.codexHome, now);
   const cx = buildCodexProvider({
     meta: meta.cx,
-    buckets: providerBuckets(opencode, "openai"),
-    stats: opencode?.stats.get("openai"),
+    buckets: codexLocal?.buckets ?? providerBuckets(opencode, "openai"),
+    stats: codexLocal
+      ? {
+          sessions: codexLocal.sessions,
+          tokens: codexLocal.tokens,
+          latestMs: codexLocal.latestMs,
+          topModel: codexLocal.topModel,
+        }
+      : opencode?.stats.get("openai"),
     limitsSource: codexLimits,
     dates,
     now,
@@ -177,6 +215,9 @@ function buildSnapshot(
     now,
   });
   const fetchedAt = latestSourceTimestamp(nowMs, [
+    claudeLimits.read()?.fetchedAtMs ?? 0,
+    codexLimits.read()?.fetchedAtMs ?? 0,
+    goLimits.read()?.fetchedAtMs ?? 0,
     opencode?.latestMs ?? 0,
     transcripts.latestMs,
     history.latestMs,
@@ -202,9 +243,11 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
   const paths = options.paths ?? defaultRealProviderPaths();
   const codexLimits = options.codexLimits ?? createCodexLimitsSource();
   const goLimits = options.goLimits ?? createGoLimitsSource(paths.configFile);
+  const claudeLimits = options.claudeLimits ?? createClaudeLimitsSource();
+  const claudeAuth = options.claudeAuth ?? createClaudeAuthSource();
   const trend = createWeeklyTrend();
-  const meta = buildMeta(readOpencodeAuth(paths.opencodeAuth));
-  let snapshot = buildSnapshot(paths, meta, codexLimits, goLimits, trend);
+  const meta = buildMeta();
+  let snapshot = buildSnapshot(paths, meta, claudeLimits, codexLimits, goLimits, trend, claudeAuth);
 
   return {
     scopeTitles: { session: "current session", weekly: "weekly limit" },
@@ -214,10 +257,10 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
         paths,
         readOpencodeAuth(paths.opencodeAuth),
         readUsageSnapshot(paths.usageSnapshot, new Date()),
-        Date.now(),
       ),
     readSnapshot: () => snapshot,
-    refresh: async (signal) => {
+    refresh: async (request: RefreshRequest) => {
+      const signal = request.signal;
       if (signal?.aborted) {
         throw signal.reason instanceof Error
           ? signal.reason
@@ -226,19 +269,24 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
       // Network limits refresh their cache first; a failure there must not
       // sink the local read, which is the source of truth for everything else.
       const at = new Date();
-      await Promise.all([
-        goLimits.poll(at, signal).catch(() => undefined),
-        codexLimits.poll(at, signal).catch(() => undefined),
-      ]);
+      const providerIds = new Set(request.providerIds);
+      const pollOptions = { signal, force: request.reason === "manual" };
+      await Promise.all(
+        [
+          providerIds.has("cl") ? claudeLimits.poll(at, pollOptions) : null,
+          providerIds.has("cl") ? claudeAuth.poll(at, pollOptions) : null,
+          providerIds.has("go") ? goLimits.poll(at, pollOptions) : null,
+          providerIds.has("cx") ? codexLimits.poll(at, pollOptions) : null,
+        ].map((poll) => poll?.catch(() => undefined)),
+      );
       if (signal?.aborted) {
         throw signal.reason instanceof Error
           ? signal.reason
           : new DOMException("Refresh aborted", "AbortError");
       }
-      snapshot = buildSnapshot(paths, meta, codexLimits, goLimits, trend);
+      snapshot = buildSnapshot(paths, meta, claudeLimits, codexLimits, goLimits, trend, claudeAuth);
       return snapshot;
     },
-    maskCredential,
   };
 }
 
@@ -264,7 +312,7 @@ function withFallbackNote(base: UsageProvider): UsageProvider {
   return {
     ...base,
     readSnapshot: () => patch(base.readSnapshot()),
-    refresh: (signal) => base.refresh(signal).then(patch),
+    refresh: (request) => base.refresh(request).then(patch),
   };
 }
 

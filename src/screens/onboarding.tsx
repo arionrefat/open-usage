@@ -1,4 +1,4 @@
-import { APP_NAME, POLL_INTERVAL_SECONDS } from "../config";
+import { APP_NAME } from "../config";
 import { padEnd } from "../lib/text";
 import { COLORS, PROVIDER_COLORS } from "../theme";
 import { PROVIDER_IDS, STATUS_PRESENTATION, type ProviderId, type UsageSnapshot } from "../data/types";
@@ -6,16 +6,15 @@ import { isProviderLive, type AppState } from "../state/app-state";
 import type { AppActions } from "../state/actions";
 import { KeyLegend } from "../components/chrome";
 import { Line, Rule, SplitLine, Spacer } from "../components/primitives";
+import { toggleSegments } from "../components/toggle";
 
 const NAME_COLUMN = 20;
 const STATUS_COLUMN = 24;
-const CREDENTIAL_FIELD_WIDTH = 70;
 
 interface OnboardingProps {
   state: AppState;
   snapshot: UsageSnapshot;
   width: number;
-  isCursorVisible: boolean;
   actions: AppActions;
 }
 
@@ -79,6 +78,29 @@ function PickStep({ state, snapshot, width, actions }: OnboardingProps) {
         );
       })}
       <Spacer />
+      <Line
+        segments={[
+          { text: "refresh codex on startup  ", color: COLORS.textFaint },
+          ...toggleSegments(
+            [
+              { label: "off", value: false },
+              { label: "on", value: true },
+            ],
+            state.refreshCodexOnStartup,
+            actions.setRefreshCodexOnStartup,
+          ),
+          { text: "  c toggles", color: COLORS.textGhost },
+        ]}
+      />
+      <Line
+        segments={[
+          {
+            text: "off keeps Codex fully manual; r still fetches live account data",
+            color: COLORS.textGhost,
+          },
+        ]}
+      />
+      <Spacer />
       <Line segments={[{ text: `${picked.length} of 3 selected`, color: COLORS.textDim }]} />
       <Spacer />
       <Rule width={width} />
@@ -88,6 +110,7 @@ function PickStep({ state, snapshot, width, actions }: OnboardingProps) {
           ["j/k", "move"],
           ["space", "toggle"],
           ["a", "select all"],
+          ["c", "codex startup"],
           ["esc", "cancel"],
         ]}
         right={[
@@ -98,69 +121,6 @@ function PickStep({ state, snapshot, width, actions }: OnboardingProps) {
             isBold: true,
             onClick: () => actions.onboardingContinue(),
           },
-        ]}
-      />
-    </box>
-  );
-}
-
-function AuthStep({ state, snapshot, width, isCursorVisible }: OnboardingProps) {
-  const picked = pickedProviders(state);
-  const currentId = picked[Math.min(state.onboarding.index, Math.max(0, picked.length - 1))] ?? "cl";
-  const meta = snapshot.providers[currentId].meta;
-  const fieldWidth = Math.max(1, Math.min(CREDENTIAL_FIELD_WIDTH, width));
-  const inputWidth = Math.max(0, fieldWidth - 5);
-  const maskedInput = "•".repeat(Math.min([...state.onboarding.typed].length, inputWidth));
-
-  return (
-    <box flexDirection="column" flexShrink={0}>
-      <SplitLine
-        width={width}
-        left={[
-          { text: "▎", color: PROVIDER_COLORS[currentId] },
-          { text: `connect ${meta.name}`, color: COLORS.textBright, isBold: true },
-        ]}
-        right={[
-          { text: `${state.onboarding.index + 1} / ${picked.length}`, color: COLORS.textGhost },
-        ]}
-      />
-      <Line segments={[{ text: `needs ${meta.requirement}`, color: COLORS.textFaint }]} />
-      <Spacer />
-      <Line segments={[{ text: "paste credential", color: COLORS.textDim }]} />
-      <box
-        flexShrink={0}
-        width={fieldWidth}
-        border
-        borderColor={COLORS.borderChip}
-        backgroundColor={COLORS.bgInput}
-        paddingLeft={1}
-        paddingRight={1}
-      >
-        <Line
-          background={COLORS.bgInput}
-          segments={[
-            { text: "▸ ", color: PROVIDER_COLORS[currentId], background: COLORS.bgInput },
-            { text: maskedInput, color: COLORS.text, background: COLORS.bgInput },
-            { text: isCursorVisible ? "█" : " ", color: COLORS.text, background: COLORS.bgInput },
-          ]}
-        />
-      </box>
-      <Line
-        segments={[
-          {
-            text: state.onboarding.inputError ?? "masked in memory for this session",
-            color: state.onboarding.inputError ? COLORS.danger : COLORS.textGhost,
-          },
-        ]}
-      />
-      <Line segments={[{ text: `will read from ${meta.source}`, color: COLORS.textGhost }]} />
-      <Spacer />
-      <Rule width={width} />
-      <KeyLegend
-        width={width}
-        hints={[
-          ["↵", "save and continue"],
-          ["esc", "skip this provider"],
         ]}
       />
     </box>
@@ -210,12 +170,30 @@ function SummaryStep({ state, snapshot, width, actions }: OnboardingProps) {
         );
       })}
       <Spacer />
+      <Line
+        segments={[
+          { text: "codex startup refresh  ", color: COLORS.textFaint },
+          {
+            text: state.refreshCodexOnStartup ? "on" : "off - manual with r",
+            color: state.refreshCodexOnStartup ? COLORS.ok : COLORS.textMuted,
+          },
+        ]}
+      />
+      <Line
+        segments={[
+          {
+            text: "provider logins stay in their own CLIs; Limitless never asks for tokens",
+            color: COLORS.textGhost,
+          },
+        ]}
+      />
+      <Spacer />
       <Rule width={width} />
       <SplitLine
         width={width}
         left={[
           {
-            text: `polling starts immediately · ${POLL_INTERVAL_SECONDS}s interval`,
+            text: "selected providers are detected automatically",
             color: COLORS.textGhost,
           },
         ]}
@@ -256,12 +234,11 @@ export function Onboarding(props: OnboardingProps) {
           { text: " ▏ ", color: COLORS.rule },
           { text: "first run", color: COLORS.textFaint },
         ]}
-        right={[{ text: `step ${state.onboarding.step + 1} of 3`, color: COLORS.textGhost }]}
+        right={[{ text: `step ${state.onboarding.step + 1} of 2`, color: COLORS.textGhost }]}
       />
       <Spacer />
       {state.onboarding.step === 0 ? <PickStep {...props} width={width} /> : null}
-      {state.onboarding.step === 1 ? <AuthStep {...props} width={width} /> : null}
-      {state.onboarding.step === 2 ? <SummaryStep {...props} width={width} /> : null}
+      {state.onboarding.step === 1 ? <SummaryStep {...props} width={width} /> : null}
     </scrollbox>
   );
 }

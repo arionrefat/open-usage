@@ -59,7 +59,7 @@ function windowFrom(value: unknown): RateWindowReading | null {
   if (!isRecord(value)) return null;
   const percent = value.used_percentage;
   if (typeof percent !== "number" || !Number.isFinite(percent)) return null;
-  return { percent: Math.max(0, percent), resetsAtMs: epochToMs(value.resets_at) };
+  return { percent: Math.min(100, Math.max(0, percent)), resetsAtMs: epochToMs(value.resets_at) };
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -138,10 +138,7 @@ export interface WeeklyTrend {
   observe(atMs: number, percent: number): number | null;
 }
 
-/**
- * Two snapshot readings give a weekly burn slope. A drop in percent means the
- * window reset, so the baseline restarts there.
- */
+/** Percent-per-hour from two in-process snapshot readings; a drop means the window reset, restarting the baseline. */
 export function createWeeklyTrend(): WeeklyTrend {
   let baseline: { atMs: number; percent: number } | null = null;
   return {

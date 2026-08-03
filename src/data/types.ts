@@ -27,8 +27,6 @@ export interface ProviderMeta {
   requirement: string;
   /** Where limits are read from once connected. */
   source: string;
-  /** Pre-masked credential stored when a key is pasted or a connection revives. */
-  fake: string;
 }
 
 export interface ProviderConnection {
@@ -136,6 +134,20 @@ export interface UsageSnapshot {
   windowNote: string;
 }
 
+export type RefreshReason = "startup" | "interval" | "manual";
+
+export interface RefreshRequest {
+  reason: RefreshReason;
+  providerIds: readonly ProviderId[];
+  signal?: AbortSignal;
+}
+
+export interface PollOptions {
+  signal?: AbortSignal;
+  /** Manual refreshes bypass normal interval and backoff throttles. */
+  force?: boolean;
+}
+
 /**
  * Everything the UI needs from a backend. The mock adapter ships the design's
  * sample figures; a live adapter would poll each vendor and fill the same shape.
@@ -145,9 +157,7 @@ export interface UsageProvider {
   listMeta(): Record<ProviderId, ProviderMeta>;
   initialConnections(): Record<ProviderId, ProviderConnection>;
   readSnapshot(): UsageSnapshot;
-  refresh(signal?: AbortSignal): Promise<UsageSnapshot>;
-  /** Masks a pasted secret before it is retained for display. */
-  maskCredential(raw: string): string;
+  refresh(request: RefreshRequest): Promise<UsageSnapshot>;
 }
 
 export const STATUS_PRESENTATION: Record<

@@ -1,10 +1,9 @@
+import { version as LIMITLESS_VERSION } from "../../../package.json";
 import { isRecord } from "./json";
 
 /**
- * Codex CLI exposes its own account state over a stdio JSON-RPC server, so
- * limits come from the tool that owns the credentials - no token is read,
- * refreshed or transmitted by this app. Shapes below are taken from
- * `codex app-server generate-json-schema`, not from third-party docs.
+ * Rate limits via the sandboxed `codex app-server` stdio JSON-RPC server.
+ * Shapes from `codex app-server generate-json-schema`.
  */
 export interface CodexWindow {
   usedPercent: number;
@@ -50,6 +49,7 @@ export interface CodexAccountLimits {
 export type CodexProbeFailure =
   | "not-installed"
   | "not-logged-in"
+  | "unsupported-auth"
   | "timeout"
   | "protocol";
 
@@ -79,21 +79,38 @@ function windowFrom(value: unknown): CodexWindow | null {
     typeof minutes === "number" && Number.isFinite(minutes) ? minutes : null;
   return {
     usedPercent: Math.min(100, Math.max(0, used)),
-    // resetsAt is unix seconds.
     resetsAtMs,
     windowMinutes,
   };
 }
 
+function namedWindow(id: string, item: unknown): CodexAdditionalRateLimit | null {
+  if (!isRecord(item)) return null;
+  const nameValue = item.limitName ?? item.modelName ?? item.model ?? item.limitId ?? id;
+  const window = windowFrom(item) ?? windowFrom(item.primary) ?? windowFrom(item.secondary);
+  if (typeof nameValue !== "string" || nameValue.length === 0 || !window) return null;
+  return { name: nameValue, ...window };
+}
+
+/** Canonical multi-bucket interface on current CLIs: a map keyed by limit id. */
+function rateLimitsByLimitIdFrom(value: unknown, mainLimitId: string | null): CodexAdditionalRateLimit[] {
+  if (!isRecord(value)) return [];
+  const limits: CodexAdditionalRateLimit[] = [];
+  for (const [id, item] of Object.entries(value)) {
+    if (id === mainLimitId) continue;
+    const limit = namedWindow(id, item);
+    if (limit) limits.push(limit);
+  }
+  return limits;
+}
+
+/** Legacy fallback: older CLIs carried extra limits as an array on the snapshot. */
 function additionalRateLimitsFrom(value: unknown): CodexAdditionalRateLimit[] {
   if (!Array.isArray(value)) return [];
   const limits: CodexAdditionalRateLimit[] = [];
   for (const item of value) {
-    if (!isRecord(item)) continue;
-    const nameValue = item.limitName ?? item.modelName ?? item.model ?? item.limitId;
-    const window = windowFrom(item) ?? windowFrom(item.primary);
-    if (typeof nameValue !== "string" || nameValue.length === 0 || !window) continue;
-    limits.push({ name: nameValue, ...window });
+    const limit = namedWindow("", item);
+    if (limit) limits.push(limit);
   }
   return limits;
 }
@@ -117,11 +134,7 @@ function isSessionWindow(
   return index === 0 && secondary !== null;
 }
 
-/**
- * Windows are classified by their own reported duration rather than by
- * position: a Plus account can report a single weekly window as `primary`,
- * which a positional mapping would mislabel as the session window.
- */
+/** Windows classified by reported duration, not position: a Plus account reports one weekly window as primary. */
 export function parseRateLimits(result: unknown, fetchedAtMs: number): CodexAccountLimits | null {
   if (!isRecord(result)) return null;
   const snapshot = result.rateLimits;
@@ -139,7 +152,10 @@ export function parseRateLimits(result: unknown, fetchedAtMs: number): CodexAcco
   }
 
   const plan = snapshot.planType;
-  const additionalRateLimits = additionalRateLimitsFrom(snapshot.additionalRateLimits);
+  const mainLimitId = typeof snapshot.limitId === "string" ? snapshot.limitId : null;
+  const byLimitId = rateLimitsByLimitIdFrom(result.rateLimitsByLimitId, mainLimitId);
+  const additionalRateLimits =
+    byLimitId.length > 0 ? byLimitId : additionalRateLimitsFrom(snapshot.additionalRateLimits);
   const accountCredits = creditsFrom(snapshot.credits);
   const credits = isRecord(result.rateLimitResetCredits)
     ? result.rateLimitResetCredits.availableCount
@@ -179,25 +195,35 @@ export function parseUsageHistory(result: unknown): CodexUsageHistory | null {
   const raw = result.summary;
   let summary: CodexUsageSummary | null = null;
   if (isRecord(raw)) {
-    summary = {
+    const candidate: CodexUsageSummary = {
       lifetimeTokens: positiveNumber(raw.lifetimeTokens),
       peakDailyTokens: positiveNumber(raw.peakDailyTokens),
       longestRunningTurnSec: positiveNumber(raw.longestRunningTurnSec),
       currentStreakDays: positiveNumber(raw.currentStreakDays),
       longestStreakDays: positiveNumber(raw.longestStreakDays),
     };
+    // An all-zero summary is a malformed reply, not a real account record.
+    if (Object.values(candidate).some((value) => value > 0)) summary = candidate;
   }
 
   if (dailyTokens.size === 0 && summary === null) return null;
   return { dailyTokens, summary };
 }
 
-export function parseAccountPlan(result: unknown): string | null {
-  if (!isRecord(result)) return null;
+export interface CodexAccountInfo {
+  planType: string | null;
+  /** e.g. "chatgpt", "apiKey" - tells plan-limit failures from real sign-outs. */
+  type: string | null;
+}
+
+export function parseAccount(result: unknown): CodexAccountInfo {
+  if (!isRecord(result)) return { planType: null, type: null };
   const account = result.account;
-  if (!isRecord(account)) return null;
-  const plan = account.planType;
-  return typeof plan === "string" ? plan : null;
+  if (!isRecord(account)) return { planType: null, type: null };
+  return {
+    planType: typeof account.planType === "string" ? account.planType : null,
+    type: typeof account.type === "string" ? account.type : null,
+  };
 }
 
 interface RpcOutcome {
@@ -212,10 +238,7 @@ interface RpcRequest {
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
-/**
- * Runs one short-lived, sandboxed app-server and collects the replies to the
- * given requests. The child is always killed, including on the timeout path.
- */
+/** Runs one short-lived, sandboxed app-server child. Always killed. */
 function spawnAppServer() {
   // Sandboxed read-only and untrusted: this only ever reads account state.
   return Bun.spawn(["codex", "-s", "read-only", "-a", "untrusted", "app-server"], {
@@ -234,33 +257,44 @@ function writeRpcMessage(
   stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
 }
 
+function writeRpcNotification(
+  stdin: ReturnType<typeof spawnAppServer>["stdin"],
+  method: string,
+): void {
+  stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method })}\n`);
+}
+
+/** Returns the replied-to id, or null for notifications and unparseable noise. */
 function collectRpcLine(
   line: string,
   wanted: Set<number>,
   results: Map<number, unknown>,
   errors: Map<number, unknown>,
-): void {
-  if (!line) return;
+): number | null {
+  if (!line) return null;
 
   let message: unknown;
   try {
     message = JSON.parse(line);
   } catch {
-    // Banner or log noise on stdout is not fatal.
-    return;
+    return null;
   }
-  if (!isRecord(message) || typeof message.id !== "number") return;
+  if (!isRecord(message) || typeof message.id !== "number") return null;
 
   if (message.error !== undefined) errors.set(message.id, message.error);
   else results.set(message.id, message.result);
   wanted.delete(message.id);
+  return message.id;
 }
 
 async function runRequests(
   requests: RpcRequest[],
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<RpcOutcome> {
   let proc: ReturnType<typeof spawnAppServer>;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
   try {
     proc = spawnAppServer();
   } catch (error) {
@@ -269,36 +303,62 @@ async function runRequests(
 
   const results = new Map<number, unknown>();
   const errors = new Map<number, unknown>();
-  const wanted = new Set(requests.map((request) => request.id));
+  const wanted = new Set([0, ...requests.map((request) => request.id)]);
 
   try {
+    // The protocol handshake is initialize -> initialized -> requests; sending
+    // requests before the notification works today but is not guaranteed to.
     writeRpcMessage(proc.stdin, 0, "initialize", {
-      clientInfo: { name: "limitless", title: "Limitless", version: "0" },
+      clientInfo: { name: "limitless", title: "Limitless", version: LIMITLESS_VERSION },
     });
-    for (const { id, method } of requests) {
-      writeRpcMessage(proc.stdin, id, method, {});
-    }
     await proc.stdin.flush();
 
-    const timeoutAtMs = Date.now() + timeoutMs;
     const decoder = new TextDecoder();
     let pendingText = "";
+    let requestsSent = false;
+    const sendRequests = () => {
+      if (requestsSent) return;
+      requestsSent = true;
+      writeRpcNotification(proc.stdin, "initialized");
+      for (const { id, method } of requests) {
+        writeRpcMessage(proc.stdin, id, method, {});
+      }
+      void proc.stdin.flush();
+    };
 
-    for await (const chunk of proc.stdout) {
-      pendingText += decoder.decode(chunk as Uint8Array);
-      let newlineIndex = pendingText.indexOf("\n");
-      while (newlineIndex >= 0) {
-        const line = pendingText.slice(0, newlineIndex).trim();
-        pendingText = pendingText.slice(newlineIndex + 1);
-        collectRpcLine(line, wanted, results, errors);
-        newlineIndex = pendingText.indexOf("\n");
+    const responses = (async () => {
+      for await (const chunk of proc.stdout) {
+        // stream: true keeps multibyte characters split across chunks intact.
+        pendingText += decoder.decode(chunk as Uint8Array, { stream: true });
+        let newlineIndex = pendingText.indexOf("\n");
+        while (newlineIndex >= 0) {
+          const line = pendingText.slice(0, newlineIndex).trim();
+          pendingText = pendingText.slice(newlineIndex + 1);
+          const repliedId = collectRpcLine(line, wanted, results, errors);
+          if (repliedId === 0) sendRequests();
+          newlineIndex = pendingText.indexOf("\n");
+        }
+        if (wanted.size === 0) return;
       }
-      if (wanted.size === 0) break;
-      if (Date.now() > timeoutAtMs) {
-        throw new CodexProbeError("timeout", "codex app-server did not answer in time");
-      }
-    }
+    })();
+    const deadline = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        proc.kill();
+        reject(new CodexProbeError("timeout", "codex app-server did not answer in time"));
+      }, timeoutMs);
+    });
+    const cancelled = new Promise<never>((_, reject) => {
+      abort = () => {
+        proc.kill();
+        reject(signal?.reason ?? new DOMException("Refresh aborted", "AbortError"));
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+    });
+    await Promise.race([responses, deadline, cancelled]);
   } finally {
+    if (timeout) clearTimeout(timeout);
+    if (abort) signal?.removeEventListener("abort", abort);
     proc.kill();
   }
 
@@ -321,7 +381,7 @@ function isLoggedOut(error: unknown): boolean {
 /** Reads plan limits from the local Codex CLI. Throws `CodexProbeError`. */
 export async function readCodexLimits(
   now: Date,
-  timeoutMs = REQUEST_TIMEOUT_MS,
+  options: { timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<CodexAccountLimits> {
   const { results, errors } = await runRequests(
     [
@@ -329,13 +389,22 @@ export async function readCodexLimits(
       { id: ACCOUNT_ID, method: "account/read" },
       { id: USAGE_ID, method: "account/usage/read" },
     ],
-    timeoutMs,
+    options.timeoutMs ?? REQUEST_TIMEOUT_MS,
+    options.signal,
   );
 
+  const account = parseAccount(results.get(ACCOUNT_ID));
   const failure = errors.get(RATE_LIMITS_ID);
   if (failure !== undefined) {
+    // API-key/Bedrock accounts are signed in but have no ChatGPT plan limits.
+    const signedInWithoutPlanLimits =
+      account.type !== null && account.type !== "chatgpt" && isLoggedOut(failure);
     throw new CodexProbeError(
-      isLoggedOut(failure) ? "not-logged-in" : "protocol",
+      signedInWithoutPlanLimits
+        ? "unsupported-auth"
+        : isLoggedOut(failure)
+          ? "not-logged-in"
+          : "protocol",
       "codex refused the rate limit request",
     );
   }
@@ -345,8 +414,7 @@ export async function readCodexLimits(
 
   return {
     ...limits,
-    planType: limits.planType ?? parseAccountPlan(results.get(ACCOUNT_ID)),
-    // Usage history is a bonus: limits stay usable if this call is unsupported.
+    planType: limits.planType ?? account.planType,
     usage: errors.has(USAGE_ID) ? null : parseUsageHistory(results.get(USAGE_ID)),
   };
 }

@@ -7,6 +7,7 @@ import { COLORS } from "../../src/theme";
 import { DAY_MS, HOUR_MS } from "../../src/data/real/aggregate";
 import { stubCodexLimitsSource } from "../../src/data/real/codex-limits";
 import { dormantGoLimitsSource } from "../../src/data/real/go-limits-source";
+import { dormantClaudeLimitsSource } from "../../src/data/real/claude-usage";
 import { PROVIDER_IDS } from "../../src/data/types";
 import {
   createRealUsageProvider,
@@ -24,10 +25,12 @@ const MISSING_PATHS: RealProviderPaths = {
   claudeHistory: "/nonexistent/history.jsonl",
   claudeSettings: "/nonexistent/settings.json",
   usageSnapshot: "/nonexistent/usage-snapshot.json",
+  codexHome: "/nonexistent/codex",
 };
 
 /** Keeps the suite off the network and away from a real codex process. */
 const OFFLINE = {
+  claudeLimits: dormantClaudeLimitsSource,
   codexLimits: stubCodexLimitsSource,
   goLimits: dormantGoLimitsSource,
 } as const;
@@ -53,15 +56,14 @@ describe("createRealUsageProvider with no sources", () => {
     for (const id of PROVIDER_IDS) expect(connections[id].status).toBe("none");
   });
 
-  test("claude limits blame the unconfigured statusline, not the session", () => {
+  test("claude limits direct the user to the live cli when no snapshot exists", () => {
     const [session] = snapshot.providers.cl.limits;
     expect(session?.percent).toBeNull();
-    // "open a session" would never produce a snapshot without a statusline.
-    expect(session?.footnote).toContain("no statusline configured");
+    expect(session?.footnote).toContain("query claude cli");
     expect(session?.footnote).not.toContain("open a claude code session");
   });
 
-  test("a configured statusline changes the advice to opening a session", () => {
+  test("a configured statusline still directs refresh through the live cli", () => {
     const dir = mkdtempSync(join(tmpdir(), "limitless-settings-"));
     const settings = join(dir, "settings.json");
     writeFileSync(settings, JSON.stringify({ statusLine: { type: "command", command: "x.sh" } }));
@@ -71,7 +73,7 @@ describe("createRealUsageProvider with no sources", () => {
       ...OFFLINE,
     });
     const [session] = provider.readSnapshot().providers.cl.limits;
-    expect(session?.footnote).toContain("open a claude code session");
+    expect(session?.footnote).toContain("press r for live limits");
   });
 
   test("codex and go publish cap-less lines", () => {
@@ -82,18 +84,59 @@ describe("createRealUsageProvider with no sources", () => {
   });
 
   test("refresh resolves and honors an already-aborted signal", async () => {
-    const next = await provider.refresh();
+    const next = await provider.refresh({ reason: "manual", providerIds: PROVIDER_IDS });
     expect(next.dailyDates).toHaveLength(30);
 
     const controller = new AbortController();
     controller.abort();
     let rejection: unknown;
     try {
-      await provider.refresh(controller.signal);
+      await provider.refresh({
+        reason: "manual",
+        providerIds: PROVIDER_IDS,
+        signal: controller.signal,
+      });
     } catch (error) {
       rejection = error;
     }
     expect(rejection).toBeDefined();
+  });
+
+  test("refresh polls only requested providers", async () => {
+    const calls = { cl: 0, cx: 0, go: 0 };
+    const provider = createRealUsageProvider({
+      paths: MISSING_PATHS,
+      claudeLimits: {
+        read: () => null,
+        note: () => null,
+        poll: () => {
+          calls.cl += 1;
+          return Promise.resolve();
+        },
+      },
+      codexLimits: {
+        read: () => null,
+        note: () => null,
+        poll: () => {
+          calls.cx += 1;
+          return Promise.resolve();
+        },
+      },
+      goLimits: {
+        read: () => null,
+        note: () => null,
+        cookieExpiresAtMs: () => null,
+        poll: () => {
+          calls.go += 1;
+          return Promise.resolve();
+        },
+      },
+    });
+
+    await provider.refresh({ reason: "interval", providerIds: ["cl", "go"] });
+    expect(calls).toEqual({ cl: 1, cx: 0, go: 1 });
+    await provider.refresh({ reason: "manual", providerIds: ["cx"] });
+    expect(calls).toEqual({ cl: 1, cx: 1, go: 1 });
   });
 });
 
@@ -139,7 +182,7 @@ describe("opencode go spend limits", () => {
       expect(go.scopes.session.percent).toBe(25);
       expect(go.scopes.weekly.percent).toBe(30);
       expect(go.limits[0]?.detailValueLabel).toBe("$3.00 of $12");
-      expect(go.limits[0]?.footnote).toBe("local estimate - cookie unlocks exact %");
+      expect(go.limits[0]?.footnote).toBe("model-weighted local estimate - cookie unlocks exact %");
 
       const serverWithoutMonthly = {
         rollingPercent: 17,
@@ -164,7 +207,7 @@ describe("opencode go spend limits", () => {
         (limit) => limit.id === "monthly",
       );
       expect(monthly?.detailValueLabel).toContain("of $60");
-      expect(monthly?.footnote).toBe("local estimate - cookie unlocks exact %");
+      expect(monthly?.footnote).toBe("model-weighted local estimate - cookie unlocks exact %");
       expect(serverProvider.readSnapshot().providers.go.meta.planDetail).toContain("estimate");
 
       const expiredProvider = createRealUsageProvider({
@@ -339,7 +382,7 @@ describe("opencode go server limits", () => {
         poll: () => Promise.reject(new Error("network down")),
       },
     });
-    const next = await provider.refresh();
+    const next = await provider.refresh({ reason: "manual", providerIds: ["go"] });
     expect(next.dailyDates).toHaveLength(30);
   });
 });
@@ -359,5 +402,12 @@ describe("selectUsageProvider", () => {
 
   test("hasRealSources is false for missing paths", () => {
     expect(hasRealSources(MISSING_PATHS)).toBe(false);
+  });
+
+  test("a Codex-only installation selects the real provider", () => {
+    const codexHome = mkdtempSync(join(tmpdir(), "limitless-codex-"));
+    const paths = { ...MISSING_PATHS, codexHome };
+    expect(hasRealSources(paths)).toBe(true);
+    expect(selectUsageProvider("real", paths)).not.toBe(mockUsageProvider);
   });
 });

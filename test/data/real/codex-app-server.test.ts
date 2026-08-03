@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { parseAccountPlan, parseRateLimits, parseUsageHistory } from "../../../src/data/real/codex-app-server";
+import { parseAccount, parseRateLimits, parseUsageHistory } from "../../../src/data/real/codex-app-server";
 
-/** Captured verbatim from `account/rateLimits/read` on codex-cli 0.146.0. */
+/** Shape generated from `codex app-server generate-json-schema` on codex-cli 0.146.0. */
 const LIVE_RESPONSE = {
   rateLimits: {
     limitId: "codex",
@@ -13,17 +13,21 @@ const LIVE_RESPONSE = {
     spendControlReached: false,
     planType: "plus",
     rateLimitReachedType: null,
-    additionalRateLimits: [
-      {
-        limitId: "codex-mini-latest",
-        limitName: "codex mini",
-        usedPercent: 37.4,
-        windowDurationMins: 10080,
-        resetsAt: 1786212362,
-      },
-    ],
   },
-  rateLimitsByLimitId: { codex: { limitId: "codex" } },
+  rateLimitsByLimitId: {
+    codex: {
+      limitId: "codex",
+      limitName: null,
+      primary: { usedPercent: 0, windowDurationMins: 10080, resetsAt: 1786212362 },
+      secondary: null,
+    },
+    "codex-mini-latest": {
+      limitId: "codex-mini-latest",
+      limitName: "codex mini",
+      primary: { usedPercent: 37.4, windowDurationMins: 10080, resetsAt: 1786212362 },
+      secondary: null,
+    },
+  },
   rateLimitResetCredits: {
     availableCount: 1,
     credits: [{ id: "x", resetType: "codexRateLimits", status: "available", grantedAt: 1 }],
@@ -157,13 +161,48 @@ describe("parseUsageHistory", () => {
     expect(parseUsageHistory(null)).toBeNull();
     expect(parseUsageHistory({})).toBeNull();
     expect(parseUsageHistory({ dailyUsageBuckets: [] })).toBeNull();
+    // An all-zero summary is malformed, not a real account record.
+    expect(
+      parseUsageHistory({
+        summary: {
+          lifetimeTokens: 0,
+          peakDailyTokens: 0,
+          longestRunningTurnSec: 0,
+          currentStreakDays: 0,
+          longestStreakDays: 0,
+        },
+      }),
+    ).toBeNull();
   });
 });
 
-describe("parseAccountPlan", () => {
-  test("reads the plan from an account reply", () => {
-    expect(parseAccountPlan({ account: { type: "chatgpt", planType: "plus" } })).toBe("plus");
-    expect(parseAccountPlan({ account: {} })).toBeNull();
-    expect(parseAccountPlan(null)).toBeNull();
+describe("parseAccount", () => {
+  test("reads the plan and auth type from an account reply", () => {
+    expect(parseAccount({ account: { type: "chatgpt", planType: "plus" } })).toEqual({
+      planType: "plus",
+      type: "chatgpt",
+    });
+    expect(parseAccount({ account: {} })).toEqual({ planType: null, type: null });
+    expect(parseAccount(null)).toEqual({ planType: null, type: null });
+  });
+});
+
+describe("legacy additional limits", () => {
+  test("falls back to the array shape when the map is absent", () => {
+    const limits = parseRateLimits(
+      {
+        rateLimits: {
+          limitId: "codex",
+          primary: { usedPercent: 1, windowDurationMins: 10080 },
+          additionalRateLimits: [
+            { limitId: "codex-mini-latest", limitName: "codex mini", usedPercent: 37.4 },
+          ],
+        },
+      },
+      NOW_MS,
+    );
+    expect(limits?.additionalRateLimits).toEqual([
+      { name: "codex mini", usedPercent: 37.4, resetsAtMs: null, windowMinutes: null },
+    ]);
   });
 });

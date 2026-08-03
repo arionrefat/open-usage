@@ -2,25 +2,23 @@ import { COLORS } from "../../theme";
 import type { DetailSection, ProviderMeta, ProviderUsage, ScopeSummary, UsageLimit } from "../types";
 import { DAY_MS, formatCountdown, seriesFromBuckets, tokensPerHour, type HourBuckets } from "./aggregate";
 import type { GoLimitsSource } from "./go-limits-source";
-import type { OpencodeAuth } from "./opencode-auth";
 import type { OpencodeSessionStats } from "./opencode-db";
 import type { GoSpend, SpendWindow } from "./opencode-go-spend";
 import type { GoServerLimits } from "./opencode-server";
 import { capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
 
-const GO_LIMIT_FOOTNOTE = "local estimate - cookie unlocks exact %";
+const GO_LIMIT_FOOTNOTE = "model-weighted local estimate - cookie unlocks exact %";
 const COOKIE_WARNING_MS = 7 * DAY_MS;
 
-export function createGoMeta(auth: OpencodeAuth): ProviderMeta {
+export function createGoMeta(): ProviderMeta {
   return {
     id: "go",
     name: "opencode go",
     plan: "local usage only",
     planShort: "Go · estimate",
     planDetail: "Go · spend estimate",
-    requirement: "opencode go api key",
+    requirement: "opencode go configured in opencode",
     source: "~/.local/share/opencode/opencode.db",
-    fake: auth.opencodeGo?.maskedKey ?? "api key",
   };
 }
 
@@ -85,7 +83,7 @@ function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: nu
       reset: resetText(server.monthlyResetAtMs, nowMs),
     });
   } else if (spend) {
-    limits.push(spendLimit("monthly", "this cycle", "monthly limit", spend.monthly, nowMs, false));
+    limits.push(spendLimit("monthly", "trailing 30d", "trailing 30d limit", spend.monthly, nowMs));
   }
   return limits;
 }
@@ -180,7 +178,7 @@ function goLimits(
   return [
     spendLimit("session", "rolling 5h", "rolling 5h limit", spend.session, nowMs),
     spendLimit("weekly", "rolling 7d", "rolling 7d limit", spend.weekly, nowMs),
-    spendLimit("monthly", "this cycle", "monthly limit", spend.monthly, nowMs, false),
+    spendLimit("monthly", "trailing 30d", "trailing 30d limit", spend.monthly, nowMs),
   ];
 }
 

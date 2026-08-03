@@ -1,5 +1,4 @@
 import { COLORS } from "../theme";
-import { maskCredential } from "./mask";
 import type {
   ProviderConnection,
   ProviderId,
@@ -15,9 +14,8 @@ const META: Record<ProviderId, ProviderMeta> = {
     plan: "Max (20x)",
     planShort: "Max (20x)",
     planDetail: "Max (20x)",
-    requirement: "oauth login or ANTHROPIC_API_KEY",
-    source: "~/.claude/usage.jsonl",
-    fake: "sk-ant-api03-•••••••••7b31",
+    requirement: "claude code installed and signed in",
+    source: "claude cli + ~/.claude",
   },
   cx: {
     id: "cx",
@@ -25,9 +23,8 @@ const META: Record<ProviderId, ProviderMeta> = {
     plan: "Plus · shared with Work",
     planShort: "Plus",
     planDetail: "Plus",
-    requirement: "openai api key with usage.read",
-    source: "platform.openai.com/usage",
-    fake: "sk-proj-•••••••••••4f2a",
+    requirement: "codex cli installed and signed in",
+    source: "codex app-server (manual refresh)",
   },
   go: {
     id: "go",
@@ -35,16 +32,15 @@ const META: Record<ProviderId, ProviderMeta> = {
     plan: "Go subscription",
     planShort: "Go",
     planDetail: "Go",
-    requirement: "opencode auth token",
-    source: "opencode auth token",
-    fake: "oc_live_•••••••9d1c",
+    requirement: "opencode go configured in opencode",
+    source: "opencode.db",
   },
 };
 
 const INITIAL_CONNECTIONS: Record<ProviderId, ProviderConnection> = {
   cl: { isEnabled: true, status: "active", credential: "oauth · claude-max", note: "token expires in 27d" },
-  cx: { isEnabled: true, status: "expired", credential: "sk-proj-•••••••••••4f2a", note: "Plus renewal failed Jul 24" },
-  go: { isEnabled: true, status: "active", credential: "oc_live_•••••••9d1c", note: "renews Aug 3" },
+  cx: { isEnabled: true, status: "expired", credential: "oauth · codex cli", note: "Plus renewal failed Jul 24" },
+  go: { isEnabled: true, status: "active", credential: "api key on file", note: "renews Aug 3" },
 };
 
 const DAILY: Record<ProviderId, number[]> = {
@@ -289,7 +285,7 @@ export const mockUsageProvider: UsageProvider = {
   listMeta: () => META,
   initialConnections: () => structuredClone(INITIAL_CONNECTIONS),
   readSnapshot: () => SNAPSHOT,
-  refresh: (signal) =>
+  refresh: ({ signal }) =>
     new Promise((resolve, reject) => {
       const timer = setTimeout(
         () => resolve({ ...SNAPSHOT, fetchedAt: Date.now() }),
@@ -304,5 +300,4 @@ export const mockUsageProvider: UsageProvider = {
         { once: true },
       );
     }),
-  maskCredential,
 };

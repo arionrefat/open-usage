@@ -6,6 +6,7 @@ import {
   type GoServerLimits,
 } from "./opencode-server";
 import { isRecord } from "./json";
+import type { PollOptions } from "../types";
 
 /**
  * Server-truth go limits, polled out-of-band because the UI reads snapshots
@@ -17,7 +18,7 @@ export interface GoLimitsSource {
   /** Why server limits are missing, or null when they are present. */
   note(): string | null;
   cookieExpiresAtMs(): number | null;
-  poll(now: Date, signal?: AbortSignal): Promise<void>;
+  poll(now: Date, options?: PollOptions): Promise<void>;
 }
 
 export const COOKIE_ENV_VAR = "LIMITLESS_OPENCODE_COOKIE";
@@ -87,10 +88,10 @@ export function createGoLimitsSource(
       const cookie = readCookie(configPath, env);
       return cookie ? cookieExpiryMs(cookie) : null;
     },
-    async poll(now, signal) {
+    async poll(now, options = {}) {
       const nowMs = now.getTime();
       const pollIsThrottled = nowMs < nextPollAtMs;
-      if (pollIsThrottled) return;
+      if (!options.force && pollIsThrottled) return;
 
       const cookie = readCookie(configPath, env);
       if (!cookie) {
@@ -110,16 +111,19 @@ export function createGoLimitsSource(
 
       nextPollAtMs = nowMs + MIN_POLL_MS;
       try {
-        cached = await fetcher(cookie, now, { workspaceId, signal });
+        cached = await fetcher(cookie, now, { workspaceId, signal: options.signal });
         note = null;
       } catch (error) {
-        if (!(error instanceof OpencodeServerError)) throw error;
         // A caller-cancelled refresh is not a provider failure, so it must not
         // trigger the backoff or claim opencode is unreachable.
-        if (signal?.aborted) throw error;
+        if (options.signal?.aborted) throw error;
         nextPollAtMs = nowMs + BACKOFF_MS;
+        cached = null;
+        if (!(error instanceof OpencodeServerError)) {
+          note = "opencode unreachable - showing local estimate";
+          return;
+        }
         if (error.kind === "credentials") {
-          cached = null;
           workspaceId = undefined;
           note = "opencode session expired - paste a fresh cookie";
           return;
@@ -130,7 +134,7 @@ export function createGoLimitsSource(
           note = "opencode dashboard changed - showing local estimate";
           return;
         }
-        note = cached ? null : "opencode unreachable - showing local estimate";
+        note = "opencode unreachable - showing local estimate";
       }
     },
   };

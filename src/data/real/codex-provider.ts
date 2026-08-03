@@ -13,11 +13,10 @@ export function createCodexMeta(): ProviderMeta {
     id: "cx",
     name: "codex",
     plan: "local usage only",
-    planShort: "via opencode",
-    planDetail: "via opencode",
-    requirement: "openai oauth via opencode",
-    source: "~/.local/share/opencode/opencode.db",
-    fake: "oauth · openai",
+    planShort: "via codex cli",
+    planDetail: "via codex cli",
+    requirement: "codex cli installed and signed in",
+    source: "codex app-server + local rollouts",
   };
 }
 
@@ -149,8 +148,7 @@ export function buildCodexProvider(input: CodexProviderInput): ProviderUsage {
   const { meta, buckets, stats, limitsSource, dates, now } = input;
   const nowMs = now.getTime();
   const limits = limitsSource.read();
-  // Codex's own server history covers every route into the account, while
-  // opencode.db only sees what opencode itself sent, so it wins when present.
+  // Server-side daily history is account-wide; local buckets only cover this device.
   const usage = limits?.usage ?? null;
   return {
     id: "cx",
@@ -180,7 +178,7 @@ export function buildCodexProvider(input: CodexProviderInput): ProviderUsage {
             window: windowLabel(limits.session.windowMinutes, "session"),
             reset: resetText(limits.session.resetsAtMs, nowMs),
           }
-        : { percent: null, window: "no session cap", reset: "counted in the weekly pool" },
+        : { percent: null, window: "no session data", reset: "session limit not reported" },
       weekly: limits?.weekly
         ? {
             percent: Math.round(limits.weekly.usedPercent),

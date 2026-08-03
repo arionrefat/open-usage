@@ -3,19 +3,20 @@ import type { DetailRow, DetailSection, ProviderMeta, ProviderUsage, UsageLimit 
 import { HOUR_MS, formatAge, formatClock, formatCountdown, formatRate, seriesFromBuckets, tokensPerHour } from "./aggregate";
 import type { HistoryStats } from "./claude-history";
 import type { TranscriptAggregate } from "./claude-transcripts";
+import type { ClaudeLimitsSource, ClaudeUsageWindow } from "./claude-usage";
 import { NO_CAP_DATA, capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
+import type { ClaudeAuthInfo, ClaudeAuthSource } from "./claude-auth";
 import { SNAPSHOT_FRESH_MS, type RateWindowReading, type SnapshotFile, type WeeklyTrend } from "./statusline-snapshot";
 
 export function createClaudeMeta(): ProviderMeta {
   return {
     id: "cl",
     name: "claude code",
-    plan: "local data",
-    planShort: "local data",
-    planDetail: "local data",
-    requirement: "claude code installed (oauth)",
-    source: "~/.claude",
-    fake: "oauth · claude code",
+    plan: "Claude subscription",
+    planShort: "Claude subscription",
+    planDetail: "Claude subscription",
+    requirement: "claude code installed and signed in",
+    source: "claude cli /usage + ~/.claude",
   };
 }
 
@@ -47,15 +48,31 @@ function projectWeekly(
 
 function staleSnapshotNote(snapshotFile: SnapshotFile | null, hasStatusline: boolean): string {
   if (snapshotFile) {
-    return `statusline snapshot stale (${formatAge(snapshotFile.ageMs)} old) - open a claude code session to refresh`;
+    return `statusline snapshot stale (${formatAge(snapshotFile.ageMs)} old) - press r for live limits`;
   }
   return hasStatusline
-    ? "statusline snapshot missing - open a claude code session to refresh"
-    : "no statusline configured - claude code writes limits from one";
+    ? "statusline snapshot missing - press r for live limits"
+    : "live limits unavailable - press r to query claude cli";
+}
+
+interface ClaudeWindow extends RateWindowReading {
+  resetLabel?: string;
+}
+
+/** Merges CLI reset prose with fresh statusline timestamps so projections work while live polling is active. */
+function cliWindow(
+  window: ClaudeUsageWindow,
+  snapshotWindow: RateWindowReading | null,
+): ClaudeWindow {
+  return {
+    percent: window.percent,
+    resetsAtMs: snapshotWindow?.resetsAtMs ?? null,
+    resetLabel: window.reset,
+  };
 }
 
 function sessionLimit(
-  five: RateWindowReading | null,
+  five: ClaudeWindow | null,
   isFresh: boolean,
   staleNote: string,
   nowMs: number,
@@ -68,14 +85,14 @@ function sessionLimit(
     id: "session",
     label: "current session",
     percent: Math.round(five.percent),
-    reset: resetText(five.resetsAtMs, nowMs),
+    reset: five.resetLabel ?? resetText(five.resetsAtMs, nowMs),
   };
   if (!isFresh) limit.footnote = staleNote;
   return limit;
 }
 
 function weeklyLimit(
-  seven: RateWindowReading | null,
+  seven: ClaudeWindow | null,
   projection: ClaudeProjection,
   rateLabel: string,
   staleNote: string,
@@ -95,7 +112,7 @@ function weeklyLimit(
     id: "weekly",
     label: "weekly · all models",
     percent: Math.round(seven.percent),
-    reset: resetText(seven.resetsAtMs, nowMs),
+    reset: seven.resetLabel ?? resetText(seven.resetsAtMs, nowMs),
   };
   if (seven.resetsAtMs !== null) {
     limit.resetLong = `${resetText(seven.resetsAtMs, nowMs)} · ${formatClock(seven.resetsAtMs)}`;
@@ -110,6 +127,9 @@ function weeklyLimit(
 }
 
 function claudeLimits(
+  five: ClaudeWindow | null,
+  seven: ClaudeWindow | null,
+  isFresh: boolean,
   snapshotFile: SnapshotFile | null,
   projection: ClaudeProjection,
   rateLabel: string,
@@ -117,22 +137,20 @@ function claudeLimits(
   hasStatusline: boolean,
 ): UsageLimit[] {
   const staleNote = staleSnapshotNote(snapshotFile, hasStatusline);
-  const isFresh = snapshotFile !== null && snapshotFile.ageMs < SNAPSHOT_FRESH_MS;
-  const five = snapshotFile?.reading.fiveHour ?? null;
-  const seven = snapshotFile?.reading.sevenDay ?? null;
   const session = sessionLimit(five, isFresh, staleNote, nowMs);
   const weekly = weeklyLimit(seven, projection, rateLabel, staleNote, nowMs);
+  if (!isFresh) weekly.footnote = staleNote;
   return [session, weekly];
 }
 
 function claudeNoticeText(snapshotFile: SnapshotFile | null, hasStatusline: boolean): string {
   if (snapshotFile) {
-    return "statusline snapshot stale - open a claude code session to refresh limits";
+    return "stale statusline ignored - press r to query live limits via claude cli";
   }
   if (hasStatusline) {
-    return "statusline snapshot missing - open a claude code session to refresh limits";
+    return "statusline snapshot missing - press r to query live limits via claude cli";
   }
-  return "no statusline configured - claude code writes its limits from a statusline command";
+  return "live limits unavailable - press r to query the signed-in claude cli";
 }
 
 interface ClaudeProviderInput {
@@ -140,10 +158,12 @@ interface ClaudeProviderInput {
   transcripts: TranscriptAggregate;
   history: HistoryStats;
   snapshotFile: SnapshotFile | null;
+  limitsSource: ClaudeLimitsSource;
   hasStatusline: boolean;
   trend: WeeklyTrend;
   dates: string[];
   now: Date;
+  authSource?: ClaudeAuthSource;
 }
 
 function sessionDetails(snapshotFile: SnapshotFile | null): DetailSection | null {
@@ -156,13 +176,13 @@ function sessionDetails(snapshotFile: SnapshotFile | null): DetailSection | null
     contextWindow !== null &&
     contextWindow.usedPercentage !== null &&
     contextWindow.totalInputTokens !== null &&
-    contextWindow.totalOutputTokens !== null &&
     contextWindow.contextWindowSize !== null
   ) {
-    const used = contextWindow.totalInputTokens + contextWindow.totalOutputTokens;
+    // total_input_tokens already includes cache reads/writes; output tokens
+    // do not count toward the context window in Claude's own percentage.
     rows.push({
       label: "context used",
-      value: `${formatTokenCount(used)} of ${formatTokenCount(contextWindow.contextWindowSize)}`,
+      value: `${formatTokenCount(contextWindow.totalInputTokens)} of ${formatTokenCount(contextWindow.contextWindowSize)}`,
       percent: contextWindow.usedPercentage,
     });
   }
@@ -216,16 +236,36 @@ function transcriptDetails(transcripts: TranscriptAggregate): DetailSection[] {
   return [models, tokens].filter((section): section is DetailSection => section !== null);
 }
 
+function authPlanLabel(fallback: string, auth: ClaudeAuthInfo): string {
+  const subType = auth.subscriptionType;
+  if (!subType) return fallback;
+  return subType.charAt(0).toUpperCase() + subType.slice(1).replace(/[_-]/g, " ");
+}
+
 export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
-  const { meta, transcripts, history, snapshotFile, hasStatusline, trend, dates, now } = input;
+  const { transcripts, history, snapshotFile, limitsSource, hasStatusline, trend, dates, now } = input;
+  const auth = input.authSource?.read();
+  const meta = auth ? { ...input.meta, plan: authPlanLabel(input.meta.plan, auth) } : input.meta;
   const nowMs = now.getTime();
   const rate = tokensPerHour(transcripts.buckets, now);
   const rateLabel = formatRate(rate);
-  const five = snapshotFile?.reading.fiveHour ?? null;
-  const seven = snapshotFile?.reading.sevenDay ?? null;
-  const isFresh = snapshotFile !== null && snapshotFile.ageMs < SNAPSHOT_FRESH_MS;
+  const snapshotIsFresh = snapshotFile !== null && snapshotFile.ageMs < SNAPSHOT_FRESH_MS;
+  const live = limitsSource.read();
+  const five: ClaudeWindow | null = live
+    ? cliWindow(live.session, snapshotIsFresh ? snapshotFile.reading.fiveHour : null)
+    : snapshotIsFresh
+      ? snapshotFile.reading.fiveHour
+      : null;
+  const seven: ClaudeWindow | null = live
+    ? cliWindow(live.weekly, snapshotIsFresh ? snapshotFile.reading.sevenDay : null)
+    : snapshotIsFresh
+      ? snapshotFile.reading.sevenDay
+      : null;
+  const isFresh = live !== null || snapshotIsFresh;
+  const trendAtMs =
+    live ? live.fetchedAtMs : snapshotIsFresh ? snapshotFile.writtenAtMs : null;
   const trendRate =
-    isFresh && seven !== null ? trend.observe(snapshotFile.writtenAtMs, seven.percent) : null;
+    seven && trendAtMs !== null ? trend.observe(trendAtMs, seven.percent) : null;
   const projection = projectWeekly(seven, trendRate, nowMs);
   const details = [sessionDetails(snapshotFile), ...transcriptDetails(transcripts)].filter(
     (section): section is DetailSection => section !== null,
@@ -235,24 +275,26 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
     id: "cl",
     meta,
     series: seriesFromBuckets(transcripts.buckets, dates, now),
-    limits: claudeLimits(snapshotFile, projection, rateLabel, nowMs, hasStatusline),
+    limits: claudeLimits(five, seven, isFresh, snapshotFile, projection, rateLabel, nowMs, hasStatusline),
     scopes: {
       session: {
         percent: five ? Math.round(five.percent) : null,
         window: "5h rolling",
-        reset: five ? resetText(five.resetsAtMs, nowMs) : "no snapshot",
+        reset: five ? (five.resetLabel ?? resetText(five.resetsAtMs, nowMs)) : "live limits unavailable",
       },
       weekly: {
         percent: seven ? Math.round(seven.percent) : null,
         window: "7d · all models",
-        reset: seven ? resetText(seven.resetsAtMs, nowMs) : "no snapshot",
+        reset: seven ? (seven.resetLabel ?? resetText(seven.resetsAtMs, nowMs)) : "live limits unavailable",
       },
     },
     burn: seven
       ? {
           limit: "weekly · all models",
           timeToReset:
-            seven.resetsAtMs !== null
+            seven.resetLabel
+              ? seven.resetLabel.replace(/^resets\s+/i, "") + " to reset"
+              : seven.resetsAtMs !== null
               ? `${formatCountdown(seven.resetsAtMs - nowMs)} to reset`
               : "reset unknown",
           rate: rateLabel,
@@ -269,7 +311,7 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
             iconColor: COLORS.info,
             segments: [
               {
-                text: claudeNoticeText(snapshotFile, hasStatusline),
+                text: limitsSource.note() ?? claudeNoticeText(snapshotFile, hasStatusline),
               },
             ],
           },

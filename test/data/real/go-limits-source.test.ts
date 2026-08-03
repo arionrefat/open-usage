@@ -114,7 +114,20 @@ describe("createGoLimitsSource", () => {
     expect(source.read()).toBeNull();
   });
 
-  test("a network failure backs off without discarding a fresh reading", async () => {
+  test("manual refresh bypasses the normal poll throttle", async () => {
+    const path = configWithCookie("auth=tok");
+    let calls = 0;
+    const source = createGoLimitsSource(path, {}, (_cookie, now) => {
+      calls += 1;
+      return Promise.resolve(reading(now.getTime()));
+    });
+    const start = new Date();
+    await source.poll(start);
+    await source.poll(new Date(start.getTime() + 1_000), { force: true });
+    expect(calls).toBe(2);
+  });
+
+  test("a network failure discards the reading instead of presenting old server truth", async () => {
     const path = configWithCookie("auth=tok");
     let calls = 0;
     const source = createGoLimitsSource(path, {}, (_cookie, now) => {
@@ -127,7 +140,8 @@ describe("createGoLimitsSource", () => {
     await source.poll(start);
     await source.poll(new Date(start.getTime() + 61_000));
     expect(calls).toBe(2);
-    expect(source.read()?.rollingPercent).toBe(17);
+    expect(source.read()).toBeNull();
+    expect(source.note()).toContain("local estimate");
 
     // The 5-minute backoff holds off the next attempt.
     await source.poll(new Date(start.getTime() + 122_000));
@@ -157,7 +171,7 @@ describe("createGoLimitsSource", () => {
     const start = new Date();
     let rejection: unknown;
     try {
-      await source.poll(start, controller.signal);
+      await source.poll(start, { signal: controller.signal });
     } catch (error) {
       rejection = error;
     }

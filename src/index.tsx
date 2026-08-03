@@ -4,10 +4,22 @@ import { createRoot } from "@opentui/react";
 import { App } from "./app";
 import { selectUsageProvider } from "./data/real-provider";
 import { isFlagEnabled, providerModeFromFlags, readFlags, startupFromFlags } from "./lib/args";
+import { defaultPreferencesPath, readPreferences, writePreferences } from "./preferences";
 import { COLORS } from "./theme";
 
 const flags = readFlags(process.argv.slice(2));
-const startup = startupFromFlags(flags);
+const preferencesPath = defaultPreferencesPath();
+let preferences = readPreferences(preferencesPath);
+const startup = { ...startupFromFlags(flags), ...preferences };
+if (!preferences.hasCompletedOnboarding && !flags.has("screen")) startup.screen = "onboarding";
+const updatePreferences = (patch: Partial<typeof preferences>) => {
+  preferences = { ...preferences, ...patch };
+  try {
+    writePreferences(preferencesPath, preferences);
+  } catch {
+    // A read-only home directory must not prevent the dashboard from running.
+  }
+};
 const provider = selectUsageProvider(providerModeFromFlags(flags, "real"));
 const renderer = await createCliRenderer({
   targetFps: 30,
@@ -34,5 +46,9 @@ createRoot(renderer).render(
     provider={provider}
     startup={startup}
     isPollingEnabled={!isFlagEnabled(flags, "no-poll")}
+    onRefreshCodexOnStartupChange={(enabled) =>
+      updatePreferences({ refreshCodexOnStartup: enabled })
+    }
+    onOnboardingFinish={() => updatePreferences({ hasCompletedOnboarding: true })}
   />,
 );

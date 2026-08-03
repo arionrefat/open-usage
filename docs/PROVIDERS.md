@@ -1,6 +1,6 @@
 # Provider integration research
 
-Researched 2026-08-01, re-verified 2026-08-02 (web research + local ground-truthing on this machine).
+Researched 2026-08-01, re-verified 2026-08-03 (official documentation, upstream source, and local ground-truthing on this machine).
 Where a published claim disagreed with this machine's own files, the measurement won; those cases are kept as corrections rather than quietly overwritten.
 This is the implementation reference for wiring real limit data into Limitless for all three providers.
 
@@ -8,7 +8,7 @@ Verdict up front: all three providers can show real or near-real limit data, eac
 
 | Provider | Real percent-of-limit? | Best source | User must provide | Status |
 | --- | --- | --- | --- | --- |
-| claude code | Yes (5h + weekly) | `~/.claude/usage-snapshot.json` (statusline) | Nothing (already configured) | Shipped |
+| claude code | Yes (5h + weekly) | First-party `claude -p "/usage"`, then a fresh statusline snapshot | Claude Code installed and signed in | Shipped |
 | codex | Yes, from the CLI itself | Codex CLI `app-server` JSON-RPC | Codex CLI installed and signed in | Shipped |
 | opencode go | Yes with a cookie, else a spend estimate | `opencode.ai/_server` RPC, falling back to `opencode.db` spend vs caps | Optional session cookie for exact figures | Shipped |
 
@@ -18,16 +18,27 @@ Verdict up front: all three providers can show real or near-real limit data, eac
 
 | Source | Type | Auth | Fields | Reliability |
 | --- | --- | --- | --- | --- |
-| `~/.claude/usage-snapshot.json` | local file, rewritten every ~3s by the statusline | none | `rate_limits.five_hour.{used_percentage,resets_at}`, `rate_limits.seven_day.{used_percentage,resets_at}`, `context_window`, `cost`, `model` | High while a session is open; goes stale otherwise |
+| `claude --safe-mode -p "/usage" --output-format json --no-session-persistence` | first-party CLI | Claude Code's own login | current session %, weekly all-models %, model-specific weekly %, reset text | Live account fetch with no model turn, but quota fields are text rather than a stable JSON schema |
+| `~/.claude/usage-snapshot.json` | local file, rewritten every ~3s by the statusline | none | `rate_limits.five_hour.{used_percentage,resets_at}`, `rate_limits.seven_day.{used_percentage,resets_at}`, `context_window`, `cost`, `model` | Official schema and high confidence while fresh; goes stale otherwise |
 | `GET https://api.anthropic.com/api/oauth/usage` | HTTP, undocumented (powers `/usage`) | OAuth bearer token + `anthropic-beta: oauth-2025-04-20` + `User-Agent: claude-code/<version>` | session %, weekly all-models %, weekly per-model %, reset timestamps | Reverse-engineered; 429s hard without the User-Agent header; poll no faster than ~180s |
 | `~/.claude/projects/**/*.jsonl` | local transcripts | none | per-message token usage, model, timestamps | Usable for activity shape once de-duplicated (see below); never for accounting |
 | `v1/organizations/usage_report/*` | HTTP, official | Admin API key | org-level tokens/costs | Official but orgs only; not applicable to a personal Max/Pro plan |
 
 ### Recommendation
 
-Keep the statusline snapshot as the primary source; it is already wired in and carries exactly the two windows the UI shows.
-Do not adopt the OAuth endpoint as a default path: on macOS the token lives in the Keychain (no `~/.claude/.credentials.json` on this machine), and since early 2026 Anthropic rejects consumer OAuth tokens used outside Claude Code / Claude.ai, so a third-party poller risks 401s and ToS trouble.
+Use the signed-in Claude CLI as the live source, with a conservative three-minute minimum poll interval and a ten-minute cache cutoff.
+The command was verified locally on Claude Code 2.1.220: it completed in 627 ms with zero turns, zero tokens, and zero cost, and matched the Claude web dashboard at 10% session and 95% weekly usage.
+Its outer response is JSON but the quota fields remain human-readable text, so parsing must be defensive and fail closed if both expected windows are not present.
+Use the documented statusline schema only while its file is under ten minutes old.
+Never render an older statusline percentage as current, even with a stale warning; show the limits as unavailable until the CLI succeeds or a fresh session snapshot arrives.
+Do not adopt the OAuth endpoint as a default path: on macOS the token lives in the Keychain, consumer OAuth is intended for Anthropic's own clients, and direct polling introduces credential, compatibility, rate-limit, and Terms risks.
 Treat transcripts as the histogram source only.
+
+### Why not the Claude web cookie
+
+The Claude usage page is live and was independently verified against the CLI, but its session cookie is a full account credential rather than a usage-only token.
+The app must not request, store, or replay `sessionKey`, and users should never paste it into configuration or issue reports.
+Browser scraping also violates the clean first-party authentication boundary and can break with Cloudflare or dashboard changes.
 
 ### The transcript double-count, and a correction
 
@@ -43,7 +54,8 @@ The lesson worth keeping: this was measurable locally in a few minutes and the p
 
 ### Staleness handling
 
-Surface the snapshot's age (mtime) and mark the provider stale when it exceeds the statusline refresh by minutes, telling the user to open a Claude Code session.
+Surface the snapshot's age (mtime), but remove its percentages once it exceeds ten minutes.
+The next provider refresh asks the signed-in Claude CLI for live values, so opening an interactive Claude session is only the fallback.
 
 ## codex
 
@@ -98,7 +110,7 @@ Writing the rotated token back into opencode's `auth.json` avoids that but means
 ### Implemented
 
 Codex CLI 0.146.0 was installed, which made the CLI RPC route available, so no token is ever read, refreshed or transmitted by this app.
-`src/data/real/codex-app-server.ts` spawns `codex -s read-only -a untrusted app-server`, sends `initialize`, then `account/rateLimits/read` and `account/read`, and kills the child on every path including the timeout.
+`src/data/real/codex-app-server.ts` spawns `codex -s read-only -a untrusted app-server`, sends `initialize`, then `account/rateLimits/read`, `account/read`, and `account/usage/read`, and kills the child on every path including timeout and cancellation.
 
 Ground truth beat the third-party docs in three places, all verified against `codex app-server generate-json-schema` and a live call:
 
@@ -131,9 +143,12 @@ The daily buckets then land on 22, 23 and 29 Jul - the same days opencode.db rec
 
 Account identity is still not directly proven, so nothing in the UI asserts it.
 
-### Cost
+### Cost and freshness
 
-Spawning a process is heavier than an HTTP call, so the poll interval stays at 60s minimum with a five-minute backoff on failure and a 15-minute staleness cut-off.
+Spawning a process is heavier and visible to coding-agent observers such as Herdr.
+Codex therefore refreshes only when the user presses `r` by default; onboarding and Settings offer an explicit startup-refresh preference.
+The 60-second application interval never launches Codex, hidden providers are never queried, failures back off for five minutes, and copied values expire after 15 minutes.
+Any failed refresh clears the copied account snapshot instead of extending an old percentage; the next successful `account/rateLimits/read` restores it.
 Tests inject `stubCodexLimitsSource` so the suite never launches a real codex process.
 
 ### Re-verified 2026-08-02
@@ -170,6 +185,9 @@ Burning a scarce credit from a background poller - or from a mis-keyed keystroke
 OpenCode's internal server query publishes exact percent-of-limit and reset data to an authenticated dashboard session.
 Without a session cookie, Limitless computes an estimate locally by summing `message.cost` inside each window and dividing by the Go plan cap.
 The UI labels only locally computed windows as estimates.
+There is still no supported public OpenCode Go quota endpoint, CLI command, local server route, or SDK method.
+Open issue `anomalyco/opencode#16017` and unmerged PR `#16513` propose `GET /zen/go/v1/usage`; production currently returns 404.
+Adopt that API-key-authenticated route if it is merged and documented.
 
 ### Implemented
 
@@ -187,7 +205,7 @@ The parser reads rolling, weekly, and monthly windows from both JSON and seriali
 
 ### Enabling server limits
 
-Server limits need an opencode.ai session cookie, which the app only ever reads:
+Server limits currently need an opencode.ai session cookie, which is a full dashboard credential:
 
 ```bash
 # from a logged-in opencode.ai tab: devtools > application > cookies
@@ -200,10 +218,13 @@ Only the `auth` / `__Host-auth` cookies are sent; anything else in a pasted head
 The cookie's Iron seal carries its own expiry, and the app warns during its final seven days.
 Any session failure produces the same visible warning while the local estimate continues.
 Without a cookie the app shows the local estimate and says so, which is why the cookie is optional rather than a setup step.
+This private integration is opt-in and not recommended for general distribution: OpenCode's hosted Terms prohibit programmatic extraction and reverse engineering.
+Do not request a user's cookie during support, and do not add automatic browser-cookie extraction.
 
 ### Known fragility
 
-The server function ids are content hashes that rotate whenever opencode.ai redeploys, and there is no runtime discovery mechanism - CodexBar hardcodes them too.
+The server function ids are content hashes that rotate whenever opencode.ai redeploys.
+They can technically be discovered from public deployment assets, but doing so would deepen the scraping and Terms risk, so the app intentionally does not automate discovery.
 When they rotate, the parse fails, the UI falls back to the estimate with a note, and the ids need refreshing from `SERVER_FUNCTION_IDS`.
 
 ## Cross-cutting
@@ -215,18 +236,20 @@ Optional future inputs: a plan-cap override for opencode go, and a manual OpenAI
 
 ### Polling and freshness
 
-Local files (snapshot, opencode.db) can be re-read on the existing 60s poll and on `r` refresh; they are cheap.
-`wham/usage` gets its own 60s minimum interval with backoff on 429/5xx.
-Every provider carries a fetched-at timestamp so the UI can flag staleness per source, not just globally.
+Local files (`usage-snapshot.json`, `opencode.db`) are re-read on the existing 60s app poll and on `r` refresh.
+Claude CLI usage is requested at most every three minutes, while the optional OpenCode server source uses a 60-second minimum interval.
+Codex app-server is manual by default, with one optional startup request and no interval polling.
+Claude's copied limits expire after ten minutes; Codex and OpenCode server copies expire after 15 minutes.
+Recognized and unexpected live-source failures clear exact cached values immediately rather than presenting an old result as current.
 
 ### Staying up to date
 
 The two HTTP sources are unofficial; pin our request shapes in one module each and fail soft to the local fallback when the schema drifts.
 Watch these repos when something breaks, since they track the same endpoints: `openai/codex`, `steipete/codexbar`, `lhl/pi-codex-status`, `ryoppippi/ccusage`, `slkiser/opencode-quota`, `anthropics/claude-code` issues.
-Re-verify the Go plan dollar caps and the `anthropic-beta` header value on each release.
+Re-verify the Go plan dollar caps and Claude CLI `/usage` text shape on each release.
 
 ### Risks
 
-`wham/usage` is private and can change or be blocked without notice; the session-file fallback and a clear "limits unavailable" state must stay.
-Anthropic consumer OAuth tokens are locked to first-party clients, which is why the statusline snapshot (first-party output) is the safe channel.
-opencode go percent is an estimate; if opencode's cost accounting drifts from billing, our bar drifts with it.
+`wham/usage` is private and can change or be blocked without notice, which is why Codex access stays behind its official app-server boundary.
+Anthropic consumer OAuth tokens are locked to first-party clients, which is why both Claude sources are first-party CLI outputs.
+OpenCode Go's local percentage is only an estimate: local data omits other devices, server-side model multipliers, deleted sessions, and exact window anchors.

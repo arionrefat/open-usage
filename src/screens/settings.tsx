@@ -63,7 +63,6 @@ function ProviderRow({
           {
             text: padEnd(`${status.dot} ${status.label}`, STATUS_COLUMN),
             color: connection.isEnabled ? status.color : COLORS.textFaint,
-            onClick: () => actions.settingsCycleStatus(id),
           },
         ]}
       />
@@ -72,11 +71,10 @@ function ProviderRow({
         background={background}
         left={[
           { text: "   " },
-          { text: padEnd("credential", LABEL_COLUMN), color: COLORS.textFaint },
+          { text: padEnd("connection", LABEL_COLUMN), color: COLORS.textFaint },
           {
             text: connection.credential || "- none stored -",
             color: connection.credential ? COLORS.textMuted : COLORS.textFaint,
-            onClick: () => actions.settingsPasteKey(id),
           },
         ]}
         right={[{ text: connection.note, color: COLORS.textGhost }]}
@@ -129,9 +127,9 @@ export function Settings(props: SettingsProps) {
         left={[
           { text: "settings", color: COLORS.textBright, isBold: true },
           { text: " ▏ ", color: COLORS.rule },
-          { text: "providers, credentials, subscriptions", color: COLORS.textFaint },
+          { text: "providers, connections, refresh", color: COLORS.textFaint },
         ]}
-        right={[{ text: "~/.config/limitless/config.json", color: COLORS.textGhost }]}
+        right={[{ text: "~/.config/limitless/preferences.json", color: COLORS.textGhost }]}
       />
       <Spacer />
       <SplitLine
@@ -139,12 +137,6 @@ export function Settings(props: SettingsProps) {
         left={[{ text: "providers", color: COLORS.textDim }]}
         right={[
           ...keyHint("space", "show / hide", () => actions.settingsToggle(selectedId)),
-          { text: "  " },
-          ...keyHint("↵", "cycle status", () => actions.settingsCycleStatus(selectedId)),
-          { text: "  " },
-          ...keyHint("p", "paste key", () => actions.settingsPasteKey(selectedId)),
-          { text: "  " },
-          ...keyHint("d", "disconnect", () => actions.settingsDisconnect(selectedId)),
         ]}
       />
       <Rule width={width} />
@@ -163,6 +155,20 @@ export function Settings(props: SettingsProps) {
         ]}
       />
       <SettingLine label="poll interval" value={`${POLL_INTERVAL_SECONDS}s`} hint="r forces a refresh" />
+      <Line
+        segments={[
+          { text: padEnd("codex on startup", SETTING_LABEL_COLUMN), color: COLORS.textFaint },
+          ...toggleSegments(
+            [
+              { label: "off", value: false },
+              { label: "on", value: true },
+            ],
+            state.refreshCodexOnStartup,
+            actions.setRefreshCodexOnStartup,
+          ),
+          { text: "  c toggles · off means manual r only", color: COLORS.textGhost },
+        ]}
+      />
       <SettingLine
         label="warn threshold"
         value={`${THRESHOLDS.danger}%`}

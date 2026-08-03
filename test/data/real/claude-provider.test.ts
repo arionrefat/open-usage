@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { HOUR_MS } from "../../../src/data/real/aggregate";
 import { buildClaudeProvider, createClaudeMeta } from "../../../src/data/real/claude-provider";
 import type { SnapshotFile, WeeklyTrend } from "../../../src/data/real/statusline-snapshot";
+import { dormantClaudeLimitsSource } from "../../../src/data/real/claude-usage";
 
 const NOW = new Date(2026, 0, 15, 12);
 const NOW_MS = NOW.getTime();
@@ -54,6 +55,7 @@ function build(options: {
     },
     history: { prompts: 0, sessions: 0, latestMs: 0 },
     snapshotFile: options.snapshotFile ?? null,
+    limitsSource: dormantClaudeLimitsSource,
     hasStatusline: options.hasStatusline ?? true,
     trend: trend(options.trendRate ?? null),
     dates: ["2026-01-15"],
@@ -70,11 +72,47 @@ describe("buildClaudeProvider", () => {
     expect(provider.notice).toBeUndefined();
   });
 
-  test("a stale snapshot adds the stale footnote and notice", () => {
+  test("a stale snapshot is never exposed as current usage", () => {
     const provider = build({ snapshotFile: snapshot(11 * 60_000) });
 
+    expect(provider.limits.every((limit) => limit.percent === null)).toBe(true);
+    expect(provider.scopes.session.percent).toBeNull();
+    expect(provider.scopes.weekly.percent).toBeNull();
     expect(provider.limits[0]?.footnote).toContain("snapshot stale");
-    expect(provider.notice?.segments[0]?.text).toContain("snapshot stale");
+    expect(provider.limits[1]?.footnote).toContain("snapshot stale");
+    expect(provider.notice?.segments[0]?.text).toContain("stale statusline ignored");
+  });
+
+  test("live cli usage replaces a stale statusline snapshot", () => {
+    const provider = buildClaudeProvider({
+      meta: createClaudeMeta(),
+      transcripts: {
+        buckets: new Map(),
+        latestMs: 0,
+        modelTokens: new Map(),
+        tokenSplit: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      },
+      history: { prompts: 0, sessions: 0, latestMs: 0 },
+      snapshotFile: snapshot(11 * 60_000),
+      limitsSource: {
+        read: () => ({
+          session: { percent: 10, reset: "resets Aug 4 at 3:20am (Asia/Dhaka)" },
+          weekly: { percent: 95, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
+          fetchedAtMs: NOW_MS,
+        }),
+        note: () => null,
+        poll: () => Promise.resolve(),
+      },
+      hasStatusline: true,
+      trend: trend(null),
+      dates: ["2026-01-15"],
+      now: NOW,
+    });
+
+    expect(provider.scopes.session.percent).toBe(10);
+    expect(provider.scopes.weekly.percent).toBe(95);
+    expect(provider.limits[1]?.reset).toBe("resets Aug 5 at 6am (Asia/Dhaka)");
+    expect(provider.notice).toBeUndefined();
   });
 
   test("a missing snapshot yields capless session and weekly limits", () => {
@@ -103,7 +141,7 @@ describe("buildClaudeProvider", () => {
     ]);
     expect(provider.details?.[0]?.rows).toEqual([
       { label: "model", value: "Sonnet 4.5" },
-      { label: "context used", value: "125K of 1.0M", percent: 12.5 },
+      { label: "context used", value: "120K of 1.0M", percent: 12.5 },
       { label: "session cost", value: "$2.60" },
       { label: "lines", value: "+0 / -1" },
       { label: "effort", value: "high" },
@@ -122,7 +160,7 @@ describe("buildClaudeProvider", () => {
     partial.reading.cost = null;
     partial.reading.effort = null;
     expect(build({ snapshotFile: partial }).details?.[0]?.rows).toEqual([
-      { label: "context used", value: "125K of 1.0M", percent: 12.5 },
+      { label: "context used", value: "120K of 1.0M", percent: 12.5 },
     ]);
   });
 });

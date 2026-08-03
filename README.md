@@ -57,7 +57,7 @@ bun run limitless --no-daily-split     # hide the stacked daily chart on the ove
 | `?`     | keymap                                          |
 | `q`     | quit                                            |
 
-On the settings screen `space` shows or hides a provider, `↵` or `p` opens credential replacement, and `d` disconnects it.
+On the settings screen `space` shows or hides a provider and `c` controls whether Codex refreshes on startup.
 
 ## Mouse
 
@@ -69,10 +69,21 @@ The mouse wheel scrolls views taller than the terminal.
 The UI reads everything through the `UsageProvider` interface in `src/data/types.ts`.
 Production mode reads local provider sources through `src/data/real-provider.ts`.
 The `limitless`, `preview`, and `shot` scripts use `src/data/mock-provider.ts` for fixed sample figures.
-The mock adapter masks pasted credentials but does not authenticate or persist them.
-Settings changes remain in memory for the current session.
+The setup wizard opens automatically on first launch, auto-detects provider logins, and never asks users to paste tokens.
+Provider visibility remains in memory for the current session.
+The Codex startup preference is stored in `~/.config/limitless/preferences.json`.
 
-Everything is read-only: the app never writes to your home directory, and nothing leaves your machine.
+Provider access is read-only: the app writes only its small preferences file and never reads provider tokens directly.
+Claude and Codex limits are fetched through their signed-in first-party CLIs; OpenCode Go uses local data unless its optional dashboard integration is explicitly configured.
+
+### Provider Data
+
+- Claude limits come from the signed-in Claude CLI's `/usage` command; charts, model share, token split, prompts, and sessions come from local `~/.claude` history and transcripts. Plan labels are read from `claude auth status --json`.
+- Codex live limits and account-wide analytics come from a short-lived, sandboxed `codex app-server` child process. Local per-device usage is read from native rollout files under `~/.codex/sessions` (with opencode.db as a fallback). Codex is manual with `r` by default; users can explicitly enable one startup refresh in onboarding or Settings. Periodic polling never launches Codex.
+- OpenCode Go analytics come from `opencode.db` and are model-weighted against published per-model allowances. Exact subscription windows require the optional private dashboard integration; without it, percentages are visibly labeled as model-weighted local estimates.
+
+There is no supported public Codex subscription HTTP API that avoids the first-party CLI process.
+Directly reading Codex OAuth credentials or calling its private backend would be less secure and less stable, so Limitless does neither.
 
 ## Width
 

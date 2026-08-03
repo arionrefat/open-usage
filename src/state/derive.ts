@@ -124,8 +124,7 @@ function rankConsumption(
 function alertText(liveCount: number, issueCount: number): string {
   if (liveCount === 0) return "○ nothing tracked";
   if (issueCount === 0) return "✓ all clear";
-  const issueLabel = issueCount > 1 ? "issues" : "issue";
-  return `▲ ${issueCount} ${issueLabel}`;
+  return "▲ warning";
 }
 
 function alertColor(
@@ -134,8 +133,7 @@ function alertColor(
   disconnectedCount: number,
 ): string {
   if (liveCount === 0) return COLORS.textFaint;
-  if (hotCount > 0) return COLORS.danger;
-  if (disconnectedCount > 0) return COLORS.warn;
+  if (hotCount > 0 || disconnectedCount > 0) return COLORS.danger;
   return COLORS.ok;
 }
 

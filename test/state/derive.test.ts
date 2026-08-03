@@ -3,6 +3,7 @@ import { mockUsageProvider } from "../../src/data/mock-provider";
 import type { ProviderId } from "../../src/data/types";
 import { createInitialState, type AppState } from "../../src/state/app-state";
 import { deriveState } from "../../src/state/derive";
+import { COLORS } from "../../src/theme";
 
 const FILTER_CASES: [string, ProviderId[]][] = [
   ["claude", ["cl"]],
@@ -15,16 +16,18 @@ function initialState(): AppState {
 }
 
 describe("derived state", () => {
-  test("alerts count only the current scope", () => {
+  test("shows a red warning for limit or connection problems", () => {
     const snapshot = mockUsageProvider.readSnapshot();
 
     const weekly = deriveState(initialState(), snapshot);
     expect(weekly.hotIds).toEqual(["cl"]);
-    expect(weekly.alertText).toBe("▲ 2 issues");
+    expect(weekly.alertText).toBe("▲ warning");
+    expect(weekly.alertColor).toBe(COLORS.danger);
 
     const session = deriveState({ ...initialState(), scope: "session" }, snapshot);
     expect(session.hotIds).toEqual([]);
-    expect(session.alertText).toBe("▲ 1 issue");
+    expect(session.alertText).toBe("▲ warning");
+    expect(session.alertColor).toBe(COLORS.danger);
   });
 
   test("names the all range 'all time'", () => {

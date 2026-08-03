@@ -3,29 +3,27 @@ import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 import { App } from "../src/app";
 import { mockUsageProvider } from "../src/data/mock-provider";
-import type { UsageProvider } from "../src/data/types";
+import type { RefreshRequest, UsageProvider } from "../src/data/types";
 
-function pendingProvider(onRefresh?: (signal?: AbortSignal) => void): UsageProvider {
+function pendingProvider(onRefresh?: (request: RefreshRequest) => void): UsageProvider {
   return {
     ...mockUsageProvider,
-    refresh: (signal) => {
-      onRefresh?.(signal);
+    refresh: (request) => {
+      onRefresh?.(request);
       return new Promise((_, reject) => {
-        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        request.signal?.addEventListener("abort", () => reject(request.signal?.reason), { once: true });
       });
     },
   };
 }
 
 describe("App interactions", () => {
-  test("starts provider polling immediately", async () => {
-    let refreshCount = 0;
-    let refreshSignal: AbortSignal | undefined;
+  test("starts polling without spawning codex by default", async () => {
+    let refreshRequest: RefreshRequest | undefined;
     const setup = await testRender(
       <App
-        provider={pendingProvider((signal) => {
-          refreshCount += 1;
-          refreshSignal = signal;
+        provider={pendingProvider((request) => {
+          refreshRequest = request;
         })}
         startup={{ screen: "app", view: "overview", mode: "detailed" }}
       />,
@@ -33,11 +31,36 @@ describe("App interactions", () => {
     );
 
     try {
-      expect(refreshCount).toBe(1);
+      expect(refreshRequest?.reason).toBe("startup");
+      expect(refreshRequest?.providerIds).toEqual(["cl", "go"]);
     } finally {
       act(() => setup.renderer.destroy());
     }
-    expect(refreshSignal?.aborted).toBe(true);
+    expect(refreshRequest?.signal?.aborted).toBe(true);
+  });
+
+  test("includes codex at startup only after explicit opt-in", async () => {
+    let refreshRequest: RefreshRequest | undefined;
+    const setup = await testRender(
+      <App
+        provider={pendingProvider((request) => {
+          refreshRequest = request;
+        })}
+        startup={{
+          screen: "app",
+          view: "overview",
+          mode: "detailed",
+          refreshCodexOnStartup: true,
+        }}
+      />,
+      { width: 80, height: 30 },
+    );
+
+    try {
+      expect(refreshRequest?.providerIds).toEqual(["cl", "cx", "go"]);
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
   });
 
   test("--no-poll mode never calls refresh, but r still does", async () => {
@@ -88,35 +111,48 @@ describe("App interactions", () => {
     }
   });
 
-  test("accepts bracketed paste without displaying the raw credential", async () => {
+  test("onboarding toggles and persists the codex startup choice without credentials", async () => {
+    const persisted: boolean[] = [];
+    let completed = 0;
+    let refreshRequest: RefreshRequest | undefined;
     const setup = await testRender(
       <App
-        provider={pendingProvider()}
+        provider={pendingProvider((request) => {
+          refreshRequest = request;
+        })}
         startup={{ screen: "onboarding", view: "overview", mode: "detailed" }}
+        onRefreshCodexOnStartupChange={(enabled) => persisted.push(enabled)}
+        onOnboardingFinish={() => {
+          completed += 1;
+        }}
       />,
       { width: 80, height: 30 },
     );
 
     try {
-      expect(setup.renderer.keyInput.listenerCount("paste")).toBeGreaterThan(0);
-      act(() => setup.mockInput.pressEnter());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await setup.flush();
+      expect(setup.captureCharFrame()).toContain("refresh codex on startup");
+      expect(refreshRequest).toBeUndefined();
+      act(() => setup.mockInput.pressKey("c"));
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
         await setup.flush();
       });
-      expect(setup.captureCharFrame()).toContain("connect claude code");
-      act(() => {
-        setup.renderer.stdin.emit(
-          "data",
-          Buffer.from("\x1b[200~sk-secret-value-1234\x1b[201~"),
-        );
-      });
+      expect(persisted).toEqual([true]);
+      act(() => setup.mockInput.pressEnter());
       await new Promise((resolve) => setTimeout(resolve, 20));
       await setup.flush();
-
-      const entryFrame = setup.captureCharFrame();
-      expect(entryFrame).toContain("••••");
-      expect(entryFrame).not.toContain("sk-secret-value-1234");
+      const summary = setup.captureCharFrame();
+      expect(summary).toContain("codex startup refresh");
+      expect(summary).toContain("provider logins stay in their own CLIs");
+      expect(summary).not.toContain("paste credential");
+      act(() => setup.mockInput.pressEnter());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await setup.flush();
+      expect(completed).toBe(1);
+      expect(refreshRequest?.reason).toBe("startup");
+      expect(refreshRequest?.providerIds).toEqual(["cl", "cx", "go"]);
     } finally {
       act(() => setup.renderer.destroy());
     }

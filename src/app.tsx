@@ -6,6 +6,7 @@ import { APP_NAME, POLL_INTERVAL_SECONDS } from "./config";
 import {
   PROVIDER_IDS,
   type ProviderId,
+  type RefreshReason,
   type ScopeKey,
   type UsageProvider,
   type UsageSnapshot,
@@ -14,7 +15,6 @@ import { useBlink } from "./hooks/use-blink";
 import {
   VIEW_KEYS,
   PROVIDER_VIEWS,
-  MAX_CREDENTIAL_LENGTH,
   createAppReducer,
   createInitialState,
   type AppStateOptions,
@@ -55,9 +55,17 @@ export interface AppProps {
   startup: Omit<AppStateOptions, "connections">;
   /** false disables the startup refresh and poll timer (--no-poll); r still refreshes. */
   isPollingEnabled?: boolean;
+  onRefreshCodexOnStartupChange?: (enabled: boolean) => void;
+  onOnboardingFinish?: () => void;
 }
 
-export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
+export function App({
+  provider,
+  startup,
+  isPollingEnabled = true,
+  onRefreshCodexOnStartupChange,
+  onOnboardingFinish,
+}: AppProps) {
   const renderer = useRenderer();
   const { width, height } = useTerminalDimensions();
   const meta = useMemo(() => provider.listMeta(), [provider]);
@@ -74,18 +82,38 @@ export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
   );
   const derived = useMemo(() => deriveState(state, snapshot), [state, snapshot]);
   const refreshAbortRef = useRef<AbortController | null>(null);
+  const pendingManualRefreshRef = useRef(false);
+  const refreshContextRef = useRef({
+    connections: state.connections,
+    refreshCodexOnStartup: state.refreshCodexOnStartup,
+    screen: state.screen,
+  });
+  refreshContextRef.current = {
+    connections: state.connections,
+    refreshCodexOnStartup: state.refreshCodexOnStartup,
+    screen: state.screen,
+  };
   // Read by quit() so its identity stays stable; unstable deps here would
   // re-render the whole tree via `actions` and feed Bun's per-commit leak.
   const sessionRef = useRef({ connections: state.connections, fetchedAt: snapshot.fetchedAt });
   sessionRef.current = { connections: state.connections, fetchedAt: snapshot.fetchedAt };
 
-  const refresh = useCallback(() => {
-    if (refreshAbortRef.current) return;
+  const refresh = useCallback((reason: RefreshReason = "manual") => {
+    if (refreshAbortRef.current) {
+      if (reason === "manual") pendingManualRefreshRef.current = true;
+      return;
+    }
+    const context = refreshContextRef.current;
+    const providerIds = PROVIDER_IDS.filter((id) => {
+      if (!context.connections[id].isEnabled) return false;
+      if (id !== "cx") return true;
+      return reason === "manual" || (reason === "startup" && context.refreshCodexOnStartup);
+    });
     const controller = new AbortController();
     refreshAbortRef.current = controller;
     dispatch({ type: "refresh-start" });
     void Promise.resolve()
-      .then(() => provider.refresh(controller.signal))
+      .then(() => provider.refresh({ reason, providerIds, signal: controller.signal }))
       .then((nextSnapshot) => {
         if (controller.signal.aborted) return;
         setSnapshot(nextSnapshot);
@@ -97,20 +125,27 @@ export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
         dispatch({ type: "refresh-failure", message });
       })
       .finally(() => {
-        if (refreshAbortRef.current === controller) refreshAbortRef.current = null;
+        if (refreshAbortRef.current !== controller) return;
+        refreshAbortRef.current = null;
+        if (pendingManualRefreshRef.current) {
+          pendingManualRefreshRef.current = false;
+          refresh("manual");
+        }
       });
   }, [provider]);
 
   useEffect(() => {
     if (!isPollingEnabled) return;
-    refresh();
-    const timer = setInterval(refresh, POLL_INTERVAL_MS);
+    if (startup.screen !== "onboarding") refresh("startup");
+    const timer = setInterval(() => {
+      if (refreshContextRef.current.screen === "app") refresh("interval");
+    }, POLL_INTERVAL_MS);
     return () => {
       clearInterval(timer);
       refreshAbortRef.current?.abort();
       refreshAbortRef.current = null;
     };
-  }, [isPollingEnabled, refresh]);
+  }, [isPollingEnabled, refresh, startup.screen]);
 
   const quit = useCallback(
     (exitCode = 0) => {
@@ -150,26 +185,31 @@ export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
       moveSelection: (delta: number) => dispatch({ type: "move-selection", delta }),
       openSelected: () => dispatch({ type: "open-selected" }),
       cycleView: () => dispatch({ type: "cycle-view" }),
-      refresh,
+      refresh: () => refresh("manual"),
       startFilter: () => dispatch({ type: "start-filter" }),
       toggleHelp: () => dispatch({ type: "toggle-help" }),
       closeHelp: () => dispatch({ type: "close-help" }),
       openOnboarding: () => dispatch({ type: "open-onboarding" }),
       onboardingPick: (index: number) => dispatch({ type: "onboarding-pick", index }),
       onboardingContinue: () => dispatch({ type: "onboarding-begin-auth" }),
-      onboardingFinish: () => dispatch({ type: "onboarding-finish" }),
+      onboardingFinish: () => {
+        dispatch({ type: "onboarding-finish" });
+        onOnboardingFinish?.();
+        if (isPollingEnabled) refresh("startup");
+      },
+      setRefreshCodexOnStartup: (enabled) => {
+        dispatch({ type: "set-refresh-codex-on-startup", enabled });
+        onRefreshCodexOnStartupChange?.(enabled);
+      },
       settingsToggle: (id: ProviderId) => dispatch({ type: "settings-toggle-enabled", id }),
-      settingsCycleStatus: (id: ProviderId) => dispatch({ type: "settings-cycle-status", id }),
-      settingsPasteKey: (id: ProviderId) => dispatch({ type: "settings-paste-key", id }),
-      settingsDisconnect: (id: ProviderId) => dispatch({ type: "settings-disconnect", id }),
       quit: () => quit(),
     }),
-    [quit, refresh],
+    [isPollingEnabled, onOnboardingFinish, onRefreshCodexOnStartupChange, quit, refresh],
   );
 
   const handleOnboardingKey = useCallback(
     (key: KeyEvent) => {
-      const { step, typed } = state.onboarding;
+      const { step } = state.onboarding;
       const char = printableChar(key);
 
       if (step === 0) {
@@ -177,28 +217,19 @@ export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
         else if (key.name === "k" || key.name === "up") dispatch({ type: "onboarding-move", delta: -1 });
         else if (key.name === "space" || char === " " || char === "x") dispatch({ type: "onboarding-toggle" });
         else if (char === "a") dispatch({ type: "onboarding-select-all" });
+        else if (char === "c") {
+          actions.setRefreshCodexOnStartup(!state.refreshCodexOnStartup);
+        }
         else if (key.name === "return") dispatch({ type: "onboarding-begin-auth" });
         else if (key.name === "escape") dispatch({ type: "onboarding-cancel" });
         return;
       }
 
-      if (step === 1) {
-        if (key.name === "backspace") dispatch({ type: "onboarding-backspace" });
-        else if (key.name === "escape" || key.name === "return") {
-          const isSkipped = key.name === "escape" || typed.trim().length === 0;
-          dispatch({
-            type: "onboarding-commit",
-            maskedCredential: isSkipped ? null : provider.maskCredential(typed.trim()),
-          });
-        } else if (char) dispatch({ type: "onboarding-append", text: char });
-        return;
-      }
-
       if (key.name === "return" || key.name === "space" || char === " ") {
-        dispatch({ type: "onboarding-finish" });
+        actions.onboardingFinish();
       }
     },
-    [provider, state.onboarding],
+    [actions, state.onboarding, state.refreshCodexOnStartup],
   );
 
   const handleSettingsKey = useCallback((key: KeyEvent): boolean => {
@@ -215,20 +246,12 @@ export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
       dispatch({ type: "settings-toggle-enabled" });
       return true;
     }
-    if (key.name === "return") {
-      dispatch({ type: "settings-cycle-status" });
-      return true;
-    }
-    if (char === "p") {
-      dispatch({ type: "settings-paste-key" });
-      return true;
-    }
-    if (char === "d") {
-      dispatch({ type: "settings-disconnect" });
+    if (char === "c") {
+      actions.setRefreshCodexOnStartup(!state.refreshCodexOnStartup);
       return true;
     }
     return false;
-  }, []);
+  }, [actions, state.refreshCodexOnStartup]);
 
   const handleFilterKey = useCallback((key: KeyEvent) => {
     const char = printableChar(key);
@@ -258,7 +281,7 @@ export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
       if (char === "?") dispatch({ type: "toggle-help" });
       else if (char === "/") dispatch({ type: "start-filter" });
       else if (char === "q") quit();
-      else if (char === "r") refresh();
+      else if (char === "r") refresh("manual");
       else if (char === "t") dispatch({ type: "cycle-range" });
       else if (char === "m") dispatch({ type: "toggle-mode" });
       else if (char === "w") dispatch({ type: "toggle-scope" });
@@ -318,14 +341,6 @@ export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
     useCallback(
       (event) => {
         lastInputRef.current = Date.now();
-        if (event.bytes.length > MAX_CREDENTIAL_LENGTH) {
-          dispatch({
-            type: "onboarding-input-error",
-            message: "credential exceeds the 16,384 byte paste limit",
-          });
-          event.preventDefault();
-          return;
-        }
         dispatch({ type: "paste-input", text: TEXT_DECODER.decode(event.bytes) });
         event.preventDefault();
       },
@@ -333,9 +348,7 @@ export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
     ),
   );
 
-  const isCursorVisible = useBlink(
-    (state.screen === "onboarding" && state.onboarding.step === 1) || state.isFiltering,
-  );
+  const isCursorVisible = useBlink(state.isFiltering);
   const contentWidth = Math.max(1, width - HORIZONTAL_PADDING * 2 - SCROLLBAR_WIDTH);
   const detailChartHeight = Math.max(
     DETAIL_CHART_MIN_HEIGHT,
@@ -350,7 +363,6 @@ export function App({ provider, startup, isPollingEnabled = true }: AppProps) {
           state={state}
           snapshot={snapshot}
           width={width}
-          isCursorVisible={isCursorVisible}
           actions={actions}
         />
       </box>

@@ -1,7 +1,6 @@
 import {
   PROVIDER_IDS,
   RANGE_KEYS,
-  type ConnectionStatus,
   type ProviderConnection,
   type ProviderId,
   type ProviderMeta,
@@ -20,14 +19,10 @@ export type OverviewMode = "simple" | "detailed";
 export type Screen = "app" | "onboarding";
 
 export interface OnboardingState {
-  /** 0 = pick providers, 1 = paste credentials, 2 = summary. */
-  step: 0 | 1 | 2;
+  /** 0 = pick providers, 1 = summary. */
+  step: 0 | 1;
   cursor: number;
   picks: Record<ProviderId, boolean>;
-  /** Index into the list of picked providers currently being connected. */
-  index: number;
-  typed: string;
-  inputError: string | null;
 }
 
 export interface AppState {
@@ -47,6 +42,7 @@ export interface AppState {
   filterQuery: string;
   useSeverityColors: boolean;
   isDailySplitVisible: boolean;
+  refreshCodexOnStartup: boolean;
   connections: Record<ProviderId, ProviderConnection>;
   onboarding: OnboardingState;
 }
@@ -57,6 +53,7 @@ export interface AppStateOptions {
   mode?: OverviewMode;
   useSeverityColors?: boolean;
   isDailySplitVisible?: boolean;
+  refreshCodexOnStartup?: boolean;
   connections: Record<ProviderId, ProviderConnection>;
 }
 
@@ -86,14 +83,12 @@ export function createInitialState(options: AppStateOptions): AppState {
     filterQuery: "",
     useSeverityColors: options.useSeverityColors ?? false,
     isDailySplitVisible: options.isDailySplitVisible ?? true,
+    refreshCodexOnStartup: options.refreshCodexOnStartup ?? false,
     connections: options.connections,
     onboarding: {
       step: 0,
       cursor: 0,
       picks: picksFromConnections(options.connections),
-      index: 0,
-      typed: "",
-      inputError: null,
     },
   };
 }
@@ -126,31 +121,11 @@ export type AppAction =
   | { type: "onboarding-pick"; index: number }
   | { type: "onboarding-select-all" }
   | { type: "onboarding-begin-auth" }
-  | { type: "onboarding-append"; text: string }
-  | { type: "onboarding-backspace" }
-  | { type: "onboarding-input-error"; message: string }
-  | { type: "onboarding-commit"; maskedCredential: string | null }
   | { type: "onboarding-finish" }
   | { type: "onboarding-cancel" }
+  | { type: "set-refresh-codex-on-startup"; enabled: boolean }
   | { type: "settings-move"; delta: number }
-  | { type: "settings-toggle-enabled"; id?: ProviderId }
-  | { type: "settings-cycle-status"; id?: ProviderId }
-  | { type: "settings-paste-key"; id?: ProviderId }
-  | { type: "settings-disconnect"; id?: ProviderId };
-
-export const MAX_CREDENTIAL_LENGTH = 16_384;
-
-const NEXT_STATUS: Record<ConnectionStatus, ConnectionStatus> = {
-  active: "expired",
-  expired: "none",
-  none: "active",
-};
-
-const CYCLE_NOTES: Record<ConnectionStatus, string> = {
-  active: "reconnected just now",
-  expired: "renewal needed",
-  none: "credential removed",
-};
+  | { type: "settings-toggle-enabled"; id?: ProviderId };
 
 function wrapIndex(index: number, delta: number, length: number): number {
   return (index + (delta % length) + length) % length;
@@ -207,30 +182,7 @@ function commitFilter(state: AppState, meta: Record<ProviderId, ProviderMeta>): 
   };
 }
 
-function appendCredential(state: AppState, text: string): AppState {
-  if (state.onboarding.typed.length + text.length > MAX_CREDENTIAL_LENGTH) {
-    return {
-      ...state,
-      onboarding: {
-        ...state.onboarding,
-        inputError: "credential exceeds the 16,384 character limit",
-      },
-    };
-  }
-  return {
-    ...state,
-    onboarding: {
-      ...state.onboarding,
-      typed: state.onboarding.typed + text,
-      inputError: null,
-    },
-  };
-}
-
 function pasteInput(state: AppState, text: string): AppState {
-  if (state.screen === "onboarding" && state.onboarding.step === 1) {
-    return appendCredential(state, text.replace(/[\r\n]+/g, ""));
-  }
   if (state.isFiltering) {
     return { ...state, filterQuery: state.filterQuery + text.replace(/[\r\n]+/g, " ") };
   }
@@ -252,38 +204,6 @@ function beginOnboardingAuth(state: AppState): AppState {
     onboarding: {
       ...state.onboarding,
       step: 1,
-      index: 0,
-      typed: "",
-      inputError: null,
-    },
-  };
-}
-
-function commitOnboardingCredential(
-  state: AppState,
-  maskedCredential: string | null,
-): AppState {
-  const queue = pickedProviders(state.onboarding.picks);
-  const currentId = queue[Math.min(state.onboarding.index, queue.length - 1)];
-  if (!currentId) return state;
-
-  const connection: ProviderConnection = maskedCredential
-    ? {
-        isEnabled: true,
-        status: "active",
-        credential: maskedCredential,
-        note: "added just now",
-      }
-    : state.connections[currentId];
-  const isLastProvider = state.onboarding.index >= queue.length - 1;
-  return {
-    ...withConnection(state, currentId, connection),
-    onboarding: {
-      ...state.onboarding,
-      typed: "",
-      inputError: null,
-      index: isLastProvider ? state.onboarding.index : state.onboarding.index + 1,
-      step: isLastProvider ? 2 : 1,
     },
   };
 }
@@ -357,9 +277,6 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
             step: 0,
             cursor: 0,
             picks: picksFromConnections(state.connections),
-            index: 0,
-            typed: "",
-            inputError: null,
           },
         };
       case "onboarding-move":
@@ -397,29 +314,12 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
       case "onboarding-begin-auth": {
         return beginOnboardingAuth(state);
       }
-      case "onboarding-append":
-        return appendCredential(state, action.text);
-      case "onboarding-backspace":
-        return {
-          ...state,
-          onboarding: {
-            ...state.onboarding,
-            typed: state.onboarding.typed.slice(0, -1),
-            inputError: null,
-          },
-        };
-      case "onboarding-input-error":
-        return {
-          ...state,
-          onboarding: { ...state.onboarding, inputError: action.message },
-        };
-      case "onboarding-commit": {
-        return commitOnboardingCredential(state, action.maskedCredential);
-      }
       case "onboarding-finish":
         return { ...state, screen: "app", view: "overview" };
       case "onboarding-cancel":
         return { ...state, screen: "app" };
+      case "set-refresh-codex-on-startup":
+        return { ...state, refreshCodexOnStartup: action.enabled };
       // Settings cursor and connections.
       case "settings-move":
         return {
@@ -429,34 +329,6 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
       case "settings-toggle-enabled": {
         const id = action.id ?? PROVIDER_IDS[state.settingsCursor]!;
         return withConnection(state, id, { isEnabled: !state.connections[id].isEnabled });
-      }
-      case "settings-cycle-status": {
-        const id = action.id ?? PROVIDER_IDS[state.settingsCursor]!;
-        const connection = state.connections[id];
-        const next = NEXT_STATUS[connection.status];
-        return withConnection(state, id, {
-          status: next,
-          credential: next === "none" ? "" : connection.credential || meta[id].fake,
-          note: CYCLE_NOTES[next],
-        });
-      }
-      case "settings-paste-key": {
-        const id = action.id ?? PROVIDER_IDS[state.settingsCursor]!;
-        return withConnection(state, id, {
-          isEnabled: true,
-          status: "active",
-          credential: meta[id].fake,
-          note: "pasted just now",
-        });
-      }
-      case "settings-disconnect": {
-        const id = action.id ?? PROVIDER_IDS[state.settingsCursor]!;
-        return withConnection(state, id, {
-          isEnabled: false,
-          status: "none",
-          credential: "",
-          note: "disconnected",
-        });
       }
       default:
         return state;

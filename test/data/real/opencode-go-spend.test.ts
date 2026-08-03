@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { HOUR_MS, DAY_MS } from "../../../src/data/real/aggregate";
 import {
   GO_SESSION_MS,
+  goQuotaWeight,
   goSpendFrom,
   readGoSpend,
   spendFromRows,
@@ -47,29 +48,11 @@ describe("goSpendFrom", () => {
     expect(spend.monthly.percent).toBeCloseTo(150);
   });
 
-  test("without an anchor the cycle falls back to the 1st", () => {
-    const spend = goSpendFrom([at(3 * DAY_MS, 5)], NOW, CAPS);
-    expect(spend.monthly.resetAtMs).toBe(new Date(2026, 8, 1).getTime());
-  });
-
-  test("the cycle is anchored to the subscription day, not the 1st", () => {
-    // Anchored to the 20th: the open cycle is Jul 20 -> Aug 20, so late-July
-    // spend still counts even though the calendar month has rolled over.
-    const anchor = new Date("2026-05-20T09:00:00Z").getTime();
-    const spend = goSpendFrom([at(20 * DAY_MS, 7)], NOW, CAPS, anchor);
+  test("the monthly figure is a trailing 30d window with no claimed cycle reset", () => {
+    const spend = goSpendFrom([at(20 * DAY_MS, 7), at(31 * DAY_MS, 11)], NOW, CAPS);
     expect(spend.monthly.usd).toBe(7);
-    expect(spend.monthly.resetAtMs).toBe(new Date(2026, 7, 20).getTime());
-
-    // Spend before the cycle opened stays out of it.
-    const earlier = goSpendFrom([at(30 * DAY_MS, 7)], NOW, CAPS, anchor);
-    expect(earlier.monthly.usd).toBe(0);
-  });
-
-  test("a 31st anchor clamps into short months", () => {
-    const anchor = new Date("2026-01-31T09:00:00Z").getTime();
-    const spend = goSpendFrom([], new Date("2026-02-15T12:00:00Z"), CAPS, anchor);
-    // The Jan 31 cycle renews on Feb 28, the closest day February has.
-    expect(spend.monthly.resetAtMs).toBe(new Date(2026, 1, 28).getTime());
+    // The oldest in-window spend aging out is the only reset signal available.
+    expect(spend.monthly.resetAtMs).toBe(NOW_MS - 20 * DAY_MS + 30 * DAY_MS);
   });
 
   test("no spend yields zeroed windows rather than nulls", () => {
@@ -97,6 +80,26 @@ describe("spendFromRows", () => {
       { at: 4_000, usd: -1 },
     ]);
     expect(events).toEqual([{ atMs: 1_000, usd: 0.5 }]);
+  });
+
+  test("weighs $15-allowance models 4x against the $60 quota", () => {
+    const events = spendFromRows([
+      { at: 1_000, usd: 1, model: "kimi-k3" },
+      { at: 1_000, usd: 1, model: "deepseek-v4-pro" },
+      { at: 1_000, usd: 1, model: "glm-5.2" },
+      { at: 1_000, usd: 1, model: "some-future-model" },
+      { at: 1_000, usd: 1 },
+    ]);
+    expect(events.map((event) => event.usd)).toEqual([4, 4, 1, 1, 1]);
+  });
+});
+
+describe("goQuotaWeight", () => {
+  test("matches the published per-model allowances", () => {
+    expect(goQuotaWeight("kimi-k3")).toBe(4);
+    expect(goQuotaWeight("grok-4.5")).toBe(4);
+    expect(goQuotaWeight("deepseek-v4-flash")).toBe(1);
+    expect(goQuotaWeight(null)).toBe(1);
   });
 });
 

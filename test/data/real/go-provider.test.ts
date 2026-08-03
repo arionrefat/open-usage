@@ -7,7 +7,7 @@ import type { GoServerLimits } from "../../../src/data/real/opencode-server";
 
 const NOW = new Date(2026, 0, 15, 12);
 const NOW_MS = NOW.getTime();
-const META = createGoMeta({ openai: null, opencodeGo: { maskedKey: "••••" } });
+const META = createGoMeta();
 
 function limitsSource(options: {
   server?: GoServerLimits | null;

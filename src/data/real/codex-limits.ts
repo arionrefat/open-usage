@@ -3,6 +3,7 @@ import {
   readCodexLimits,
   type CodexAccountLimits,
 } from "./codex-app-server";
+import type { PollOptions } from "../types";
 
 /**
  * Codex limits are polled out-of-band because the UI reads snapshots
@@ -13,7 +14,7 @@ export interface CodexLimitsSource {
   read(): CodexAccountLimits | null;
   /** Shown wherever a percent would have been, or null when limits are present. */
   note(): string | null;
-  poll(now: Date, signal?: AbortSignal): Promise<void>;
+  poll(now: Date, options?: PollOptions): Promise<void>;
 }
 
 const MIN_POLL_MS = 60_000;
@@ -24,6 +25,7 @@ const STALE_MS = 15 * 60_000;
 const NOTES: Record<string, string> = {
   "not-installed": "codex cli not installed",
   "not-logged-in": "codex not signed in - run codex login",
+  "unsupported-auth": "plan limits need chatgpt sign-in, not an api key",
   timeout: "codex cli did not respond",
   protocol: "codex cli returned an unexpected reply",
 };
@@ -52,22 +54,23 @@ export function createCodexLimitsSource(
   return {
     read: readFreshCache,
     note: () => note,
-    async poll(now, signal) {
+    async poll(now, options = {}) {
       const nowMs = now.getTime();
       const pollIsThrottled = nowMs < nextPollAtMs;
-      if (pollIsThrottled) return;
+      if (!options.force && pollIsThrottled) return;
       nextPollAtMs = nowMs + MIN_POLL_MS;
 
       try {
-        cached = await reader(now);
+        cached = await reader(now, { signal: options.signal });
         note = null;
       } catch (error) {
-        if (!(error instanceof CodexProbeError)) throw error;
         // A cancelled refresh is not a provider failure.
-        if (signal?.aborted) throw error;
+        if (options.signal?.aborted) throw error;
         nextPollAtMs = nowMs + BACKOFF_MS;
         cached = null;
-        note = NOTES[error.kind] ?? "codex limits unavailable";
+        note = error instanceof CodexProbeError
+          ? (NOTES[error.kind] ?? "codex limits unavailable")
+          : "codex limits unavailable";
       }
     },
   };

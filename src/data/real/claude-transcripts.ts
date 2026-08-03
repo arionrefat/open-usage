@@ -30,7 +30,6 @@ export interface TranscriptAggregate {
 }
 
 const ASSISTANT_MARKER = '"type":"assistant"';
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 function tokenCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
@@ -66,18 +65,18 @@ export function parseTranscriptLine(line: string): TranscriptEvent | null {
   return { epochMs, tokens, id, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
 }
 
-/**
- * Claude Code re-logs an assistant message as it streams, so a transcript holds
- * several identical usage blocks per message. Counting every line inflates the
- * totals by roughly 3x, so each message id is banked once.
- */
+export interface PerFileEvents {
+  events: TranscriptEvent[];
+  buckets: HourBuckets;
+  latestMs: number;
+}
+
+/** Deduplicates by message id (Claude re-logs as it streams) and stores per-file events so the 30d cutoff is applied at merge time rather than frozen into cached aggregates. */
 export function aggregateTranscriptLines(
   lines: Iterable<string>,
-  now: Date = new Date(),
-): TranscriptAggregate {
+): PerFileEvents {
+  const events: TranscriptEvent[] = [];
   const buckets: HourBuckets = new Map();
-  const modelTokens = new Map<string, number>();
-  const tokenSplit: TranscriptTokenSplit = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const seen = new Set<string>();
   let latestMs = 0;
   for (const line of lines) {
@@ -88,36 +87,34 @@ export function aggregateTranscriptLines(
       seen.add(event.id);
     }
     addToBucket(buckets, event.epochMs, event.tokens);
-    if (event.epochMs >= now.getTime() - THIRTY_DAYS_MS) {
-      if (event.model !== null) {
-        const allTokens = event.inputTokens + event.outputTokens + event.cacheReadTokens + event.cacheWriteTokens;
-        modelTokens.set(event.model, (modelTokens.get(event.model) ?? 0) + allTokens);
-      }
-      tokenSplit.input += event.inputTokens;
-      tokenSplit.output += event.outputTokens;
-      tokenSplit.cacheRead += event.cacheReadTokens;
-      tokenSplit.cacheWrite += event.cacheWriteTokens;
-    }
+    events.push(event);
     latestMs = Math.max(latestMs, event.epochMs);
   }
-  return { buckets, latestMs, modelTokens, tokenSplit };
+  return { events, buckets, latestMs };
 }
 
-interface FileCacheEntry {
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+interface FileCacheEntry extends PerFileEvents {
   size: number;
   mtimeMs: number;
-  aggregate: TranscriptAggregate;
 }
 
 // Per-file aggregates keyed by path; a size/mtime match skips the re-parse
 // so a 60s poll over tens of MB of transcripts stays effectively free.
 const fileCache = new Map<string, FileCacheEntry>();
 
-/** Sums assistant token usage across every transcript under `projectsDir`. */
-export function readClaudeTranscripts(projectsDir: string): TranscriptAggregate {
+/** Sums assistant token usage across every transcript under `projectsDir`.
+ *  The 30-day cutoff is applied at merge time so cached per-file events do not
+ *  permanently retain data that has aged past the stats window. */
+export function readClaudeTranscripts(
+  projectsDir: string,
+  now: Date = new Date(),
+): TranscriptAggregate {
   const combined: HourBuckets = new Map();
   const modelTokens = new Map<string, number>();
   const tokenSplit: TranscriptTokenSplit = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const cutoffMs = now.getTime() - THIRTY_DAYS_MS;
   let latestMs = 0;
   if (!existsSync(projectsDir)) return { buckets: combined, latestMs, modelTokens, tokenSplit };
 
@@ -138,24 +135,29 @@ export function readClaudeTranscripts(projectsDir: string): TranscriptAggregate 
       const cached = fileCache.get(path);
       const cacheMatchesFile =
         cached !== undefined && cached.size === stats.size && cached.mtimeMs === stats.mtimeMs;
-      let entry = cacheMatchesFile ? cached : null;
-      if (!entry) {
-        entry = {
-          size: stats.size,
-          mtimeMs: stats.mtimeMs,
-          aggregate: aggregateTranscriptLines(readFileSync(path, "utf8").split("\n")),
-        };
-        fileCache.set(path, entry);
+      const entry: FileCacheEntry =
+        cacheMatchesFile && cached
+          ? cached
+          : {
+              size: stats.size,
+              mtimeMs: stats.mtimeMs,
+              ...aggregateTranscriptLines(readFileSync(path, "utf8").split("\n")),
+            };
+      if (!cacheMatchesFile) fileCache.set(path, entry);
+      mergeBuckets(combined, entry.buckets);
+      for (const event of entry.events) {
+        if (event.epochMs < cutoffMs) continue;
+        if (event.model !== null) {
+          const allTokens =
+            event.inputTokens + event.outputTokens + event.cacheReadTokens + event.cacheWriteTokens;
+          modelTokens.set(event.model, (modelTokens.get(event.model) ?? 0) + allTokens);
+        }
+        tokenSplit.input += event.inputTokens;
+        tokenSplit.output += event.outputTokens;
+        tokenSplit.cacheRead += event.cacheReadTokens;
+        tokenSplit.cacheWrite += event.cacheWriteTokens;
       }
-      mergeBuckets(combined, entry.aggregate.buckets);
-      for (const [model, tokens] of entry.aggregate.modelTokens) {
-        modelTokens.set(model, (modelTokens.get(model) ?? 0) + tokens);
-      }
-      tokenSplit.input += entry.aggregate.tokenSplit.input;
-      tokenSplit.output += entry.aggregate.tokenSplit.output;
-      tokenSplit.cacheRead += entry.aggregate.tokenSplit.cacheRead;
-      tokenSplit.cacheWrite += entry.aggregate.tokenSplit.cacheWrite;
-      latestMs = Math.max(latestMs, entry.aggregate.latestMs);
+      latestMs = Math.max(latestMs, entry.latestMs);
     } catch {
       // The cleanup job prunes transcripts between readdir and stat; skip the gap.
     }

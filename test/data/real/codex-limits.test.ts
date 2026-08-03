@@ -41,6 +41,18 @@ describe("createCodexLimitsSource", () => {
     expect(source.read()).toBeNull();
   });
 
+  test("manual refresh bypasses the normal poll throttle", async () => {
+    let calls = 0;
+    const source = createCodexLimitsSource((now) => {
+      calls += 1;
+      return Promise.resolve(limits(now.getTime()));
+    });
+    const start = new Date();
+    await source.poll(start);
+    await source.poll(new Date(start.getTime() + 1_000), { force: true });
+    expect(calls).toBe(2);
+  });
+
   test("each failure explains itself and clears the reading", async () => {
     const cases: Array<[ConstructorParameters<typeof CodexProbeError>[0], string]> = [
       ["not-installed", "not installed"],
@@ -66,7 +78,7 @@ describe("createCodexLimitsSource", () => {
 
     let rejection: unknown;
     try {
-      await source.poll(new Date(), controller.signal);
+      await source.poll(new Date(), { signal: controller.signal });
     } catch (error) {
       rejection = error;
     }
