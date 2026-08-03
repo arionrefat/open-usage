@@ -66,8 +66,8 @@ This is what `bun run limitless` shows.
 Touch when: designing new UI that needs sample data to look right.
 
 **`real-provider.ts`**
-The composer: calls every reader in `real/`, passes their outputs to the three provider builders, and combines the results into a `UsageSnapshot`.
-It owns paths, connection state, refresh polling, timestamps, and provider selection.
+The composer: calls every reader in `real/`, hydrates the persisted limit cache, passes their outputs to the three provider builders, and combines the results into a `UsageSnapshot`.
+It owns paths, connection state, refresh polling, timestamps, persistent cache writes, and provider selection.
 It also owns fallback logic: no local sources found means mock data with a visible "sample data" banner.
 Touch when: changing source wiring, refresh behavior, or fallback selection.
 
@@ -91,6 +91,7 @@ Touch when a shared provider presentation primitive changes.
 | `claude-transcripts.ts` | `~/.claude/projects/` | Claude token counts bucketed by hour |
 | `claude-history.ts` | `~/.claude/history.jsonl` | Prompt and session counts, last 30 days |
 | `statusline-snapshot.ts` | `~/.claude/usage-snapshot.json` | The actual limit percentages (5h and 7d windows) plus a trend tracker |
+| `usage-cache.ts` | `~/.config/limitless/usage-cache.json` | Last successful Claude, Codex, and OpenCode Go limit readings for startup display |
 | `aggregate.ts` | - | Shared time bucketing and formatting helpers (`formatCountdown`, `seriesFromBuckets`, ...) |
 | `json.ts` | - | The shared `isRecord` guard for parsing unknown JSON |
 

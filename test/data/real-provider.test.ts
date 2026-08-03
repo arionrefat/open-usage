@@ -16,6 +16,7 @@ import {
   type RealProviderPaths,
 } from "../../src/data/real-provider";
 import { mockUsageProvider } from "../../src/data/mock-provider";
+import { readUsageCache, writeUsageCache } from "../../src/data/real/usage-cache";
 
 const MISSING_PATHS: RealProviderPaths = {
   opencodeDb: "/nonexistent/opencode.db",
@@ -25,6 +26,7 @@ const MISSING_PATHS: RealProviderPaths = {
   claudeHistory: "/nonexistent/history.jsonl",
   claudeSettings: "/nonexistent/settings.json",
   usageSnapshot: "/nonexistent/usage-snapshot.json",
+  usageCache: "/nonexistent/usage-cache.json",
   codexHome: "/nonexistent/codex",
 };
 
@@ -137,6 +139,56 @@ describe("createRealUsageProvider with no sources", () => {
     expect(calls).toEqual({ cl: 1, cx: 0, go: 1 });
     await provider.refresh({ reason: "manual", providerIds: ["cx"] });
     expect(calls).toEqual({ cl: 1, cx: 1, go: 1 });
+  });
+});
+
+describe("persisted limit cache", () => {
+  test("hydrates previous provider values before the first refresh", () => {
+    const dir = mkdtempSync(join(tmpdir(), "limitless-cache-"));
+    const cachePath = join(dir, "usage-cache.json");
+    const fetchedAtMs = Date.now() - 20 * 60_000;
+    writeUsageCache(cachePath, {
+      claude: {
+        session: { percent: 24, reset: "resets in 2h" },
+        weekly: { percent: 61, reset: "resets in 4d" },
+        fetchedAtMs,
+      },
+      codex: {
+        session: null,
+        weekly: { usedPercent: 38, resetsAtMs: fetchedAtMs + DAY_MS, windowMinutes: 10080 },
+        planType: "plus",
+        resetCredits: 0,
+        additionalRateLimits: [],
+        credits: null,
+        usage: null,
+        fetchedAtMs,
+      },
+      go: {
+        rollingPercent: 17,
+        rollingResetAtMs: fetchedAtMs + HOUR_MS,
+        weeklyPercent: 42,
+        weeklyResetAtMs: fetchedAtMs + DAY_MS,
+        monthlyPercent: 55,
+        monthlyResetAtMs: fetchedAtMs + 30 * DAY_MS,
+        fetchedAtMs,
+      },
+    });
+
+    try {
+      expect(readUsageCache(cachePath).claude?.session.percent).toBe(24);
+      const provider = createRealUsageProvider({
+        paths: { ...MISSING_PATHS, usageCache: cachePath },
+      });
+      const snapshot = provider.readSnapshot();
+      expect(snapshot.providers.cl.limits[0]?.percent).toBe(24);
+      expect(snapshot.providers.cx.limits[0]?.percent).toBe(38);
+      expect(snapshot.providers.go.limits[0]?.percent).toBe(17);
+      expect(snapshot.providers.cl.notice?.segments[0]?.text).toContain("cached live limits stale");
+      expect(snapshot.providers.cx.notice?.segments[0]?.text).toContain("cached limits stale");
+      expect(snapshot.providers.go.notice?.segments[0]?.text).toContain("cached limits stale");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

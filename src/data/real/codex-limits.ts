@@ -17,10 +17,15 @@ export interface CodexLimitsSource {
   poll(now: Date, options?: PollOptions): Promise<void>;
 }
 
+export interface CodexLimitsSourceOptions {
+  initial?: CodexAccountLimits | null;
+  onUpdate?: (value: CodexAccountLimits) => void;
+}
+
 const MIN_POLL_MS = 60_000;
 const BACKOFF_MS = 5 * 60_000;
-/** Past this, a cached reading stops being reported as current. */
-const STALE_MS = 15 * 60_000;
+/** Past this, a cached reading is rendered with a stale notice. */
+export const CODEX_LIMITS_STALE_MS = 15 * 60_000;
 
 const NOTES: Record<string, string> = {
   "not-installed": "codex cli not installed",
@@ -40,20 +45,26 @@ type CodexLimitsReader = typeof readCodexLimits;
 
 export function createCodexLimitsSource(
   reader: CodexLimitsReader = readCodexLimits,
+  sourceOptions: CodexLimitsSourceOptions = {},
 ): CodexLimitsSource {
-  let cached: CodexAccountLimits | null = null;
+  let cached: CodexAccountLimits | null = sourceOptions.initial ?? null;
   let note: string | null = null;
   let nextPollAtMs = 0;
 
-  function readFreshCache(): CodexAccountLimits | null {
+  function readCache(): CodexAccountLimits | null {
     if (!cached) return null;
-    const cacheAgeMs = Date.now() - cached.fetchedAtMs;
-    return cacheAgeMs <= STALE_MS ? cached : null;
+    return cached;
   }
 
   return {
-    read: readFreshCache,
-    note: () => note,
+    read: readCache,
+    note: () => {
+      if (note) return note;
+      if (cached && Date.now() - cached.fetchedAtMs > CODEX_LIMITS_STALE_MS) {
+        return `cached limits stale (${Math.max(1, Math.floor((Date.now() - cached.fetchedAtMs) / 60_000))}m old) - press r to refresh`;
+      }
+      return null;
+    },
     async poll(now, options = {}) {
       const nowMs = now.getTime();
       const pollIsThrottled = nowMs < nextPollAtMs;
@@ -62,12 +73,12 @@ export function createCodexLimitsSource(
 
       try {
         cached = await reader(now, { signal: options.signal });
+        sourceOptions.onUpdate?.(cached);
         note = null;
       } catch (error) {
         // A cancelled refresh is not a provider failure.
         if (options.signal?.aborted) throw error;
         nextPollAtMs = nowMs + BACKOFF_MS;
-        cached = null;
         note = error instanceof CodexProbeError
           ? (NOTES[error.kind] ?? "codex limits unavailable")
           : "codex limits unavailable";

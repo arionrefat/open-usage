@@ -3,7 +3,12 @@ import type { DetailRow, DetailSection, ProviderMeta, ProviderUsage, UsageLimit 
 import { HOUR_MS, formatAge, formatClock, formatCountdown, formatRate, seriesFromBuckets, tokensPerHour } from "./aggregate";
 import type { HistoryStats } from "./claude-history";
 import type { TranscriptAggregate } from "./claude-transcripts";
-import type { ClaudeLimitsSource, ClaudeUsageWindow } from "./claude-usage";
+import {
+  CLAUDE_LIMITS_STALE_MS,
+  type ClaudeCliUsage,
+  type ClaudeLimitsSource,
+  type ClaudeUsageWindow,
+} from "./claude-usage";
 import { NO_CAP_DATA, capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
 import type { ClaudeAuthInfo, ClaudeAuthSource } from "./claude-auth";
 import { SNAPSHOT_FRESH_MS, type RateWindowReading, type SnapshotFile, type WeeklyTrend } from "./statusline-snapshot";
@@ -46,7 +51,15 @@ function projectWeekly(
   return { projectedPercent, capsOutAt: formatClock(nowMs + hoursToCap * HOUR_MS) };
 }
 
-function staleSnapshotNote(snapshotFile: SnapshotFile | null, hasStatusline: boolean): string {
+function staleSnapshotNote(
+  snapshotFile: SnapshotFile | null,
+  hasStatusline: boolean,
+  live: ClaudeCliUsage | null,
+  nowMs: number,
+): string {
+  if (live && nowMs - live.fetchedAtMs > CLAUDE_LIMITS_STALE_MS) {
+    return `cached live limits stale (${formatAge(nowMs - live.fetchedAtMs)} old) - press r for live limits`;
+  }
   if (snapshotFile) {
     return `statusline snapshot stale (${formatAge(snapshotFile.ageMs)} old) - press r for live limits`;
   }
@@ -131,12 +144,14 @@ function claudeLimits(
   seven: ClaudeWindow | null,
   isFresh: boolean,
   snapshotFile: SnapshotFile | null,
+  live: ClaudeCliUsage | null,
+  sourceNote: string | null,
   projection: ClaudeProjection,
   rateLabel: string,
   nowMs: number,
   hasStatusline: boolean,
 ): UsageLimit[] {
-  const staleNote = staleSnapshotNote(snapshotFile, hasStatusline);
+  const staleNote = sourceNote ?? staleSnapshotNote(snapshotFile, hasStatusline, live, nowMs);
   const session = sessionLimit(five, isFresh, staleNote, nowMs);
   const weekly = weeklyLimit(seven, projection, rateLabel, staleNote, nowMs);
   if (!isFresh) weekly.footnote = staleNote;
@@ -145,7 +160,7 @@ function claudeLimits(
 
 function claudeNoticeText(snapshotFile: SnapshotFile | null, hasStatusline: boolean): string {
   if (snapshotFile) {
-    return "stale statusline ignored - press r to query live limits via claude cli";
+    return "cached statusline values shown - press r to query live limits via claude cli";
   }
   if (hasStatusline) {
     return "statusline snapshot missing - press r to query live limits via claude cli";
@@ -251,19 +266,27 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
   const rateLabel = formatRate(rate);
   const snapshotIsFresh = snapshotFile !== null && snapshotFile.ageMs < SNAPSHOT_FRESH_MS;
   const live = limitsSource.read();
-  const five: ClaudeWindow | null = live
-    ? cliWindow(live.session, snapshotIsFresh ? snapshotFile.reading.fiveHour : null)
-    : snapshotIsFresh
-      ? snapshotFile.reading.fiveHour
-      : null;
-  const seven: ClaudeWindow | null = live
-    ? cliWindow(live.weekly, snapshotIsFresh ? snapshotFile.reading.sevenDay : null)
-    : snapshotIsFresh
-      ? snapshotFile.reading.sevenDay
-      : null;
-  const isFresh = live !== null || snapshotIsFresh;
+  const liveIsFresh = live !== null && nowMs - live.fetchedAtMs <= CLAUDE_LIMITS_STALE_MS;
+  const useLive = liveIsFresh || (!snapshotIsFresh && live !== null);
+  const five: ClaudeWindow | null =
+    live && useLive
+      ? cliWindow(live.session, snapshotIsFresh ? snapshotFile!.reading.fiveHour : null)
+      : snapshotFile
+        ? snapshotFile.reading.fiveHour
+        : live
+          ? cliWindow(live.session, null)
+          : null;
+  const seven: ClaudeWindow | null =
+    live && useLive
+      ? cliWindow(live.weekly, snapshotIsFresh ? snapshotFile!.reading.sevenDay : null)
+      : snapshotFile
+        ? snapshotFile.reading.sevenDay
+        : live
+          ? cliWindow(live.weekly, null)
+          : null;
+  const isFresh = liveIsFresh || snapshotIsFresh;
   const trendAtMs =
-    live ? live.fetchedAtMs : snapshotIsFresh ? snapshotFile.writtenAtMs : null;
+    live && useLive ? live.fetchedAtMs : snapshotFile ? snapshotFile.writtenAtMs : live?.fetchedAtMs ?? null;
   const trendRate =
     seven && trendAtMs !== null ? trend.observe(trendAtMs, seven.percent) : null;
   const projection = projectWeekly(seven, trendRate, nowMs);
@@ -275,7 +298,18 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
     id: "cl",
     meta,
     series: seriesFromBuckets(transcripts.buckets, dates, now),
-    limits: claudeLimits(five, seven, isFresh, snapshotFile, projection, rateLabel, nowMs, hasStatusline),
+    limits: claudeLimits(
+      five,
+      seven,
+      isFresh,
+      snapshotFile,
+      live,
+      limitsSource.note(),
+      projection,
+      rateLabel,
+      nowMs,
+      hasStatusline,
+    ),
     scopes: {
       session: {
         percent: five ? Math.round(five.percent) : null,
@@ -312,7 +346,11 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
             iconColor: COLORS.info,
             segments: [
               {
-                text: limitsSource.note() ?? claudeNoticeText(snapshotFile, hasStatusline),
+                text:
+                  limitsSource.note() ??
+                  (live
+                    ? `cached live limits stale (${formatAge(nowMs - live.fetchedAtMs)} old) - press r to refresh`
+                    : claudeNoticeText(snapshotFile, hasStatusline)),
               },
             ],
           },

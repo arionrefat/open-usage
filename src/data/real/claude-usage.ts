@@ -136,8 +136,13 @@ export interface ClaudeLimitsSource {
   poll(now: Date, options?: PollOptions): Promise<void>;
 }
 
+export interface ClaudeLimitsSourceOptions {
+  initial?: ClaudeCliUsage | null;
+  onUpdate?: (value: ClaudeCliUsage) => void;
+}
+
 const MIN_POLL_MS = 3 * 60_000;
-const STALE_MS = 10 * 60_000;
+export const CLAUDE_LIMITS_STALE_MS = 10 * 60_000;
 const BACKOFF_MS = 5 * 60_000;
 
 const NOTES: Record<ClaudeUsageFailure, string> = {
@@ -157,14 +162,14 @@ type ClaudeUsageReader = typeof readClaudeUsage;
 
 export function createClaudeLimitsSource(
   reader: ClaudeUsageReader = readClaudeUsage,
+  sourceOptions: ClaudeLimitsSourceOptions = {},
 ): ClaudeLimitsSource {
-  let cached: ClaudeCliUsage | null = null;
+  let cached: ClaudeCliUsage | null = sourceOptions.initial ?? null;
   let note: string | null = null;
   let nextPollAtMs = 0;
 
   return {
     read: () => {
-      if (!cached || Date.now() - cached.fetchedAtMs > STALE_MS) return null;
       return cached;
     },
     note: () => note,
@@ -175,10 +180,10 @@ export function createClaudeLimitsSource(
 
       try {
         cached = await reader(now, { signal: options.signal });
+        sourceOptions.onUpdate?.(cached);
         note = null;
       } catch (error) {
         if (options.signal?.aborted) throw error;
-        cached = null;
         nextPollAtMs = nowMs + BACKOFF_MS;
         if (error instanceof ClaudeUsageError) {
           note = NOTES[error.kind];

@@ -19,6 +19,7 @@ import { createGoLimitsSource, type GoLimitsSource } from "./real/go-limits-sour
 import { readOpencodeAuth, type OpencodeAuth } from "./real/opencode-auth";
 import { readOpencodeUsage } from "./real/opencode-db";
 import { readGoSpend } from "./real/opencode-go-spend";
+import { readUsageCache, writeUsageCache, type UsageCache } from "./real/usage-cache";
 import {
   SNAPSHOT_FRESH_MS,
   createWeeklyTrend,
@@ -43,6 +44,7 @@ export interface RealProviderPaths {
   claudeHistory: string;
   claudeSettings: string;
   usageSnapshot: string;
+  usageCache: string;
   codexHome: string;
 }
 
@@ -65,12 +67,18 @@ export function defaultRealProviderPaths(): RealProviderPaths {
     claudeHistory: join(home, ".claude", "history.jsonl"),
     claudeSettings: join(home, ".claude", "settings.json"),
     usageSnapshot: join(home, ".claude", "usage-snapshot.json"),
+    usageCache: join(home, ".config", "limitless", "usage-cache.json"),
     codexHome: codexHomeEnv || join(home, ".codex"),
   };
 }
 
 export function hasRealSources(paths: RealProviderPaths): boolean {
-  return existsSync(paths.opencodeDb) || existsSync(paths.claudeProjects) || existsSync(paths.codexHome);
+  return (
+    existsSync(paths.opencodeDb) ||
+    existsSync(paths.claudeProjects) ||
+    existsSync(paths.codexHome) ||
+    existsSync(paths.usageCache)
+  );
 }
 
 const STATS_WINDOW_DAYS = 30;
@@ -241,9 +249,23 @@ function buildSnapshot(
 
 export function createRealUsageProvider(options: RealProviderOptions = {}): UsageProvider {
   const paths = options.paths ?? defaultRealProviderPaths();
-  const codexLimits = options.codexLimits ?? createCodexLimitsSource();
-  const goLimits = options.goLimits ?? createGoLimitsSource(paths.configFile);
-  const claudeLimits = options.claudeLimits ?? createClaudeLimitsSource();
+  const cached = readUsageCache(paths.usageCache);
+  const persist = (key: keyof UsageCache, value: UsageCache[typeof key]) => {
+    const next = { ...cached, [key]: value } as UsageCache;
+    writeUsageCache(paths.usageCache, next);
+  };
+  const codexLimits = options.codexLimits ?? createCodexLimitsSource(undefined, {
+    initial: cached.codex,
+    onUpdate: (value) => persist("codex", value),
+  });
+  const goLimits = options.goLimits ?? createGoLimitsSource(paths.configFile, process.env, undefined, {
+    initial: cached.go,
+    onUpdate: (value) => persist("go", value),
+  });
+  const claudeLimits = options.claudeLimits ?? createClaudeLimitsSource(undefined, {
+    initial: cached.claude,
+    onUpdate: (value) => persist("claude", value),
+  });
   const claudeAuth = options.claudeAuth ?? createClaudeAuthSource();
   const trend = createWeeklyTrend();
   const meta = buildMeta();

@@ -148,6 +148,7 @@ export function buildCodexProvider(input: CodexProviderInput): ProviderUsage {
   const { meta, buckets, stats, limitsSource, dates, now } = input;
   const nowMs = now.getTime();
   const limits = limitsSource.read();
+  const limitsNote = limitsSource.note();
   // Server-side daily history is account-wide; local buckets only cover this device.
   const usage = limits?.usage ?? null;
   return {
@@ -166,9 +167,9 @@ export function buildCodexProvider(input: CodexProviderInput): ProviderUsage {
           capLessLimit(
             "weekly",
             "weekly limit",
-            "weekly usage limit",
-            limitsSource.note() ?? CODEX_NO_LIMITS,
-            limitsSource.note() ?? CODEX_NO_LIMITS,
+             "weekly usage limit",
+             limitsNote ?? CODEX_NO_LIMITS,
+             limitsNote ?? CODEX_NO_LIMITS,
           ),
         ],
     scopes: {
@@ -196,6 +197,15 @@ export function buildCodexProvider(input: CodexProviderInput): ProviderUsage {
     ...(input.stats?.sessions !== undefined ? { sessions30d: input.stats.sessions } : {}),
     details: limits ? codexDetails(limits) : undefined,
     detailFooter: usage ? undefined : localStatsFooter(stats, nowMs),
+    ...(limits && limitsNote
+      ? {
+          notice: {
+            icon: "ⓘ",
+            iconColor: COLORS.info,
+            segments: [{ text: limitsNote }],
+          },
+        }
+      : {}),
   };
 }
 

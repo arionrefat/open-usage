@@ -34,11 +34,12 @@ describe("createCodexLimitsSource", () => {
     expect(calls).toBe(2);
   });
 
-  test("a stale reading stops being served", async () => {
+  test("serves stale readings with a warning", async () => {
     const stale = Date.now() - 20 * 60_000;
     const source = createCodexLimitsSource(() => Promise.resolve(limits(stale)));
     await source.poll(new Date());
-    expect(source.read()).toBeNull();
+    expect(source.read()?.weekly?.usedPercent).toBe(12);
+    expect(source.note()).toContain("cached limits stale");
   });
 
   test("manual refresh bypasses the normal poll throttle", async () => {
@@ -53,7 +54,7 @@ describe("createCodexLimitsSource", () => {
     expect(calls).toBe(2);
   });
 
-  test("each failure explains itself and clears the reading", async () => {
+  test("each failure explains itself without inventing a reading", async () => {
     const cases: Array<[ConstructorParameters<typeof CodexProbeError>[0], string]> = [
       ["not-installed", "not installed"],
       ["not-logged-in", "codex login"],

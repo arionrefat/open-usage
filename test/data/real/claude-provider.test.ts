@@ -87,15 +87,16 @@ describe("buildClaudeProvider", () => {
     expect(provider.notice).toBeUndefined();
   });
 
-  test("a stale snapshot is never exposed as current usage", () => {
+  test("a stale snapshot remains visible while live limits are unavailable", () => {
     const provider = build({ snapshotFile: snapshot(11 * 60_000) });
 
-    expect(provider.limits.every((limit) => limit.percent === null)).toBe(true);
-    expect(provider.scopes.session.percent).toBeNull();
-    expect(provider.scopes.weekly.percent).toBeNull();
+    expect(provider.limits[0]?.percent).toBe(25);
+    expect(provider.limits[1]?.percent).toBe(40);
+    expect(provider.scopes.session.percent).toBe(25);
+    expect(provider.scopes.weekly.percent).toBe(40);
     expect(provider.limits[0]?.footnote).toContain("snapshot stale");
     expect(provider.limits[1]?.footnote).toContain("snapshot stale");
-    expect(provider.notice?.segments[0]?.text).toContain("stale statusline ignored");
+    expect(provider.notice?.segments[0]?.text).toContain("cached statusline values shown");
   });
 
   test("live cli usage replaces a stale statusline snapshot", () => {

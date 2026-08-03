@@ -103,15 +103,14 @@ describe("createGoLimitsSource", () => {
     expect(calls).toBe(2);
   });
 
-  test("a reading older than the staleness window stops counting as server truth", async () => {
+  test("a reading older than the staleness window remains visible with a warning", async () => {
     const path = configWithCookie("auth=tok");
     const stale = Date.now() - 20 * 60_000;
     const source = createGoLimitsSource(path, {}, () => Promise.resolve(reading(stale)));
 
     await source.poll(new Date());
-    // An offline machine keeps the old value cached; it must not be served as
-    // current, so the UI falls back to the local estimate instead.
-    expect(source.read()).toBeNull();
+    expect(source.read()?.rollingPercent).toBe(17);
+    expect(source.note()).toContain("cached limits stale");
   });
 
   test("manual refresh bypasses the normal poll throttle", async () => {
@@ -127,7 +126,7 @@ describe("createGoLimitsSource", () => {
     expect(calls).toBe(2);
   });
 
-  test("a network failure discards the reading instead of presenting old server truth", async () => {
+  test("a network failure keeps the old reading and explains the failure", async () => {
     const path = configWithCookie("auth=tok");
     let calls = 0;
     const source = createGoLimitsSource(path, {}, (_cookie, now) => {
@@ -140,7 +139,7 @@ describe("createGoLimitsSource", () => {
     await source.poll(start);
     await source.poll(new Date(start.getTime() + 61_000));
     expect(calls).toBe(2);
-    expect(source.read()).toBeNull();
+    expect(source.read()?.rollingPercent).toBe(17);
     expect(source.note()).toContain("local estimate");
 
     // The 5-minute backoff holds off the next attempt.

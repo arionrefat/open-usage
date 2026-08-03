@@ -66,7 +66,7 @@ describe("createClaudeLimitsSource", () => {
     expect(source.note()).toBeNull();
   });
 
-  test("clears old values when a live refresh fails", async () => {
+  test("keeps old values visible when a live refresh fails", async () => {
     let calls = 0;
     const source = createClaudeLimitsSource((now) => {
       calls += 1;
@@ -80,7 +80,7 @@ describe("createClaudeLimitsSource", () => {
     const start = new Date();
     await source.poll(start);
     await source.poll(new Date(start.getTime() + 4 * 60_000));
-    expect(source.read()).toBeNull();
+    expect(source.read()?.weekly.percent).toBe(95);
     expect(source.note()).toContain("format changed");
   });
 

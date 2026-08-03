@@ -21,12 +21,17 @@ export interface GoLimitsSource {
   poll(now: Date, options?: PollOptions): Promise<void>;
 }
 
+export interface GoLimitsSourceOptions {
+  initial?: GoServerLimits | null;
+  onUpdate?: (value: GoServerLimits) => void;
+}
+
 export const COOKIE_ENV_VAR = "LIMITLESS_OPENCODE_COOKIE";
 
 const MIN_POLL_MS = 60_000;
 const BACKOFF_MS = 5 * 60_000;
-/** Past this, a cached reading stops being reported as server truth. */
-const STALE_MS = 15 * 60_000;
+/** Past this, a cached reading is rendered with a stale notice. */
+export const GO_LIMITS_STALE_MS = 15 * 60_000;
 
 export function readCookie(path: string, env: Record<string, string | undefined>): string | null {
   const fromEnv = env[COOKIE_ENV_VAR]?.trim();
@@ -67,23 +72,28 @@ export function createGoLimitsSource(
   configPath: string,
   env: Record<string, string | undefined> = process.env,
   fetcher: GoLimitsFetcher = fetchGoServerLimits,
+  sourceOptions: GoLimitsSourceOptions = {},
 ): GoLimitsSource {
-  let cached: GoServerLimits | null = null;
+  let cached: GoServerLimits | null = sourceOptions.initial ?? null;
   let workspaceId: string | undefined;
   let note: string | null = null;
   let nextPollAtMs = 0;
 
-  function readFreshCache(): GoServerLimits | null {
+  function readCache(): GoServerLimits | null {
     if (!cached) return null;
-    const cacheAgeMs = Date.now() - cached.fetchedAtMs;
-    return cacheAgeMs <= STALE_MS ? cached : null;
+    return cached;
   }
 
   return {
-    // An offline machine must fall back to the local estimate rather than keep
-    // showing an old percentage as if it were current.
-    read: readFreshCache,
-    note: () => note,
+    // Stale values stay available so the provider can render them with a notice.
+    read: readCache,
+    note: () => {
+      if (note) return note;
+      if (cached && Date.now() - cached.fetchedAtMs > GO_LIMITS_STALE_MS) {
+        return `cached limits stale (${Math.max(1, Math.floor((Date.now() - cached.fetchedAtMs) / 60_000))}m old) - showing previous values`;
+      }
+      return null;
+    },
     cookieExpiresAtMs: () => {
       const cookie = readCookie(configPath, env);
       return cookie ? cookieExpiryMs(cookie) : null;
@@ -95,7 +105,6 @@ export function createGoLimitsSource(
 
       const cookie = readCookie(configPath, env);
       if (!cookie) {
-        cached = null;
         note = null;
         return;
       }
@@ -103,7 +112,6 @@ export function createGoLimitsSource(
       // session, so it must not be reported as one.
       const cookieHasAuth = filterCookieHeader(cookie) !== null;
       if (!cookieHasAuth) {
-        cached = null;
         note = "no auth cookie found - re-copy the opencode.ai cookie header";
         nextPollAtMs = nowMs + MIN_POLL_MS;
         return;
@@ -112,13 +120,13 @@ export function createGoLimitsSource(
       nextPollAtMs = nowMs + MIN_POLL_MS;
       try {
         cached = await fetcher(cookie, now, { workspaceId, signal: options.signal });
+        sourceOptions.onUpdate?.(cached);
         note = null;
       } catch (error) {
         // A caller-cancelled refresh is not a provider failure, so it must not
         // trigger the backoff or claim opencode is unreachable.
         if (options.signal?.aborted) throw error;
         nextPollAtMs = nowMs + BACKOFF_MS;
-        cached = null;
         if (!(error instanceof OpencodeServerError)) {
           note = "opencode unreachable - showing local estimate";
           return;
