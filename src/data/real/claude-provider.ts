@@ -142,7 +142,9 @@ function weeklyLimit(
 function claudeLimits(
   five: ClaudeWindow | null,
   seven: ClaudeWindow | null,
+  fable: ClaudeWindow | null,
   isFresh: boolean,
+  fableIsFresh: boolean,
   snapshotFile: SnapshotFile | null,
   live: ClaudeCliUsage | null,
   sourceNote: string | null,
@@ -155,7 +157,17 @@ function claudeLimits(
   const session = sessionLimit(five, isFresh, staleNote, nowMs);
   const weekly = weeklyLimit(seven, projection, rateLabel, staleNote, nowMs);
   if (!isFresh) weekly.footnote = staleNote;
-  return [session, weekly];
+  const limits = [session, weekly];
+  if (fable) {
+    limits.push({
+      id: "fable",
+      label: "weekly · Fable",
+      percent: Math.round(fable.percent),
+      reset: fable.resetLabel ?? "reset unavailable",
+      ...(!fableIsFresh ? { footnote: staleNote } : {}),
+    });
+  }
+  return limits;
 }
 
 function claudeNoticeText(snapshotFile: SnapshotFile | null, hasStatusline: boolean): string {
@@ -284,6 +296,7 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
         : live
           ? cliWindow(live.weekly, null)
           : null;
+  const fable = live?.fable ? cliWindow(live.fable, null) : null;
   const isFresh = liveIsFresh || snapshotIsFresh;
   const trendAtMs =
     live && useLive ? live.fetchedAtMs : snapshotFile ? snapshotFile.writtenAtMs : live?.fetchedAtMs ?? null;
@@ -301,7 +314,9 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
     limits: claudeLimits(
       five,
       seven,
+      fable,
       isFresh,
+      liveIsFresh,
       snapshotFile,
       live,
       limitsSource.note(),

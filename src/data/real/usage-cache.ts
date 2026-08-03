@@ -1,5 +1,6 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { withFileLock } from "../../lib/file-lock";
 import type { ClaudeCliUsage } from "./claude-usage";
 import type {
   CodexAccountLimits,
@@ -35,14 +36,23 @@ function claude(value: unknown): ClaudeCliUsage | null {
   const raw = record(value);
   const session = record(raw?.session);
   const weekly = record(raw?.weekly);
+  const fable = raw?.fable === undefined ? null : record(raw.fable);
   const sessionPercent = finite(session?.percent);
   const weeklyPercent = finite(weekly?.percent);
+  const fablePercent = fable ? finite(fable.percent) : null;
+  const parsedFable = raw?.fable === undefined
+    ? undefined
+    : fable && fablePercent !== null && typeof fable.reset === "string"
+      ? { percent: fablePercent, reset: fable.reset }
+      : null;
   const fetchedAtMs = finite(raw?.fetchedAtMs);
   if (sessionPercent === null || weeklyPercent === null || fetchedAtMs === null) return null;
   if (typeof session?.reset !== "string" || typeof weekly?.reset !== "string") return null;
+  if (parsedFable === null) return null;
   return {
     session: { percent: sessionPercent, reset: session.reset },
     weekly: { percent: weeklyPercent, reset: weekly.reset },
+    ...(parsedFable ? { fable: parsedFable } : {}),
     fetchedAtMs,
   };
 }
@@ -70,7 +80,8 @@ function codexCredits(value: unknown): CodexCredits | null {
   if (!raw) return null;
   const balance = nullableFinite(raw.balance);
   if (raw.balance !== null && balance === null) return null;
-  return { balance, unlimited: raw.unlimited === true };
+  if (typeof raw.unlimited !== "boolean") return null;
+  return { balance, unlimited: raw.unlimited };
 }
 
 function codexSummary(value: unknown): CodexUsageSummary | null {
@@ -124,13 +135,19 @@ function codex(value: unknown): CodexAccountLimits | null {
   if (additionalRateLimits.some((limit) => limit === null)) return null;
   const usage = raw.usage === null ? null : codexUsage(raw.usage);
   if (raw.usage !== null && usage === null) return null;
+  const session = raw.session === null ? null : codexWindow(raw.session);
+  const weekly = raw.weekly === null ? null : codexWindow(raw.weekly);
+  const credits = raw.credits === null ? null : codexCredits(raw.credits);
+  if (raw.session !== null && session === null) return null;
+  if (raw.weekly !== null && weekly === null) return null;
+  if (raw.credits !== null && credits === null) return null;
   return {
-    session: codexWindow(raw?.session),
-    weekly: codexWindow(raw?.weekly),
+    session,
+    weekly,
     planType: raw.planType,
     resetCredits,
     additionalRateLimits: additionalRateLimits as CodexAdditionalRateLimit[],
-    credits: raw.credits === null ? null : codexCredits(raw.credits),
+    credits,
     usage,
     fetchedAtMs,
   };
@@ -145,6 +162,7 @@ function go(value: unknown): GoServerLimits | null {
   const monthlyPercent = nullableFinite(raw?.monthlyPercent);
   const monthlyResetAtMs = nullableFinite(raw?.monthlyResetAtMs);
   const fetchedAtMs = finite(raw?.fetchedAtMs);
+  const useBalance = raw?.useBalance;
   if (
     rollingPercent === null ||
     rollingResetAtMs === null ||
@@ -152,7 +170,8 @@ function go(value: unknown): GoServerLimits | null {
     (raw?.weeklyPercent !== null && weeklyPercent === null) ||
     (raw?.weeklyResetAtMs !== null && weeklyResetAtMs === null) ||
     (raw?.monthlyPercent !== null && monthlyPercent === null) ||
-    (raw?.monthlyResetAtMs !== null && monthlyResetAtMs === null)
+    (raw?.monthlyResetAtMs !== null && monthlyResetAtMs === null) ||
+    (useBalance !== undefined && useBalance !== null && typeof useBalance !== "boolean")
   ) {
     return null;
   }
@@ -164,7 +183,7 @@ function go(value: unknown): GoServerLimits | null {
     monthlyPercent,
     monthlyResetAtMs,
     fetchedAtMs,
-    useBalance: raw?.useBalance === undefined ? null : raw.useBalance === null ? null : raw.useBalance === true,
+    useBalance: useBalance ?? null,
   };
 }
 
@@ -202,14 +221,39 @@ function serializable(cache: UsageCache): Record<string, unknown> {
   };
 }
 
+function writeUsageCacheFile(path: string, cache: UsageCache): void {
+  let temporary: string | null = null;
+  try {
+    temporary = join(dirname(path), `.${basename(path)}.${process.pid}.${crypto.randomUUID()}.tmp`);
+    writeFileSync(temporary, `${JSON.stringify(serializable(cache))}\n`, { flag: "wx", mode: 0o600 });
+    renameSync(temporary, path);
+  } finally {
+    if (temporary) rmSync(temporary, { force: true });
+  }
+}
+
 /** Writes through a sibling file so an interrupted refresh cannot corrupt the cache. */
 export function writeUsageCache(path: string, cache: UsageCache): void {
   try {
     mkdirSync(dirname(path), { recursive: true });
-    const temporary = join(dirname(path), `.${basename(path)}.tmp`);
-    writeFileSync(temporary, `${JSON.stringify(serializable(cache))}\n`, { mode: 0o600 });
-    renameSync(temporary, path);
+    withFileLock(path, () => writeUsageCacheFile(path, cache));
   } catch {
     // Cached values are an enhancement; a read-only home must not break usage polling.
+  }
+}
+
+export function updateUsageCache<K extends keyof UsageCache>(
+  path: string,
+  key: K,
+  value: UsageCache[K],
+): void {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    withFileLock(path, () => {
+      const cache = { ...readUsageCache(path), [key]: value };
+      writeUsageCacheFile(path, cache);
+    });
+  } catch {
+    // Another instance or a read-only home must not break usage polling.
   }
 }

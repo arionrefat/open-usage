@@ -20,12 +20,78 @@ function result(session = 10, weekly = 95): unknown {
 }
 
 describe("parseClaudeUsage", () => {
-  test("reads the live session and all-model weekly windows", () => {
+  test("reads the live session, all-model weekly, and Fable windows", () => {
     expect(parseClaudeUsage(result(), NOW_MS)).toEqual({
       session: { percent: 10, reset: "resets Aug 4 at 3:20am (Asia/Dhaka)" },
       weekly: { percent: 95, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
+      fable: { percent: 65, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
       fetchedAtMs: NOW_MS,
     });
+  });
+
+  test("accepts the current CLI format without a session reset", () => {
+    expect(
+      parseClaudeUsage(
+        {
+          result: [
+            "You are currently using your subscription to power your Claude Code usage",
+            "",
+            "Current session: 0% used",
+            "Current week (all models): 96% used · resets Aug 5 at 6am (Asia/Dhaka)",
+            "Current week (Fable): 65% used · resets Aug 5 at 6am (Asia/Dhaka)",
+          ].join("\n"),
+        },
+        NOW_MS,
+      ),
+    ).toEqual({
+      session: { percent: 0, reset: "starts when a message is sent" },
+      weekly: { percent: 96, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
+      fable: { percent: 65, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
+      fetchedAtMs: NOW_MS,
+    });
+  });
+
+  test("keeps Fable optional for plans that do not publish it", () => {
+    expect(
+      parseClaudeUsage(
+        {
+          result: [
+            "Current session: 10% used · resets Aug 4 at 3:20am (Asia/Dhaka)",
+            "Current week (all models): 50% used · resets Aug 5 at 6am (Asia/Dhaka)",
+          ].join("\n"),
+        },
+        NOW_MS,
+      ),
+    ).toEqual({
+      session: { percent: 10, reset: "resets Aug 4 at 3:20am (Asia/Dhaka)" },
+      weekly: { percent: 50, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
+      fetchedAtMs: NOW_MS,
+    });
+  });
+
+  test("rejects missing resets outside an unused current session", () => {
+    expect(
+      parseClaudeUsage(
+        {
+          result: [
+            "Current session: 12% used",
+            "Current week (all models): 50% used · resets Aug 5 at 6am (Asia/Dhaka)",
+          ].join("\n"),
+        },
+        NOW_MS,
+      ),
+    ).toBeNull();
+    expect(
+      parseClaudeUsage(
+        {
+          result: [
+            "Current session: 0% used",
+            "Current week (all models): 50% used",
+          ].join("\n"),
+        },
+        NOW_MS,
+      ),
+    ).toBeNull();
   });
 
   test("subtracts Claude's own cache age from the fetch time", () => {
@@ -35,11 +101,13 @@ describe("parseClaudeUsage", () => {
     expect(withMarker("Showing last-known usage (23m old)")).toEqual({
       session: { percent: 10, reset: "resets Aug 4 at 3:20am (Asia/Dhaka)" },
       weekly: { percent: 95, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
+      fable: { percent: 65, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
       fetchedAtMs: NOW_MS - 23 * 60_000,
     });
     expect(withMarker("Showing last-known usage (1h 5m old)")).toEqual({
       session: { percent: 10, reset: "resets Aug 4 at 3:20am (Asia/Dhaka)" },
       weekly: { percent: 95, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
+      fable: { percent: 65, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
       fetchedAtMs: NOW_MS - 65 * 60_000,
     });
     // An unparseable age fails closed: stale bars must not be re-stamped.
@@ -63,6 +131,7 @@ describe("createClaudeLimitsSource", () => {
 
     await source.poll(new Date());
     expect(source.read()?.weekly.percent).toBe(95);
+    expect(source.read()?.fable?.percent).toBe(65);
     expect(source.note()).toBeNull();
   });
 

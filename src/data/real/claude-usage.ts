@@ -10,6 +10,7 @@ export interface ClaudeUsageWindow {
 export interface ClaudeCliUsage {
   session: ClaudeUsageWindow;
   weekly: ClaudeUsageWindow;
+  fable?: ClaudeUsageWindow;
   fetchedAtMs: number;
 }
 
@@ -26,7 +27,7 @@ export class ClaudeUsageError extends Error {
   }
 }
 
-const WINDOW_PATTERN = /^(.+?):\s*([0-9]+(?:\.[0-9]+)?)% used\s*[·|-]\s*(resets .+)$/i;
+const WINDOW_PATTERN = /^(.+?):\s*([0-9]+(?:\.[0-9]+)?)% used(?:\s*[·|-]\s*(resets .+))?$/i;
 const STALE_MARKER = /last-known usage/i;
 const AGE_HOURS = /(\d+)\s*h(?:ours?)?\b/i;
 const AGE_MINUTES = /(\d+)\s*m(?:in(?:utes?)?)?\b/i;
@@ -47,23 +48,34 @@ export function parseClaudeUsage(value: unknown, fetchedAtMs: number): ClaudeCli
 
   let session: ClaudeUsageWindow | null = null;
   let weekly: ClaudeUsageWindow | null = null;
+  let fable: ClaudeUsageWindow | null = null;
   for (const line of value.result.split("\n")) {
     const match = WINDOW_PATTERN.exec(line.trim());
     if (!match) continue;
     const label = match[1]?.toLowerCase();
     const rawPercent = Number(match[2]);
+    if (!label || !Number.isFinite(rawPercent)) continue;
     const reset = match[3];
-    if (!label || !Number.isFinite(rawPercent) || !reset) continue;
-    const window = { percent: Math.min(100, Math.max(0, rawPercent)), reset };
+    if (!reset && (label !== "current session" || rawPercent !== 0)) continue;
+    const window = {
+      percent: Math.min(100, Math.max(0, rawPercent)),
+      reset: reset ?? "starts when a message is sent",
+    };
     if (label === "current session") session = window;
     else if (label === "current week (all models)") weekly = window;
+    else if (label === "current week (fable)") fable = window;
   }
 
   if (!session || !weekly) return null;
   const effectiveFetchedAtMs = staleAdjustedFetchTime(value.result, fetchedAtMs);
   return effectiveFetchedAtMs === null
     ? null
-    : { session, weekly, fetchedAtMs: effectiveFetchedAtMs };
+    : {
+        session,
+        weekly,
+        ...(fable ? { fable } : {}),
+        fetchedAtMs: effectiveFetchedAtMs,
+      };
 }
 
 const REQUEST_TIMEOUT_MS = 15_000;

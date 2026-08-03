@@ -114,6 +114,7 @@ describe("buildClaudeProvider", () => {
         read: () => ({
           session: { percent: 10, reset: "resets Aug 4 at 3:20am (Asia/Dhaka)" },
           weekly: { percent: 95, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
+          fable: { percent: 65, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
           fetchedAtMs: NOW_MS,
         }),
         note: () => null,
@@ -128,7 +129,49 @@ describe("buildClaudeProvider", () => {
     expect(provider.scopes.session.percent).toBe(10);
     expect(provider.scopes.weekly.percent).toBe(95);
     expect(provider.limits[1]?.reset).toBe("resets Aug 5 at 6am (Asia/Dhaka)");
+    expect(provider.limits[2]).toEqual({
+      id: "fable",
+      label: "weekly · Fable",
+      percent: 65,
+      reset: "resets Aug 5 at 6am (Asia/Dhaka)",
+    });
     expect(provider.notice).toBeUndefined();
+  });
+
+  test("keeps stale Fable usage when a fresh statusline replaces the shared windows", () => {
+    const provider = buildClaudeProvider({
+      meta: createClaudeMeta(),
+      transcripts: {
+        buckets: new Map(),
+        latestMs: 0,
+        modelTokens: new Map(),
+        tokenSplit: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      },
+      history: { available: true, prompts: 0, sessions: 0, latestMs: 0 },
+      snapshotFile: snapshot(60_000),
+      limitsSource: {
+        read: () => ({
+          session: { percent: 10, reset: "resets later" },
+          weekly: { percent: 20, reset: "resets later" },
+          fable: { percent: 65, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
+          fetchedAtMs: NOW_MS - 11 * 60_000,
+        }),
+        note: () => null,
+        poll: () => Promise.resolve(),
+      },
+      hasStatusline: true,
+      trend: trend(null),
+      dates: ["2026-01-15"],
+      now: NOW,
+    });
+
+    expect(provider.scopes.session.percent).toBe(25);
+    expect(provider.scopes.weekly.percent).toBe(40);
+    expect(provider.limits[2]).toMatchObject({
+      id: "fable",
+      percent: 65,
+      footnote: expect.stringContaining("cached live limits stale"),
+    });
   });
 
   test("a missing snapshot yields capless session and weekly limits", () => {

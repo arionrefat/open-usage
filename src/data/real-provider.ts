@@ -19,7 +19,7 @@ import { createGoLimitsSource, type GoLimitsSource } from "./real/go-limits-sour
 import { readOpencodeAuth, type OpencodeAuth } from "./real/opencode-auth";
 import { readOpencodeUsage } from "./real/opencode-db";
 import { readGoSpend } from "./real/opencode-go-spend";
-import { readUsageCache, writeUsageCache, type UsageCache } from "./real/usage-cache";
+import { readUsageCache, updateUsageCache, type UsageCache } from "./real/usage-cache";
 import {
   SNAPSHOT_FRESH_MS,
   createWeeklyTrend,
@@ -302,8 +302,7 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
   const paths = options.paths ?? defaultRealProviderPaths();
   const cached = readUsageCache(paths.usageCache);
   const persist = (key: keyof UsageCache, value: UsageCache[typeof key]) => {
-    const next = { ...cached, [key]: value } as UsageCache;
-    writeUsageCache(paths.usageCache, next);
+    updateUsageCache(paths.usageCache, key, value);
   };
   const codexLimits = options.codexLimits ?? createCodexLimitsSource(undefined, {
     initial: cached.codex,

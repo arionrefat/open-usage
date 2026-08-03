@@ -151,6 +151,7 @@ describe("persisted limit cache", () => {
       claude: {
         session: { percent: 24, reset: "resets in 2h" },
         weekly: { percent: 61, reset: "resets in 4d" },
+        fable: { percent: 35, reset: "resets in 4d" },
         fetchedAtMs,
       },
       codex: {
@@ -181,6 +182,11 @@ describe("persisted limit cache", () => {
       });
       const snapshot = provider.readSnapshot();
       expect(snapshot.providers.cl.limits[0]?.percent).toBe(24);
+      expect(snapshot.providers.cl.limits[2]).toMatchObject({
+        id: "fable",
+        percent: 35,
+        reset: "resets in 4d",
+      });
       expect(snapshot.providers.cx.limits[0]?.percent).toBe(38);
       expect(snapshot.providers.go.limits[0]?.percent).toBe(17);
       expect(snapshot.providers.cl.notice?.segments[0]?.text).toContain("cached live limits stale");
@@ -454,6 +460,17 @@ describe("selectUsageProvider", () => {
 
   test("hasRealSources is false for missing paths", () => {
     expect(hasRealSources(MISSING_PATHS)).toBe(false);
+  });
+
+  test("does not treat a malformed cache as a real usage source", () => {
+    const dir = mkdtempSync(join(tmpdir(), "limitless-invalid-cache-"));
+    const cachePath = join(dir, "usage-cache.json");
+    writeFileSync(cachePath, JSON.stringify({ version: 1, claude: { percent: "bad" } }));
+    try {
+      expect(hasRealSources({ ...MISSING_PATHS, usageCache: cachePath })).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("a Codex-only installation selects the real provider", () => {
