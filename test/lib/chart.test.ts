@@ -80,6 +80,19 @@ describe("bars", () => {
     for (const row of rows) expect(rowText(row)).toHaveLength(10);
   });
 
+  test("keeps a narrow-chart peak instead of interpolating it away", () => {
+    const rows = bars([0, 100, 0, 0], 2, 4, "red");
+    expect(rows.filter((row) => rowText(row)[0] === "█")).toHaveLength(4);
+  });
+
+  test("does not duplicate a peak across non-divisible buckets", () => {
+    const rows = bars([0, 0, 100, 0, 0], 2, 4, "red");
+    const columnHeights = [0, 1].map(
+      (column) => rows.filter((row) => rowText(row)[column] === "█").length,
+    );
+    expect(columnHeights).toEqual([0, 4]);
+  });
+
   test("labels active bars when the chart has room", () => {
     const labels = barLabels([0, 100, 0, 50], 16, (value) => `${value}K`, "red");
     expect(labels.map(({ offset, text }) => ({ offset, text }))).toEqual([

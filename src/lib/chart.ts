@@ -38,24 +38,25 @@ function mergeCells(cells: Cell[]): ChartSegment[] {
   return segments;
 }
 
-/** Interpolates a series onto exactly `targetWidth` columns. */
+/** Resamples a series onto exactly `targetWidth` columns without erasing peaks. */
 function resampleIntoBuckets(values: number[], targetWidth: number): number[] {
   if (targetWidth <= 0) return [];
   if (values.length === targetWidth) return values.slice();
   if (values.length === 0) return new Array(targetWidth).fill(0);
-  if (values.length === 1 || targetWidth === 1) {
-    return new Array(targetWidth).fill(values[0] ?? 0);
+  if (targetWidth === 1) return [Math.max(0, ...values)];
+  if (values.length === 1) return new Array(targetWidth).fill(Math.max(0, values[0] ?? 0));
+  if (targetWidth > values.length) {
+    return Array.from(
+      { length: targetWidth },
+      (_, index) => values[Math.min(values.length - 1, Math.floor((index * values.length) / targetWidth))] ?? 0,
+    );
   }
 
   const buckets: number[] = [];
   for (let bucketIndex = 0; bucketIndex < targetWidth; bucketIndex++) {
-    const sourcePosition = (bucketIndex * (values.length - 1)) / (targetWidth - 1);
-    const lowerIndex = Math.floor(sourcePosition);
-    const upperIndex = Math.min(values.length - 1, lowerIndex + 1);
-    const lowerValue = values[lowerIndex] ?? 0;
-    const upperValue = values[upperIndex] ?? 0;
-    const fractionBetweenValues = sourcePosition - lowerIndex;
-    buckets.push(lowerValue + (upperValue - lowerValue) * fractionBetweenValues);
+    const start = Math.floor((bucketIndex * values.length) / targetWidth);
+    const end = Math.floor(((bucketIndex + 1) * values.length) / targetWidth);
+    buckets.push(Math.max(0, ...values.slice(start, end)));
   }
   return buckets;
 }
