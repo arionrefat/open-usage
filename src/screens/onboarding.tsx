@@ -6,7 +6,6 @@ import { isProviderLive, type AppState } from "../state/app-state";
 import type { AppActions } from "../state/actions";
 import { KeyLegend } from "../components/chrome";
 import { Line, Rule, SplitLine, Spacer } from "../components/primitives";
-import { toggleSegments } from "../components/toggle";
 
 const NAME_COLUMN = 20;
 const STATUS_COLUMN = 24;
@@ -78,29 +77,6 @@ function PickStep({ state, snapshot, width, actions }: OnboardingProps) {
         );
       })}
       <Spacer />
-      <Line
-        segments={[
-          { text: "refresh codex on startup  ", color: COLORS.textFaint },
-          ...toggleSegments(
-            [
-              { label: "off", value: false },
-              { label: "on", value: true },
-            ],
-            state.refreshCodexOnStartup,
-            actions.setRefreshCodexOnStartup,
-          ),
-          { text: "  c toggles", color: COLORS.textGhost },
-        ]}
-      />
-      <Line
-        segments={[
-          {
-            text: "off keeps Codex fully manual; r still fetches live account data",
-            color: COLORS.textGhost,
-          },
-        ]}
-      />
-      <Spacer />
       <Line segments={[{ text: `${picked.length} of 3 selected`, color: COLORS.textDim }]} />
       <Spacer />
       <Rule width={width} />
@@ -110,7 +86,6 @@ function PickStep({ state, snapshot, width, actions }: OnboardingProps) {
           ["j/k", "move"],
           ["space", "toggle"],
           ["a", "select all"],
-          ["c", "codex startup"],
           ["esc", "cancel"],
         ]}
         right={[
@@ -170,15 +145,6 @@ function SummaryStep({ state, snapshot, width, actions }: OnboardingProps) {
         );
       })}
       <Spacer />
-      <Line
-        segments={[
-          { text: "codex startup refresh  ", color: COLORS.textFaint },
-          {
-            text: state.refreshCodexOnStartup ? "on" : "off - manual with r",
-            color: state.refreshCodexOnStartup ? COLORS.ok : COLORS.textMuted,
-          },
-        ]}
-      />
       <Line
         segments={[
           {

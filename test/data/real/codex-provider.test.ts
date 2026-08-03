@@ -41,7 +41,22 @@ function build(limits: CodexAccountLimits | null, buckets = new Map<number, numb
   });
 }
 
+function buildWithStats(sessions: number) {
+  return buildCodexProvider({
+    meta: createCodexMeta(),
+    buckets: new Map(),
+    stats: { sessions, tokens: 100, latestMs: NOW_MS, topModel: null },
+    limitsSource: source(account()),
+    dates: [DATE],
+    now: NOW,
+  });
+}
+
 describe("buildCodexProvider", () => {
+  test("preserves the raw 30-day session count", () => {
+    expect(buildWithStats(11).sessions30d).toBe(11);
+  });
+
   test("labels available limits by each reported duration", () => {
     const provider = build(account());
 
@@ -83,6 +98,7 @@ describe("buildCodexProvider", () => {
 
     expect(provider.series.daily).toEqual([2.5]);
     expect(provider.series.hourly.some((value) => value === 1)).toBe(true);
+    expect(provider.activityScope).toBe("account");
   });
 
   test("moves usage summary records out of the footer", () => {

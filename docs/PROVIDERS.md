@@ -146,8 +146,8 @@ Account identity is still not directly proven, so nothing in the UI asserts it.
 ### Cost and freshness
 
 Spawning a process is heavier and visible to coding-agent observers such as Herdr.
-Codex therefore refreshes only when the user presses `r` by default; onboarding and Settings offer an explicit startup-refresh preference.
-The 60-second application interval never launches Codex, hidden providers are never queried, failures back off for five minutes, and copied values expire after 15 minutes.
+Codex therefore refreshes at startup and joins the 60-second application poll.
+Hidden providers are never queried, failures back off for five minutes, and copied values expire after 15 minutes.
 Any failed refresh clears the copied account snapshot instead of extending an old percentage; the next successful `account/rateLimits/read` restores it.
 Tests inject `stubCodexLimitsSource` so the suite never launches a real codex process.
 
@@ -238,7 +238,7 @@ Optional future inputs: a plan-cap override for opencode go, and a manual OpenAI
 
 Local files (`usage-snapshot.json`, `opencode.db`) are re-read on the existing 60s app poll and on `r` refresh.
 Claude CLI usage is requested at most every three minutes, while the optional OpenCode server source uses a 60-second minimum interval.
-Codex app-server is manual by default, with one optional startup request and no interval polling.
+Codex app-server runs during startup and interval polling, as well as on manual refresh.
 Claude's copied limits expire after ten minutes; Codex and OpenCode server copies expire after 15 minutes.
 Recognized and unexpected live-source failures clear exact cached values immediately rather than presenting an old result as current.
 

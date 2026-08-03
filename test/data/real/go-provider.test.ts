@@ -63,7 +63,9 @@ describe("buildGoProvider details", () => {
   };
 
   test("renders top models, nonzero token splits, and spend figures", () => {
-    const details = build({ stats }).provider.details;
+    const result = build({ stats });
+    const details = result.provider.details;
+    expect(result.provider.sessions30d).toBe(2);
     expect(details?.[0]?.rows.map((row) => [row.label, row.value])).toEqual([
       ["sonnet", "1.5M"], ["haiku", "500K"], ["opus", "250K"],
     ]);

@@ -40,21 +40,6 @@ describe("app reducer", () => {
     expect(state.connections.cl).toEqual(initialState().connections.cl);
   });
 
-  test("codex startup refresh defaults off and can be changed independently", () => {
-    const original = initialState();
-    expect(original.refreshCodexOnStartup).toBe(false);
-
-    const enabled = reducer(original, {
-      type: "set-refresh-codex-on-startup",
-      enabled: true,
-    });
-    expect(enabled.refreshCodexOnStartup).toBe(true);
-    expect(enabled.connections).toEqual(original.connections);
-
-    const reopened = reducer(enabled, { type: "open-onboarding" });
-    expect(reopened.refreshCodexOnStartup).toBe(true);
-  });
-
   test("changing the default mode does not leave settings", () => {
     const state: AppState = { ...initialState(), view: "settings" };
     expect(reducer(state, { type: "set-mode", mode: "simple" }).view).toBe("settings");

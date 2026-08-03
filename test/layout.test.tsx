@@ -118,9 +118,18 @@ test("simple overview keeps all three providers in the legend", async () => {
   expect(rows.join("\n")).toContain("subscription ended");
 });
 
-test("detailed overview shows sessions in the usage share block", async () => {
+test("detailed overview shows usage-share trends", async () => {
   const frame = (await renderRows(140, "overview", "detailed")).join("\n");
-  expect(frame).toMatch(/\d+ sessions/);
+  expect(frame).toContain("trend");
+});
+
+test("usage share gives each provider a bar and trend label", async () => {
+  const frame = (await renderRows(140, "overview", "detailed")).join("\n");
+  expect(frame).toContain("usage share");
+  expect(frame).toContain("total");
+  expect(frame).toContain("━━━━━━━━");
+  expect(frame).toContain("trend");
+  expect(frame).not.toContain("local sessions");
 });
 
 describe("every view renders at every width", () => {

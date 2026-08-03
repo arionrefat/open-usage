@@ -41,6 +41,8 @@ function build(options: {
   snapshotFile?: SnapshotFile | null;
   hasStatusline?: boolean;
   trendRate?: number | null;
+  sessions?: number;
+  historyAvailable?: boolean;
 } = {}) {
   return buildClaudeProvider({
     meta: createClaudeMeta(),
@@ -53,7 +55,12 @@ function build(options: {
       ]),
       tokenSplit: { input: 100, output: 200, cacheRead: 600, cacheWrite: 100 },
     },
-    history: { prompts: 0, sessions: 0, latestMs: 0 },
+    history: {
+      available: options.historyAvailable ?? true,
+      prompts: 0,
+      sessions: options.sessions ?? 0,
+      latestMs: 0,
+    },
     snapshotFile: options.snapshotFile ?? null,
     limitsSource: dormantClaudeLimitsSource,
     hasStatusline: options.hasStatusline ?? true,
@@ -64,6 +71,14 @@ function build(options: {
 }
 
 describe("buildClaudeProvider", () => {
+  test("preserves the raw 30-day session count", () => {
+    expect(build({ sessions: 7 }).sessions30d).toBe(7);
+  });
+
+  test("omits sessions when history is unavailable", () => {
+    expect(build({ historyAvailable: false, sessions: 7 }).sessions30d).toBeUndefined();
+  });
+
   test("a fresh snapshot exposes session and weekly percentages without a notice", () => {
     const provider = build({ snapshotFile: snapshot(60_000) });
 
@@ -92,7 +107,7 @@ describe("buildClaudeProvider", () => {
         modelTokens: new Map(),
         tokenSplit: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       },
-      history: { prompts: 0, sessions: 0, latestMs: 0 },
+      history: { available: true, prompts: 0, sessions: 0, latestMs: 0 },
       snapshotFile: snapshot(11 * 60_000),
       limitsSource: {
         read: () => ({

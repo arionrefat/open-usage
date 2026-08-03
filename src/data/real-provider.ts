@@ -117,7 +117,7 @@ function buildConnections(
           isEnabled: true,
           status: "active",
           credential: "oauth · codex cli",
-          note: "live account data loads with manual refresh",
+          note: "live account data refreshes with the app poll",
         }
       : {
           isEnabled: true,

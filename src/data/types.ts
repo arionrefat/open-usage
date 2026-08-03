@@ -118,6 +118,10 @@ export interface ProviderUsage {
   scopes: Record<ScopeKey, ScopeSummary>;
   burn: BurnRate;
   series: UsageSeries;
+  /** Whether the provider's activity series covers an account or this device. */
+  activityScope?: "account" | "local";
+  /** Distinct local sessions in the raw 30-day activity window, when available. */
+  sessions30d?: number;
   notice?: ProviderNotice;
   details?: DetailSection[];
   /** Extra stat line under the detail chart, e.g. codex code-review runs. */

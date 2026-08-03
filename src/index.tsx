@@ -46,9 +46,6 @@ createRoot(renderer).render(
     provider={provider}
     startup={startup}
     isPollingEnabled={!isFlagEnabled(flags, "no-poll")}
-    onRefreshCodexOnStartupChange={(enabled) =>
-      updatePreferences({ refreshCodexOnStartup: enabled })
-    }
     onOnboardingFinish={() => updatePreferences({ hasCompletedOnboarding: true })}
   />,
 );

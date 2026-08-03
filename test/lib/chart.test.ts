@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  barLabels,
   bars,
   formatTokens,
   planChart,
@@ -15,8 +16,8 @@ function rowText(row: ChartRow): string {
 }
 
 describe("chart edge cases", () => {
-  test("renders zero sparkline values as empty cells", () => {
-    expect(sparkline([0, 0], 4)).toBe("    ");
+  test("renders zero sparkline values on a visible baseline", () => {
+    expect(sparkline([0, 0], 4)).toBe("▁▁▁▁");
   });
 
   test("keeps stacked bars at the requested width", () => {
@@ -65,18 +66,26 @@ describe("bars", () => {
     );
     expect(columnHeights).toEqual([4, 2]);
     const glyphs = new Set(rows.flatMap((row) => rowText(row).split("")));
-    expect([...glyphs].every((glyph) => glyph === "█" || glyph === " ")).toBe(true);
+    expect([...glyphs].every((glyph) => ["█", " ", "┄", "▁"].includes(glyph))).toBe(true);
   });
 
-  test("gives tiny non-zero values one row and zero values none", () => {
+  test("gives tiny non-zero values one row and zero values a baseline marker", () => {
     const rows = bars([100, 1, 0], 3, 8, "red");
     const bottom = rowText(rows[7]!);
-    expect(bottom).toBe("██ ");
+    expect(bottom).toBe("██▁");
   });
 
   test("resamples when there are more points than columns", () => {
     const rows = bars(Array.from({ length: 30 }, (_, i) => i + 1), 10, 4, "red");
     for (const row of rows) expect(rowText(row)).toHaveLength(10);
+  });
+
+  test("labels active bars when the chart has room", () => {
+    const labels = barLabels([0, 100, 0, 50], 16, (value) => `${value}K`, "red");
+    expect(labels.map(({ offset, text }) => ({ offset, text }))).toEqual([
+      { offset: 4, text: "100K" },
+      { offset: 12, text: "50K" },
+    ]);
   });
 });
 

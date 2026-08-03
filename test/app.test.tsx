@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
-import { App } from "../src/app";
+import { App, providerIdsForRefresh } from "../src/app";
 import { mockUsageProvider } from "../src/data/mock-provider";
 import type { RefreshRequest, UsageProvider } from "../src/data/types";
 
 function pendingProvider(onRefresh?: (request: RefreshRequest) => void): UsageProvider {
+  const connections = mockUsageProvider.initialConnections();
+  connections.cx = { ...connections.cx, status: "active" };
   return {
     ...mockUsageProvider,
+    initialConnections: () => structuredClone(connections),
     refresh: (request) => {
       onRefresh?.(request);
       return new Promise((_, reject) => {
@@ -18,7 +21,35 @@ function pendingProvider(onRefresh?: (request: RefreshRequest) => void): UsagePr
 }
 
 describe("App interactions", () => {
-  test("starts polling without spawning codex by default", async () => {
+  test("includes Codex in interval polling", () => {
+    expect(
+      providerIdsForRefresh(
+        {
+          cl: { isEnabled: true, status: "active", credential: "", note: "" },
+          cx: { isEnabled: true, status: "active", credential: "", note: "" },
+          go: { isEnabled: true, status: "active", credential: "", note: "" },
+        },
+        "interval",
+      ),
+    ).toEqual(["cl", "cx", "go"]);
+  });
+
+  test("skips unavailable Codex during automatic refresh but keeps manual probing", () => {
+    const connections = {
+      cl: { isEnabled: true, status: "active", credential: "", note: "" },
+      cx: { isEnabled: true, status: "expired", credential: "", note: "" },
+      go: { isEnabled: true, status: "active", credential: "", note: "" },
+    } as const;
+
+    expect(providerIdsForRefresh(connections, "interval")).toEqual(["cl", "go"]);
+    expect(providerIdsForRefresh(connections, "startup")).toEqual(["cl", "go"]);
+    expect(providerIdsForRefresh(connections, "manual")).toEqual(["cl", "cx", "go"]);
+
+    const missing = { ...connections, cx: { ...connections.cx, status: "none" as const } };
+    expect(providerIdsForRefresh(missing, "interval")).toEqual(["cl", "go"]);
+  });
+
+  test("starts polling all enabled providers", async () => {
     let refreshRequest: RefreshRequest | undefined;
     const setup = await testRender(
       <App
@@ -32,35 +63,11 @@ describe("App interactions", () => {
 
     try {
       expect(refreshRequest?.reason).toBe("startup");
-      expect(refreshRequest?.providerIds).toEqual(["cl", "go"]);
-    } finally {
-      act(() => setup.renderer.destroy());
-    }
-    expect(refreshRequest?.signal?.aborted).toBe(true);
-  });
-
-  test("includes codex at startup only after explicit opt-in", async () => {
-    let refreshRequest: RefreshRequest | undefined;
-    const setup = await testRender(
-      <App
-        provider={pendingProvider((request) => {
-          refreshRequest = request;
-        })}
-        startup={{
-          screen: "app",
-          view: "overview",
-          mode: "detailed",
-          refreshCodexOnStartup: true,
-        }}
-      />,
-      { width: 80, height: 30 },
-    );
-
-    try {
       expect(refreshRequest?.providerIds).toEqual(["cl", "cx", "go"]);
     } finally {
       act(() => setup.renderer.destroy());
     }
+    expect(refreshRequest?.signal?.aborted).toBe(true);
   });
 
   test("--no-poll mode never calls refresh, but r still does", async () => {
@@ -111,8 +118,7 @@ describe("App interactions", () => {
     }
   });
 
-  test("onboarding toggles and persists the codex startup choice without credentials", async () => {
-    const persisted: boolean[] = [];
+  test("onboarding completes without credentials", async () => {
     let completed = 0;
     let refreshRequest: RefreshRequest | undefined;
     const setup = await testRender(
@@ -121,7 +127,6 @@ describe("App interactions", () => {
           refreshRequest = request;
         })}
         startup={{ screen: "onboarding", view: "overview", mode: "detailed" }}
-        onRefreshCodexOnStartupChange={(enabled) => persisted.push(enabled)}
         onOnboardingFinish={() => {
           completed += 1;
         }}
@@ -132,19 +137,11 @@ describe("App interactions", () => {
     try {
       await new Promise((resolve) => setTimeout(resolve, 20));
       await setup.flush();
-      expect(setup.captureCharFrame()).toContain("refresh codex on startup");
       expect(refreshRequest).toBeUndefined();
-      act(() => setup.mockInput.pressKey("c"));
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        await setup.flush();
-      });
-      expect(persisted).toEqual([true]);
       act(() => setup.mockInput.pressEnter());
       await new Promise((resolve) => setTimeout(resolve, 20));
       await setup.flush();
       const summary = setup.captureCharFrame();
-      expect(summary).toContain("codex startup refresh");
       expect(summary).toContain("provider logins stay in their own CLIs");
       expect(summary).not.toContain("paste credential");
       act(() => setup.mockInput.pressEnter());

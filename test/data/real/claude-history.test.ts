@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { historyStatsFromLines, parseHistoryLine } from "../../../src/data/real/claude-history";
+import {
+  historyStatsFromLines,
+  parseHistoryLine,
+  readHistoryStats,
+} from "../../../src/data/real/claude-history";
 
 describe("parseHistoryLine", () => {
   test("reads timestamp and session id", () => {
@@ -29,5 +33,15 @@ describe("historyStatsFromLines", () => {
     expect(stats.prompts).toBe(3);
     expect(stats.sessions).toBe(2);
     expect(stats.latestMs).toBe(7000);
+    expect(stats.available).toBe(true);
+  });
+
+  test("marks a missing history file unavailable", () => {
+    expect(readHistoryStats("/nonexistent/claude-history.jsonl", 0)).toEqual({
+      available: false,
+      prompts: 0,
+      sessions: 0,
+      latestMs: 0,
+    });
   });
 });

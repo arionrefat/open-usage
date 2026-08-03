@@ -155,20 +155,6 @@ export function Settings(props: SettingsProps) {
         ]}
       />
       <SettingLine label="poll interval" value={`${POLL_INTERVAL_SECONDS}s`} hint="r forces a refresh" />
-      <Line
-        segments={[
-          { text: padEnd("codex on startup", SETTING_LABEL_COLUMN), color: COLORS.textFaint },
-          ...toggleSegments(
-            [
-              { label: "off", value: false },
-              { label: "on", value: true },
-            ],
-            state.refreshCodexOnStartup,
-            actions.setRefreshCodexOnStartup,
-          ),
-          { text: "  c toggles · off means manual r only", color: COLORS.textGhost },
-        ]}
-      />
       <SettingLine
         label="warn threshold"
         value={`${THRESHOLDS.danger}%`}

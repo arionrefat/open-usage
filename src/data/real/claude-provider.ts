@@ -302,6 +302,7 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
           capsOutAt: projection.capsOutAt,
         }
       : localBurn(rate),
+    ...(history.available ? { sessions30d: history.sessions } : {}),
     ...(details.length > 0 ? { details } : {}),
     ...(isFresh
       ? {}

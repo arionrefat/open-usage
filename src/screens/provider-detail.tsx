@@ -1,5 +1,6 @@
-import { bars, formatTokens } from "../lib/chart";
+import { barLabels, bars, formatTokens, sum } from "../lib/chart";
 import { buildMeter } from "../lib/meter";
+import { columnWidth, padStart } from "../lib/text";
 import { COLORS, PROVIDER_COLORS } from "../theme";
 import {
   STATUS_PRESENTATION,
@@ -12,8 +13,6 @@ import { isProviderLive, type AppState } from "../state/app-state";
 import type { DerivedState } from "../state/derive";
 import { DetailLimitMeter } from "../components/limit-meter";
 import { Chart, Line, SplitLine, Spacer, type Segment } from "../components/primitives";
-
-/** The design plots 8 chart rows; shorter terminals fall back to the clamp. */
 
 /** Colors the footer stats locally: numbers bright, "▏" separators dim. */
 function footerSegments(footer: string): Segment[] {
@@ -100,6 +99,8 @@ function DetailSectionColumn({
   width: number;
   color: string;
 }) {
+  const valueWidth = Math.max(1, ...section.rows.map((row) => columnWidth(row.value)));
+
   return (
     <box flexDirection="column" flexShrink={0} width={width}>
       <Line
@@ -124,7 +125,7 @@ function DetailSectionColumn({
                     { text: " ", color: COLORS.rule },
                   ]
                 : []),
-              { text: row.value, color: COLORS.text },
+              { text: padStart(row.value, valueWidth), color: COLORS.text },
             ]}
           />
         );
@@ -187,6 +188,13 @@ export function ProviderDetail({
       { text: "│", color: COLORS.borderPanel },
     ],
   }));
+  const chartLabels = barLabels(series, chartWidth, formatTokens, COLORS.text).map((label) => ({
+    ...label,
+    offset: label.offset + 1,
+  }));
+  const activeDays = series.filter((value) => value > 0).length;
+  const totalTokens = sum(series);
+  const chartTokenLabel = provider.activityScope === "account" ? "account tokens" : "tokens";
 
   return (
     <box flexDirection="column" flexShrink={0}>
@@ -231,7 +239,11 @@ export function ProviderDetail({
         width={width}
         left={[
           { text: "┌─ ", color: COLORS.borderPanel },
-          { text: `tokens ${derived.rangeName} `, color: COLORS.textMuted, isBold: true },
+          {
+            text: `${chartTokenLabel} ${derived.rangeName} · ${formatTokens(totalTokens)} total · ${activeDays}/${series.length} active `,
+            color: COLORS.textMuted,
+            isBold: true,
+          },
         ]}
         right={[
           { text: ` peak ${formatTokens(Math.max(0, ...series))} `, color: COLORS.textGhost },
@@ -240,7 +252,12 @@ export function ProviderDetail({
         filler="─"
         fillerColor={COLORS.borderPanel}
       />
-      <Chart rows={chartRows} />
+      <Chart
+        rows={chartRows}
+        labels={chartLabels}
+        labelWidth={width}
+        labelBorderColor={COLORS.borderPanel}
+      />
       <SplitLine
         width={width}
         left={[

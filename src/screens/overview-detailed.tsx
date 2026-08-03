@@ -38,6 +38,15 @@ function pressureColor(percent: number): string {
   return COLORS.textGhost;
 }
 
+function shareBarSegments(percent: number, width: number, color: string): Segment[] {
+  const barWidth = Math.max(1, width);
+  const filled = percent > 0 ? Math.max(1, Math.round((percent / 100) * barWidth)) : 0;
+  return [
+    { text: "━".repeat(filled), color },
+    { text: "─".repeat(barWidth - filled), color: COLORS.track },
+  ];
+}
+
 function closestToLimitSegments(
   worstId: ProviderId | null,
   worstPercent: number,
@@ -258,48 +267,72 @@ function SummaryTrio({
   );
 }
 
-function UsageShare({ derived, snapshot, width }: OverviewDetailedProps) {
+function UsageShare({ state, derived, snapshot, width }: OverviewDetailedProps) {
   const column = columnWidthFor(width, Math.max(1, derived.visibleIds.length));
   const isStacked = columnsStack(width, derived.visibleIds.length);
-  const total = derived.visibleTotal || 1;
+  const total = derived.visibleTotal;
 
   return (
     <box flexDirection="column" flexShrink={0}>
-      <Line
-        segments={[
+      <SplitLine
+        width={width}
+        left={[
           { text: "usage share", color: COLORS.textMuted, isBold: true },
           { text: " ▏ ", color: COLORS.rule },
           { text: `${derived.rangeName} · tokens`, color: COLORS.textGhost },
         ]}
+        right={[{ text: `${formatTokens(derived.visibleTotal)} total`, color: COLORS.textGhost }]}
       />
       <Spacer />
       <box flexDirection={isStacked ? "column" : "row"} flexShrink={0}>
         {derived.visibleIds.map((id, index) => {
+          const provider = snapshot.providers[id];
           const tokens = derived.totals[id];
+          const share = total > 0 ? (tokens / total) * 100 : 0;
+          const sharePercent = Math.round(share);
+          const sessions30d = state.range === "30d" ? provider.sessions30d : undefined;
+          const sessionLabel = id === "cx"
+            ? sessions30d === 1
+              ? "local session"
+              : "local sessions"
+            : sessions30d === 1
+              ? "session"
+              : "sessions";
+          const tokenLabel = provider.activityScope === "account" ? "account tokens" : "tokens";
           return (
             <box key={id} flexDirection={isStacked ? "column" : "row"} flexShrink={0}>
               {index > 0 ? <ColumnGap isStacked={isStacked} /> : null}
               <box flexDirection="column" flexShrink={0} width={column}>
                 <Line
                   segments={[
-                    { text: `${Math.round((tokens / total) * 100)}%`, color: PROVIDER_COLORS[id], isBold: true },
-                    { text: `  ${snapshot.providers[id].meta.name}`, color: COLORS.textFaint },
-                  ]}
-                />
-                <Line
-                  segments={[
-                    {
-                      text: sparkline(derived.series[id], Math.min(SPARKLINE_WIDTH, column)),
-                      color: PROVIDER_COLORS[id],
-                    },
+                    { text: "▎", color: PROVIDER_COLORS[id] },
+                    { text: ` ${provider.meta.name}`, color: COLORS.textFaint, isBold: true },
+                    { text: ` ${sharePercent}%`, color: PROVIDER_COLORS[id], isBold: true },
                   ]}
                 />
                 <Line
                   width={column}
                   segments={[
-                    { text: `${formatTokens(tokens)} tokens `, color: COLORS.textGhost },
-                    { text: "·", color: COLORS.rule },
-                    { text: ` ${Math.max(1, Math.round(tokens / 22))} sessions`, color: COLORS.textGhost },
+                    ...shareBarSegments(share, column, PROVIDER_COLORS[id]),
+                  ]}
+                />
+                <SplitLine
+                  width={column}
+                  left={[{ text: `${formatTokens(tokens)} ${tokenLabel}`, color: COLORS.textGhost }]}
+                  right={
+                    sessions30d === undefined
+                      ? []
+                      : [{ text: `${sessions30d} ${sessionLabel}`, color: COLORS.textGhost }]
+                  }
+                />
+                <Line
+                  width={column}
+                  segments={[
+                    { text: "trend ", color: COLORS.textFaint },
+                    {
+                      text: sparkline(derived.series[id], Math.max(1, Math.min(SPARKLINE_WIDTH, column - 6))),
+                      color: PROVIDER_COLORS[id],
+                    },
                   ]}
                 />
               </box>

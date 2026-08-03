@@ -1,5 +1,5 @@
 import { MouseButton, TextAttributes, type MouseEvent } from "@opentui/core";
-import type { ChartRow } from "../lib/chart";
+import type { ChartLabel, ChartRow, ChartSegment } from "../lib/chart";
 import { columnWidth, truncate } from "../lib/text";
 import { COLORS } from "../theme";
 
@@ -221,12 +221,58 @@ export function TripleLine({ width, left, center, right }: TripleLineProps) {
 
 interface ChartProps {
   rows: ChartRow[];
+  labels?: ChartLabel[];
+  labelWidth?: number;
+  labelBorderColor?: string;
+}
+
+interface LabelCell {
+  char: string;
+  color: string;
+}
+
+function labelSegments(
+  labels: ChartLabel[],
+  width: number,
+  borderColor?: string,
+): ChartSegment[] {
+  const cells: LabelCell[] = Array.from({ length: Math.max(0, width) }, () => ({
+    char: " ",
+    color: COLORS.bg,
+  }));
+  if (borderColor && cells.length >= 2) {
+    cells[0] = { char: "│", color: borderColor };
+    cells[cells.length - 1] = { char: "│", color: borderColor };
+  }
+  for (const label of labels) {
+    for (const [index, char] of [...label.text].entries()) {
+      const column = label.offset + index;
+      if (column < 0 || column >= cells.length || cells[column]?.char !== " ") continue;
+      cells[column] = { char, color: label.color };
+    }
+  }
+  const segments: ChartSegment[] = [];
+  for (const cell of cells) {
+    const last = segments[segments.length - 1];
+    if (last && last.color === cell.color) last.text += cell.char;
+    else segments.push({ text: cell.char, color: cell.color });
+  }
+  return segments;
 }
 
 /** Renders pre-computed chart rows; each row is already run-length merged. */
-export function Chart({ rows }: ChartProps) {
+export function Chart({ rows, labels = [], labelWidth, labelBorderColor }: ChartProps) {
   return (
     <box flexDirection="column">
+      {labels.length > 0 && labelWidth ? (
+        <text>
+          {labelSegments(labels, labelWidth, labelBorderColor).map((segment, index) => (
+            <span key={`label-${index}`} fg={segment.color}>
+              {segment.text}
+            </span>
+          ))}
+        </text>
+      ) : null}
       {rows.map((row, rowIndex) => (
         <text key={`row-${rowIndex}`}>
           {row.segments.map((segment, index) => (

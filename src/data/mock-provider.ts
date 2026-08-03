@@ -24,7 +24,7 @@ const META: Record<ProviderId, ProviderMeta> = {
     planShort: "Plus",
     planDetail: "Plus",
     requirement: "codex cli installed and signed in",
-    source: "codex app-server (manual refresh)",
+    source: "codex app-server",
   },
   go: {
     id: "go",

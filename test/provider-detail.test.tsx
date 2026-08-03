@@ -8,9 +8,10 @@ import type { DetailSection, UsageProvider } from "../src/data/types";
 const WIDTH = 60;
 const HEIGHT = 60;
 
-function providerWith(details: DetailSection[] | undefined): UsageProvider {
+function providerWith(details: DetailSection[] | undefined, activityScope?: "account" | "local"): UsageProvider {
   const snapshot = structuredClone(mockUsageProvider.readSnapshot());
   snapshot.providers.cl.details = details;
+  snapshot.providers.cl.activityScope = activityScope;
   snapshot.providers.cl.notice = undefined;
   return {
     ...mockUsageProvider,
@@ -19,10 +20,14 @@ function providerWith(details: DetailSection[] | undefined): UsageProvider {
   };
 }
 
-async function renderDetails(details: DetailSection[] | undefined, width = WIDTH): Promise<string> {
+async function renderDetails(
+  details: DetailSection[] | undefined,
+  width = WIDTH,
+  activityScope?: "account" | "local",
+): Promise<string> {
   const setup = await testRender(
     <App
-      provider={providerWith(details)}
+      provider={providerWith(details, activityScope)}
       startup={{ screen: "app", view: "claude", mode: "detailed", useSeverityColors: false }}
     />,
     { width, height: HEIGHT },
@@ -73,6 +78,26 @@ test("long detail labels truncate without wrapping", async () => {
   for (const row of rows) expect(Bun.stringWidth(row)).toBeLessThanOrEqual(WIDTH);
 });
 
+test("aligns detail bars when values have different widths", async () => {
+  const frame = await renderDetails([
+    {
+      title: "tokens",
+      rows: [
+        { label: "input", value: "17M", percent: 72 },
+        { label: "output", value: "8.4M", percent: 31 },
+        { label: "reasoning", value: "5.3M", percent: 19 },
+      ],
+    },
+  ]);
+  const rows = frame.split("\n");
+  const barStarts = ["input", "output", "reasoning"].map(
+    (label) => rows.find((row) => row.includes(label))?.indexOf("█"),
+  );
+
+  expect(barStarts[0]).toBeGreaterThanOrEqual(0);
+  expect(barStarts).toEqual([barStarts[0], barStarts[0], barStarts[0]]);
+});
+
 test("frames the token chart with peak and dates on its borders", async () => {
   const frame = await renderDetails(undefined);
   const rows = frame.split("\n");
@@ -84,6 +109,11 @@ test("frames the token chart with peak and dates on its borders", async () => {
   const topIndex = rows.findIndex((row) => row.includes("tokens last 30 days"));
   expect(rows.slice(topIndex + 1, topIndex + 9).every((row) => row.trim().startsWith("│"))).toBe(true);
   expect(rows.slice(topIndex + 1, topIndex + 9).every((row) => row.trimEnd().endsWith("│"))).toBe(true);
+});
+
+test("labels account-wide token charts explicitly", async () => {
+  const frame = await renderDetails(undefined, WIDTH, "account");
+  expect(frame).toContain("account tokens last 30 days");
 });
 
 test("lays up to three detail sections in a band and wraps the fourth", async () => {

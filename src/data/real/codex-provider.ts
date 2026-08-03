@@ -192,6 +192,8 @@ export function buildCodexProvider(input: CodexProviderInput): ProviderUsage {
           },
     },
     burn: localBurn(tokensPerHour(buckets, now)),
+    activityScope: limits?.usage ? "account" : "local",
+    ...(input.stats?.sessions !== undefined ? { sessions30d: input.stats.sessions } : {}),
     details: limits ? codexDetails(limits) : undefined,
     detailFooter: usage ? undefined : localStatsFooter(stats, nowMs),
   };

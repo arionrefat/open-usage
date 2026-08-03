@@ -4,12 +4,10 @@ import { dirname, join } from "node:path";
 import { isRecord } from "./data/real/json";
 
 export interface AppPreferences {
-  refreshCodexOnStartup: boolean;
   hasCompletedOnboarding: boolean;
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
-  refreshCodexOnStartup: false,
   hasCompletedOnboarding: false,
 };
 
@@ -22,10 +20,6 @@ export function readPreferences(path: string): AppPreferences {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     if (!isRecord(parsed)) return DEFAULT_PREFERENCES;
     return {
-      refreshCodexOnStartup:
-        typeof parsed.refreshCodexOnStartup === "boolean"
-          ? parsed.refreshCodexOnStartup
-          : DEFAULT_PREFERENCES.refreshCodexOnStartup,
       hasCompletedOnboarding:
         typeof parsed.hasCompletedOnboarding === "boolean"
           ? parsed.hasCompletedOnboarding

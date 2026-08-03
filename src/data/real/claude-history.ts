@@ -7,12 +7,13 @@ export interface HistoryEvent {
 }
 
 export interface HistoryStats {
+  available: boolean;
   prompts: number;
   sessions: number;
   latestMs: number;
 }
 
-const EMPTY_STATS: HistoryStats = { prompts: 0, sessions: 0, latestMs: 0 };
+const EMPTY_STATS: HistoryStats = { available: false, prompts: 0, sessions: 0, latestMs: 0 };
 
 export function parseHistoryLine(line: string): HistoryEvent | null {
   let parsed: unknown;
@@ -38,10 +39,10 @@ export function historyStatsFromLines(lines: Iterable<string>, sinceMs: number):
     sessionIds.add(event.sessionId);
     latestMs = Math.max(latestMs, event.epochMs);
   }
-  return { prompts, sessions: sessionIds.size, latestMs };
+  return { available: true, prompts, sessions: sessionIds.size, latestMs };
 }
 
-/** Prompt and session counts since `sinceMs`; zeros when the file is absent. */
+/** Prompt and session counts since `sinceMs`; unavailable when the file cannot be read. */
 export function readHistoryStats(path: string, sinceMs: number): HistoryStats {
   if (!existsSync(path)) return EMPTY_STATS;
   try {

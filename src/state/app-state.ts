@@ -42,7 +42,6 @@ export interface AppState {
   filterQuery: string;
   useSeverityColors: boolean;
   isDailySplitVisible: boolean;
-  refreshCodexOnStartup: boolean;
   connections: Record<ProviderId, ProviderConnection>;
   onboarding: OnboardingState;
 }
@@ -53,7 +52,6 @@ export interface AppStateOptions {
   mode?: OverviewMode;
   useSeverityColors?: boolean;
   isDailySplitVisible?: boolean;
-  refreshCodexOnStartup?: boolean;
   connections: Record<ProviderId, ProviderConnection>;
 }
 
@@ -83,7 +81,6 @@ export function createInitialState(options: AppStateOptions): AppState {
     filterQuery: "",
     useSeverityColors: options.useSeverityColors ?? false,
     isDailySplitVisible: options.isDailySplitVisible ?? true,
-    refreshCodexOnStartup: options.refreshCodexOnStartup ?? false,
     connections: options.connections,
     onboarding: {
       step: 0,
@@ -123,7 +120,6 @@ export type AppAction =
   | { type: "onboarding-begin-auth" }
   | { type: "onboarding-finish" }
   | { type: "onboarding-cancel" }
-  | { type: "set-refresh-codex-on-startup"; enabled: boolean }
   | { type: "settings-move"; delta: number }
   | { type: "settings-toggle-enabled"; id?: ProviderId };
 
@@ -318,8 +314,6 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
         return { ...state, screen: "app", view: "overview" };
       case "onboarding-cancel":
         return { ...state, screen: "app" };
-      case "set-refresh-codex-on-startup":
-        return { ...state, refreshCodexOnStartup: action.enabled };
       // Settings cursor and connections.
       case "settings-move":
         return {

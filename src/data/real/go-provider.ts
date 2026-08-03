@@ -263,6 +263,7 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
         weekly: weeklyScope(server, spend, note, nowMs),
       },
       burn: localBurn(tokensPerHour(buckets, now)),
+      ...(stats?.sessions !== undefined ? { sessions30d: stats.sessions } : {}),
       details: detailSections(stats, server?.useBalance ?? null),
       ...(noticeText
         ? {

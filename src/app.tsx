@@ -38,8 +38,8 @@ const IDLE_CHECK_INTERVAL_MS = 5 * 60 * SECOND_MS;
 const POLL_INTERVAL_MS = POLL_INTERVAL_SECONDS * SECOND_MS;
 const DETAIL_CHART_MAX_HEIGHT = 8;
 const DETAIL_CHART_MIN_HEIGHT = 4;
-/** Rows consumed by chrome plus a provider screen's non-chart content. */
-const DETAIL_CHROME_ROWS = 24;
+/** Rows consumed by chrome plus a provider screen's non-chart content and labels. */
+const DETAIL_CHROME_ROWS = 25;
 
 const TEXT_DECODER = new TextDecoder();
 
@@ -55,15 +55,24 @@ export interface AppProps {
   startup: Omit<AppStateOptions, "connections">;
   /** false disables the startup refresh and poll timer (--no-poll); r still refreshes. */
   isPollingEnabled?: boolean;
-  onRefreshCodexOnStartupChange?: (enabled: boolean) => void;
   onOnboardingFinish?: () => void;
+}
+
+export function providerIdsForRefresh(
+  connections: AppStateOptions["connections"],
+  reason: RefreshReason,
+): ProviderId[] {
+  return PROVIDER_IDS.filter((id) => {
+    if (!connections[id].isEnabled) return false;
+    // Automatic refreshes skip unavailable Codex; `r` remains an explicit probe.
+    return id !== "cx" || reason === "manual" || connections[id].status === "active";
+  });
 }
 
 export function App({
   provider,
   startup,
   isPollingEnabled = true,
-  onRefreshCodexOnStartupChange,
   onOnboardingFinish,
 }: AppProps) {
   const renderer = useRenderer();
@@ -85,12 +94,10 @@ export function App({
   const pendingManualRefreshRef = useRef(false);
   const refreshContextRef = useRef({
     connections: state.connections,
-    refreshCodexOnStartup: state.refreshCodexOnStartup,
     screen: state.screen,
   });
   refreshContextRef.current = {
     connections: state.connections,
-    refreshCodexOnStartup: state.refreshCodexOnStartup,
     screen: state.screen,
   };
   // Read by quit() so its identity stays stable; unstable deps here would
@@ -104,11 +111,7 @@ export function App({
       return;
     }
     const context = refreshContextRef.current;
-    const providerIds = PROVIDER_IDS.filter((id) => {
-      if (!context.connections[id].isEnabled) return false;
-      if (id !== "cx") return true;
-      return reason === "manual" || (reason === "startup" && context.refreshCodexOnStartup);
-    });
+    const providerIds = providerIdsForRefresh(context.connections, reason);
     const controller = new AbortController();
     refreshAbortRef.current = controller;
     dispatch({ type: "refresh-start" });
@@ -197,14 +200,10 @@ export function App({
         onOnboardingFinish?.();
         if (isPollingEnabled) refresh("startup");
       },
-      setRefreshCodexOnStartup: (enabled) => {
-        dispatch({ type: "set-refresh-codex-on-startup", enabled });
-        onRefreshCodexOnStartupChange?.(enabled);
-      },
       settingsToggle: (id: ProviderId) => dispatch({ type: "settings-toggle-enabled", id }),
       quit: () => quit(),
     }),
-    [isPollingEnabled, onOnboardingFinish, onRefreshCodexOnStartupChange, quit, refresh],
+    [isPollingEnabled, onOnboardingFinish, quit, refresh],
   );
 
   const handleOnboardingKey = useCallback(
@@ -217,9 +216,6 @@ export function App({
         else if (key.name === "k" || key.name === "up") dispatch({ type: "onboarding-move", delta: -1 });
         else if (key.name === "space" || char === " " || char === "x") dispatch({ type: "onboarding-toggle" });
         else if (char === "a") dispatch({ type: "onboarding-select-all" });
-        else if (char === "c") {
-          actions.setRefreshCodexOnStartup(!state.refreshCodexOnStartup);
-        }
         else if (key.name === "return") dispatch({ type: "onboarding-begin-auth" });
         else if (key.name === "escape") dispatch({ type: "onboarding-cancel" });
         return;
@@ -229,7 +225,7 @@ export function App({
         actions.onboardingFinish();
       }
     },
-    [actions, state.onboarding, state.refreshCodexOnStartup],
+    [actions, state.onboarding],
   );
 
   const handleSettingsKey = useCallback((key: KeyEvent): boolean => {
@@ -246,12 +242,8 @@ export function App({
       dispatch({ type: "settings-toggle-enabled" });
       return true;
     }
-    if (char === "c") {
-      actions.setRefreshCodexOnStartup(!state.refreshCodexOnStartup);
-      return true;
-    }
     return false;
-  }, [actions, state.refreshCodexOnStartup]);
+  }, []);
 
   const handleFilterKey = useCallback((key: KeyEvent) => {
     const char = printableChar(key);

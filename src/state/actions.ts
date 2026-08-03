@@ -26,7 +26,6 @@ export interface AppActions {
   onboardingPick(index: number): void;
   onboardingContinue(): void;
   onboardingFinish(): void;
-  setRefreshCodexOnStartup(enabled: boolean): void;
   settingsToggle(id: ProviderId): void;
   quit(): void;
 }
