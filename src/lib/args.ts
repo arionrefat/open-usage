@@ -1,4 +1,5 @@
 import { type AppStateOptions, type OverviewMode, type Screen, type ViewKey } from "../state/app-state";
+import type { AppPreferences } from "../preferences";
 
 export function readFlags(argv: string[]): Map<string, string> {
   const flags = new Map<string, string>();
@@ -58,5 +59,19 @@ export function startupFromFlags(flags: Map<string, string>): Omit<AppStateOptio
     mode: modeFromFlag(mode),
     useSeverityColors: isFlagEnabled(flags, "severity-colors"),
     isDailySplitVisible: !isFlagEnabled(flags, "no-daily-split"),
+  };
+}
+
+export function startupFromFlagsAndPreferences(
+  flags: Map<string, string>,
+  preferences: AppPreferences,
+): Omit<AppStateOptions, "connections"> {
+  const startup = startupFromFlags(flags);
+  return {
+    ...startup,
+    screen: !preferences.hasCompletedOnboarding && !flags.has("screen") ? "onboarding" : startup.screen,
+    mode: flags.has("mode") ? startup.mode : preferences.defaultOverviewMode,
+    pollIntervalMinutes: preferences.pollIntervalMinutes,
+    warnThreshold: preferences.warnThreshold,
   };
 }

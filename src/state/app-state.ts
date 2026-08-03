@@ -7,6 +7,12 @@ import {
   type RangeKey,
   type ScopeKey,
 } from "../data/types";
+import {
+  DEFAULT_POLL_INTERVAL_MINUTES,
+  DEFAULT_WARN_THRESHOLD,
+  POLL_INTERVAL_OPTIONS,
+  WARN_THRESHOLD_OPTIONS,
+} from "../config";
 
 export type ViewKey = "overview" | "claude" | "codex" | "go" | "settings";
 
@@ -42,6 +48,8 @@ export interface AppState {
   filterQuery: string;
   useSeverityColors: boolean;
   isDailySplitVisible: boolean;
+  pollIntervalMinutes: number;
+  warnThreshold: number;
   connections: Record<ProviderId, ProviderConnection>;
   onboarding: OnboardingState;
 }
@@ -52,6 +60,8 @@ export interface AppStateOptions {
   mode?: OverviewMode;
   useSeverityColors?: boolean;
   isDailySplitVisible?: boolean;
+  pollIntervalMinutes?: number;
+  warnThreshold?: number;
   connections: Record<ProviderId, ProviderConnection>;
 }
 
@@ -81,6 +91,8 @@ export function createInitialState(options: AppStateOptions): AppState {
     filterQuery: "",
     useSeverityColors: options.useSeverityColors ?? false,
     isDailySplitVisible: options.isDailySplitVisible ?? true,
+    pollIntervalMinutes: options.pollIntervalMinutes ?? DEFAULT_POLL_INTERVAL_MINUTES,
+    warnThreshold: options.warnThreshold ?? DEFAULT_WARN_THRESHOLD,
     connections: options.connections,
     onboarding: {
       step: 0,
@@ -121,10 +133,27 @@ export type AppAction =
   | { type: "onboarding-finish" }
   | { type: "onboarding-cancel" }
   | { type: "settings-move"; delta: number }
-  | { type: "settings-toggle-enabled"; id?: ProviderId };
+  | { type: "settings-toggle-enabled"; id?: ProviderId }
+  | { type: "set-poll-interval"; minutes: number }
+  | { type: "cycle-poll-interval" }
+  | { type: "set-warn-threshold"; percent: number }
+  | { type: "cycle-warn-threshold" };
 
 function wrapIndex(index: number, delta: number, length: number): number {
   return (index + (delta % length) + length) % length;
+}
+
+function nextOption<T>(options: readonly T[], current: T): T {
+  const index = options.indexOf(current);
+  return options[(index + 1 + options.length) % options.length]!;
+}
+
+export function nextPollIntervalMinutes(current: number): number {
+  return nextOption(POLL_INTERVAL_OPTIONS, current);
+}
+
+export function nextWarnThreshold(current: number): number {
+  return nextOption(WARN_THRESHOLD_OPTIONS, current);
 }
 
 function pickedProviders(picks: Record<ProviderId, boolean>): ProviderId[] {
@@ -324,6 +353,20 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
         const id = action.id ?? PROVIDER_IDS[state.settingsCursor]!;
         return withConnection(state, id, { isEnabled: !state.connections[id].isEnabled });
       }
+      case "cycle-poll-interval":
+        return {
+          ...state,
+          pollIntervalMinutes: nextPollIntervalMinutes(state.pollIntervalMinutes),
+        };
+      case "set-poll-interval":
+        return { ...state, pollIntervalMinutes: action.minutes };
+      case "cycle-warn-threshold":
+        return {
+          ...state,
+          warnThreshold: nextWarnThreshold(state.warnThreshold),
+        };
+      case "set-warn-threshold":
+        return { ...state, warnThreshold: action.percent };
       default:
         return state;
     }

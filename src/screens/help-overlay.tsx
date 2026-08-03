@@ -1,10 +1,11 @@
-import { APP_NAME, APP_VERSION, POLL_INTERVAL_SECONDS } from "../config";
+import { APP_NAME, APP_VERSION } from "../config";
 import { padEnd } from "../lib/text";
 import { COLORS } from "../theme";
 import { Line, Rule, SplitLine, Spacer, leftClick } from "../components/primitives";
 
 const PANEL_WIDTH = 62;
 const KEY_COLUMN = 12;
+const SCROLLBAR_WIDTH = 1;
 /** Translucent scrim so the app behind the keymap reads as backgrounded. */
 const SCRIM_COLOR = "#15161eb8";
 
@@ -26,17 +27,31 @@ const KEYMAP: Array<[string, string]> = [
 interface HelpOverlayProps {
   width: number;
   height: number;
+  isSettings?: boolean;
   onClose: () => void;
 }
 
-export function HelpOverlay({ width, height, onClose }: HelpOverlayProps) {
+export function HelpOverlay({ width, height, isSettings = false, onClose }: HelpOverlayProps) {
+  const keymap = isSettings
+    ? KEYMAP.flatMap(([key, description]): Array<[string, string]> =>
+        key === "w"
+          ? [
+              ["p", "poll interval · 1m / 2m / 3m / 4m / 5m"],
+              ["w", "alert threshold · 80% / 85% / 90%"],
+            ]
+          : [[key, description]],
+      )
+    : KEYMAP;
   const margin = width >= 4 ? 2 : 0;
   const panelWidth = Math.max(1, Math.min(PANEL_WIDTH, width - margin * 2));
   const hasFrame = panelWidth >= 4;
   const panelPadding = hasFrame ? 1 : 0;
-  const innerWidth = Math.max(1, panelWidth - (hasFrame ? 2 : 0) - panelPadding * 2);
+  const innerWidth = Math.max(
+    1,
+    panelWidth - (hasFrame ? 2 : 0) - panelPadding * 2 - SCROLLBAR_WIDTH,
+  );
   const isNarrow = innerWidth < 32;
-  const contentHeight = KEYMAP.length * (isNarrow ? 2 : 1) + 8;
+  const contentHeight = keymap.length * (isNarrow ? 2 : 1) + 10;
   const panelHeight = Math.max(1, Math.min(contentHeight, height));
 
   return (
@@ -73,7 +88,7 @@ export function HelpOverlay({ width, height, onClose }: HelpOverlayProps) {
             right={[{ text: "esc to close", color: COLORS.textGhost, onClick: onClose }]}
           />
           <Spacer />
-          {KEYMAP.map(([key, description]) => (
+          {keymap.map(([key, description]) => (
             <box key={key} flexDirection="column" flexShrink={0}>
               <Line
                 width={innerWidth}
@@ -105,7 +120,7 @@ export function HelpOverlay({ width, height, onClose }: HelpOverlayProps) {
             background={COLORS.bgChrome}
             segments={[
               {
-                text: `${APP_NAME} v${APP_VERSION} · @opentui/react · polls every ${POLL_INTERVAL_SECONDS}s`,
+                text: `${APP_NAME} v${APP_VERSION} · @opentui/react · poll interval in settings`,
                 color: COLORS.textGhost,
                 background: COLORS.bgChrome,
               },

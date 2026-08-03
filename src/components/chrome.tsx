@@ -200,19 +200,29 @@ export function FilterBar({ width, query, matchCount, isCursorVisible }: FilterB
 
 const SEPARATOR_WIDTH = 3;
 
-export function StatusBar({ width, actions }: { width: number; actions: AppActions }) {
-  const hints: Array<[string, string, (() => void)?]> = [
-    ["j/k", "move", () => actions.moveSelection(1)],
-    ["↵", "open", () => actions.openSelected()],
-    ["tab", "next view", () => actions.cycleView()],
-    ["m", "mode", () => actions.toggleMode()],
-    ["w", "window", () => actions.toggleScope()],
-    ["t", "range", () => actions.cycleRange()],
-    ["r", "refresh", () => actions.refresh()],
-    ["/", "filter", () => actions.startFilter()],
-    ["?", "help", () => actions.toggleHelp()],
-    ["5", "settings", () => actions.setView("settings")],
-  ];
+export function StatusBar({ width, view, actions }: { width: number; view: ViewKey; actions: AppActions }) {
+  const hints: Array<[string, string, (() => void)?]> = view === "settings"
+    ? [
+        ["j/k", "move"],
+        ["space", "toggle", () => actions.settingsToggle()],
+        ["m", "mode", () => actions.toggleMode()],
+        ["p", "poll", () => actions.cyclePollInterval()],
+        ["w", "alert", () => actions.cycleWarnThreshold()],
+        ["r", "refresh", () => actions.refresh()],
+        ["?", "help", () => actions.toggleHelp()],
+      ]
+    : [
+        ["j/k", "move", () => actions.moveSelection(1)],
+        ["↵", "open", () => actions.openSelected()],
+        ["tab", "next view", () => actions.cycleView()],
+        ["m", "mode", () => actions.toggleMode()],
+        ["w", "window", () => actions.toggleScope()],
+        ["t", "range", () => actions.cycleRange()],
+        ["r", "refresh", () => actions.refresh()],
+        ["/", "filter", () => actions.startFilter()],
+        ["?", "help", () => actions.toggleHelp()],
+        ["5", "settings", () => actions.setView("settings")],
+      ];
 
   const quit = () => actions.quit();
   const right: Segment[] = [

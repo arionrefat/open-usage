@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
-import { App, providerIdsForRefresh } from "../src/app";
+import { App, pollIntervalMilliseconds, providerIdsForRefresh } from "../src/app";
 import { mockUsageProvider } from "../src/data/mock-provider";
 import type { RefreshRequest, UsageProvider } from "../src/data/types";
 
@@ -21,6 +21,11 @@ function pendingProvider(onRefresh?: (request: RefreshRequest) => void): UsagePr
 }
 
 describe("App interactions", () => {
+  test("converts the configured poll interval to milliseconds", () => {
+    expect(pollIntervalMilliseconds(1)).toBe(60_000);
+    expect(pollIntervalMilliseconds(5)).toBe(300_000);
+  });
+
   test("includes Codex in interval polling", () => {
     expect(
       providerIdsForRefresh(
@@ -89,6 +94,164 @@ describe("App interactions", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       await setup.flush();
       expect(refreshCount).toBe(1);
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
+  test("persists the final settings after batched shortcuts", async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    const setup = await testRender(
+      <App
+        provider={pendingProvider()}
+        startup={{
+          screen: "app",
+          view: "settings",
+          mode: "detailed",
+          pollIntervalMinutes: 1,
+          warnThreshold: 80,
+        }}
+        isPollingEnabled={false}
+        onPreferencesChange={(patch) => patches.push(patch)}
+      />,
+      { width: 100, height: 40 },
+    );
+
+    try {
+      act(() => {
+        setup.renderer.stdin.emit("data", Buffer.from("p"));
+        setup.renderer.stdin.emit("data", Buffer.from("p"));
+        setup.renderer.stdin.emit("data", Buffer.from("w"));
+        setup.renderer.stdin.emit("data", Buffer.from("w"));
+        setup.renderer.stdin.emit("data", Buffer.from("m"));
+      });
+      expect(Object.assign({}, ...patches)).toEqual({
+        defaultOverviewMode: "simple",
+        pollIntervalMinutes: 3,
+        warnThreshold: 90,
+      });
+      await setup.flush();
+      expect(patches).toEqual([
+        { pollIntervalMinutes: 2 },
+        { pollIntervalMinutes: 3 },
+        { warnThreshold: 85 },
+        { warnThreshold: 90 },
+        { defaultOverviewMode: "simple" },
+      ]);
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
+  test("renders poll and alert choices as segmented controls with separate hints", async () => {
+    const setup = await testRender(
+      <App
+        provider={pendingProvider()}
+        startup={{
+          screen: "app",
+          view: "settings",
+          mode: "detailed",
+          pollIntervalMinutes: 2,
+          warnThreshold: 90,
+        }}
+        isPollingEnabled={false}
+      />,
+      { width: 100, height: 44 },
+    );
+
+    try {
+      await setup.flush();
+      const frame = setup.captureCharFrame();
+      expect(frame).toMatch(/poll interval\s+1m\s+2m\s+3m\s+4m\s+5m/);
+      expect(frame).toMatch(/alert threshold\s+80%\s+85%\s+90%/);
+      expect(frame).toContain("[p] cycle options  ·  [r] force a refresh");
+      expect(frame).toContain("[w] cycle options  ·  red at this level");
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
+  test("selects exact settings options with the mouse", async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    const setup = await testRender(
+      <App
+        provider={pendingProvider()}
+        startup={{
+          screen: "app",
+          view: "settings",
+          mode: "simple",
+          pollIntervalMinutes: 2,
+          warnThreshold: 80,
+        }}
+        isPollingEnabled={false}
+        onPreferencesChange={(patch) => patches.push(patch)}
+      />,
+      { width: 110, height: 44 },
+    );
+
+    try {
+      await setup.flush();
+      await act(async () => setup.mockMouse.click(28, 25));
+      await act(async () => setup.mockMouse.click(40, 26));
+      await act(async () => setup.mockMouse.click(38, 28));
+      await setup.flush();
+      expect(patches).toEqual([
+        { defaultOverviewMode: "simple" },
+        { pollIntervalMinutes: 4 },
+        { warnThreshold: 90 },
+      ]);
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
+  test("changing the poll interval does not abort or restart an active refresh", async () => {
+    const requests: RefreshRequest[] = [];
+    const setup = await testRender(
+      <App
+        provider={pendingProvider((request) => requests.push(request))}
+        startup={{
+          screen: "app",
+          view: "settings",
+          mode: "detailed",
+          pollIntervalMinutes: 1,
+        }}
+      />,
+      { width: 100, height: 40 },
+    );
+
+    try {
+      expect(requests).toHaveLength(1);
+      act(() => setup.renderer.stdin.emit("data", Buffer.from("p")));
+      await setup.flush();
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.signal?.aborted).toBe(false);
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+    expect(requests[0]?.signal?.aborted).toBe(true);
+  });
+
+  test("keeps mode persistence aligned after changing the simplified scope", async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    const setup = await testRender(
+      <App
+        provider={pendingProvider()}
+        startup={{ screen: "app", view: "overview", mode: "detailed" }}
+        isPollingEnabled={false}
+        onPreferencesChange={(patch) => patches.push(patch)}
+      />,
+      { width: 100, height: 40 },
+    );
+
+    try {
+      act(() => {
+        setup.renderer.stdin.emit("data", Buffer.from("w"));
+        setup.renderer.stdin.emit("data", Buffer.from("m"));
+      });
+      expect(patches).toEqual([{ defaultOverviewMode: "detailed" }]);
+      await setup.flush();
+      expect(setup.captureCharFrame()).not.toContain("window  session");
     } finally {
       act(() => setup.renderer.destroy());
     }

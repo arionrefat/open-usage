@@ -1,5 +1,5 @@
 import { sum } from "../lib/chart";
-import { COLORS, THRESHOLDS } from "../theme";
+import { COLORS } from "../theme";
 import {
   PROVIDER_IDS,
   STATUS_PRESENTATION,
@@ -187,7 +187,7 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
   const ranked = rankConsumption(snapshot, state.scope, visibleLiveIds);
 
   const hotIds = liveIds.filter(
-    (id) => (snapshot.providers[id].scopes[state.scope].percent ?? 0) >= THRESHOLDS.danger,
+    (id) => (snapshot.providers[id].scopes[state.scope].percent ?? 0) >= state.warnThreshold,
   );
   const alertCount = hotIds.length + disconnectedIds.length;
 

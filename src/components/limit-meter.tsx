@@ -9,12 +9,19 @@ interface LimitMeterProps {
   width: number;
   accentColor: string;
   useSeverityColors: boolean;
+  dangerThreshold: number;
 }
 
-function meterFor(limit: UsageLimit, width: number, accentColor: string, useSeverityColors: boolean) {
+function meterFor(
+  limit: UsageLimit,
+  width: number,
+  accentColor: string,
+  useSeverityColors: boolean,
+  dangerThreshold: number,
+) {
   return limit.percent === null
     ? emptyMeter(width)
-    : buildMeter(limit.percent, width, accentColor, useSeverityColors);
+    : buildMeter(limit.percent, width, accentColor, useSeverityColors, dangerThreshold);
 }
 
 function barSegments(meter: ReturnType<typeof buildMeter>): Segment[] {
@@ -25,8 +32,8 @@ function barSegments(meter: ReturnType<typeof buildMeter>): Segment[] {
 }
 
 /** Compact meter used on the overview cards: label, bar, reset caption. */
-export function CardLimitMeter({ limit, width, accentColor, useSeverityColors }: LimitMeterProps) {
-  const meter = meterFor(limit, width, accentColor, useSeverityColors);
+export function CardLimitMeter({ limit, width, accentColor, useSeverityColors, dangerThreshold }: LimitMeterProps) {
+  const meter = meterFor(limit, width, accentColor, useSeverityColors, dangerThreshold);
   const value = limit.valueLabel ?? meter.percentLabel;
   const valueColor = limit.valueColor ?? meter.percentColor;
 
@@ -52,8 +59,8 @@ const DETAIL_PERCENT_COLUMN = 12;
 const DETAIL_CUSTOM_COLUMN = 14;
 
 /** Full-width meter used on a provider's own screen. */
-export function DetailLimitMeter({ limit, width, accentColor, useSeverityColors }: LimitMeterProps) {
-  const meter = meterFor(limit, width, accentColor, useSeverityColors);
+export function DetailLimitMeter({ limit, width, accentColor, useSeverityColors, dangerThreshold }: LimitMeterProps) {
+  const meter = meterFor(limit, width, accentColor, useSeverityColors, dangerThreshold);
   const hasCustomValue = limit.detailValueLabel !== undefined || limit.percent === null;
   const valueColumn = hasCustomValue ? DETAIL_CUSTOM_COLUMN : DETAIL_PERCENT_COLUMN;
   const value =

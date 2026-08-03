@@ -32,8 +32,8 @@ function columnsStack(width: number, count: number): boolean {
   return count > 1 && width < MIN_COLUMN_WIDTH * count + CARD_GAP * (count - 1);
 }
 
-function pressureColor(percent: number): string {
-  if (percent >= THRESHOLDS.danger) return COLORS.danger;
+function pressureColor(percent: number, dangerThreshold: number): string {
+  if (percent >= dangerThreshold) return COLORS.danger;
   if (percent >= THRESHOLDS.warn) return COLORS.warn;
   return COLORS.textGhost;
 }
@@ -162,6 +162,7 @@ function ProviderCard({
               width={width}
               accentColor={PROVIDER_COLORS[id]}
               useSeverityColors={state.useSeverityColors}
+              dangerThreshold={state.warnThreshold}
             />
           </box>
         ))
@@ -199,7 +200,7 @@ function SummaryTrio({
           segments={[
             {
               text: "▲ closest to running out",
-              color: pressureColor(worstPercent),
+              color: pressureColor(worstPercent, state.warnThreshold),
               isBold: true,
             },
           ]}

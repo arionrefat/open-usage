@@ -37,6 +37,11 @@ describe("buildMeter", () => {
     expect(meter.percentLabel).toBe("118%");
     expect(meter.percentColor).toBe(COLORS.danger);
   });
+
+  test("uses a configurable danger threshold", () => {
+    expect(buildMeter(85, WIDTH, ACCENT, false, 90).color).toBe(COLORS.warn);
+    expect(buildMeter(90, WIDTH, ACCENT, false, 90).color).toBe(COLORS.danger);
+  });
 });
 
 test("emptyMeter returns a disabled, width-exact meter", () => {

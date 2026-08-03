@@ -134,7 +134,11 @@ function DetailSectionColumn({
   );
 }
 
-function Details({ sections, width, color }: { sections: DetailSection[]; width: number; color: string }) {
+function Details({ sections, width, color }: {
+  sections: DetailSection[];
+  width: number;
+  color: string;
+}) {
   const visibleSections = sections.filter((section) => section.rows.length > 0);
   if (width < DETAIL_WIDE_MINIMUM) {
     const stackedWidth = Math.min(width, DETAIL_STACKED_WIDTH);
@@ -223,6 +227,7 @@ export function ProviderDetail({
             width={width}
             accentColor={PROVIDER_COLORS[id]}
             useSeverityColors={state.useSeverityColors}
+            dangerThreshold={state.warnThreshold}
           />
         </box>
       ))}

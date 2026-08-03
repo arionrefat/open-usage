@@ -63,8 +63,8 @@ function unavailableReset(state: AppState, id: ProviderId): string {
   return connection.isEnabled ? connection.note : "space in settings to show it again";
 }
 
-function pressureColor(percent: number): string {
-  if (percent >= THRESHOLDS.danger) return COLORS.danger;
+function pressureColor(percent: number, dangerThreshold: number): string {
+  if (percent >= dangerThreshold) return COLORS.danger;
   if (percent >= THRESHOLDS.warn) return COLORS.warn;
   return COLORS.textGhost;
 }
@@ -73,12 +73,13 @@ function closestToLimitSegments(
   worstId: ProviderId | null,
   worstPercent: number,
   snapshot: UsageSnapshot,
+  dangerThreshold: number,
 ): Segment[] {
   const providerLabel = worstId
     ? `${snapshot.providers[worstId].meta.name} ${worstPercent}%`
     : "nothing is being tracked";
   return [
-    { text: "▲ ", color: pressureColor(worstPercent) },
+    { text: "▲ ", color: pressureColor(worstPercent, dangerThreshold) },
     { text: providerLabel, color: COLORS.text },
     {
       text: worstId ? " closest to cap" : " - every provider is off or disconnected",
@@ -119,7 +120,13 @@ function buildLegend(
   const hasCap = isLive && scope.percent !== null;
   const status = STATUS_PRESENTATION[connection.status];
   const meter = hasCap
-    ? buildMeter(scope.percent ?? 0, barWidth, PROVIDER_COLORS[id], state.useSeverityColors)
+    ? buildMeter(
+        scope.percent ?? 0,
+        barWidth,
+        PROVIDER_COLORS[id],
+        state.useSeverityColors,
+        state.warnThreshold,
+      )
     : emptyMeter(barWidth);
 
   return {
@@ -300,7 +307,7 @@ export function OverviewSimple({
           <Rule width={legendWidth} />
           <Line
             width={legendWidth}
-            segments={closestToLimitSegments(worstId, worstPercent, snapshot)}
+            segments={closestToLimitSegments(worstId, worstPercent, snapshot, state.warnThreshold)}
           />
           <Line
             width={legendWidth}

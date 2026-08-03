@@ -26,6 +26,10 @@ export interface AppActions {
   onboardingPick(index: number): void;
   onboardingContinue(): void;
   onboardingFinish(): void;
-  settingsToggle(id: ProviderId): void;
+  settingsToggle(id?: ProviderId): void;
+  setPollInterval(minutes: number): void;
+  cyclePollInterval(): void;
+  setWarnThreshold(percent: number): void;
+  cycleWarnThreshold(): void;
   quit(): void;
 }

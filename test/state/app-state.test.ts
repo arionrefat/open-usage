@@ -45,6 +45,31 @@ describe("app reducer", () => {
     expect(reducer(state, { type: "set-mode", mode: "simple" }).view).toBe("settings");
   });
 
+  test("cycles the configurable poll interval and warning threshold", () => {
+    let state = initialState();
+    expect(state.pollIntervalMinutes).toBe(1);
+    expect(state.warnThreshold).toBe(85);
+
+    state = reducer(state, { type: "cycle-poll-interval" });
+    state = reducer(state, { type: "cycle-warn-threshold" });
+    expect(state.pollIntervalMinutes).toBe(2);
+    expect(state.warnThreshold).toBe(90);
+
+    state = { ...state, pollIntervalMinutes: 5, warnThreshold: 90 };
+    state = reducer(state, { type: "cycle-poll-interval" });
+    state = reducer(state, { type: "cycle-warn-threshold" });
+    expect(state.pollIntervalMinutes).toBe(1);
+    expect(state.warnThreshold).toBe(80);
+  });
+
+  test("selects exact poll interval and warning threshold options", () => {
+    let state = initialState();
+    state = reducer(state, { type: "set-poll-interval", minutes: 4 });
+    state = reducer(state, { type: "set-warn-threshold", percent: 90 });
+    expect(state.pollIntervalMinutes).toBe(4);
+    expect(state.warnThreshold).toBe(90);
+  });
+
   test("cancelling onboarding returns to its originating view", () => {
     const state: AppState = { ...initialState(), view: "settings", screen: "onboarding" };
     const cancelled = reducer(state, { type: "onboarding-cancel" });

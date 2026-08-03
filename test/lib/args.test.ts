@@ -4,7 +4,9 @@ import {
   providerModeFromFlags,
   readFlags,
   startupFromFlags,
+  startupFromFlagsAndPreferences,
 } from "../../src/lib/args";
+import { DEFAULT_PREFERENCES } from "../../src/preferences";
 
 describe("CLI flags", () => {
   test("does not consume the next flag as a boolean value", () => {
@@ -31,5 +33,33 @@ describe("CLI flags", () => {
     expect(providerModeFromFlags(readFlags(["--real"]), "mock")).toBe("real");
     expect(providerModeFromFlags(readFlags(["--mock", "--real"]), "real")).toBe("mock");
     expect(providerModeFromFlags(readFlags(["--mock=false"]), "mock")).toBe("mock");
+  });
+
+  test("merges saved startup settings while preserving explicit flags", () => {
+    const preferences = {
+      ...DEFAULT_PREFERENCES,
+      hasCompletedOnboarding: false,
+      defaultOverviewMode: "simple" as const,
+      pollIntervalMinutes: 4,
+      warnThreshold: 90,
+    };
+
+    expect(startupFromFlagsAndPreferences(readFlags([]), preferences)).toMatchObject({
+      screen: "onboarding",
+      mode: "simple",
+      pollIntervalMinutes: 4,
+      warnThreshold: 90,
+    });
+    expect(
+      startupFromFlagsAndPreferences(
+        readFlags(["--screen", "app", "--mode", "detailed"]),
+        preferences,
+      ),
+    ).toMatchObject({
+      screen: "app",
+      mode: "detailed",
+      pollIntervalMinutes: 4,
+      warnThreshold: 90,
+    });
   });
 });

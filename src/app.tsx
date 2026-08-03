@@ -2,7 +2,7 @@ import type { KeyEvent } from "@opentui/core";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { FilterBar, Header, StatusBar, Tabs } from "./components/chrome";
-import { APP_NAME, POLL_INTERVAL_SECONDS } from "./config";
+import { APP_NAME } from "./config";
 import {
   PROVIDER_IDS,
   type ProviderId,
@@ -17,6 +17,8 @@ import {
   PROVIDER_VIEWS,
   createAppReducer,
   createInitialState,
+  nextPollIntervalMinutes,
+  nextWarnThreshold,
   type AppStateOptions,
   type OverviewMode,
 } from "./state/app-state";
@@ -28,6 +30,7 @@ import { Overview } from "./screens/overview";
 import { ProviderDetail } from "./screens/provider-detail";
 import { Settings } from "./screens/settings";
 import { COLORS } from "./theme";
+import type { AppPreferencePatch } from "./preferences";
 
 const HORIZONTAL_PADDING = 2;
 /** Reserved so the scrollbox's gutter never steals a column from the content. */
@@ -35,13 +38,16 @@ const SCROLLBAR_WIDTH = 1;
 const SECOND_MS = 1000;
 const IDLE_EXIT_MS = 24 * 60 * 60 * SECOND_MS;
 const IDLE_CHECK_INTERVAL_MS = 5 * 60 * SECOND_MS;
-const POLL_INTERVAL_MS = POLL_INTERVAL_SECONDS * SECOND_MS;
 const DETAIL_CHART_MAX_HEIGHT = 8;
 const DETAIL_CHART_MIN_HEIGHT = 4;
 /** Rows consumed by chrome plus a provider screen's non-chart content and labels. */
 const DETAIL_CHROME_ROWS = 25;
 
 const TEXT_DECODER = new TextDecoder();
+
+export function pollIntervalMilliseconds(minutes: number): number {
+  return minutes * 60 * SECOND_MS;
+}
 
 function printableChar(key: KeyEvent): string | null {
   const sequence = key.sequence;
@@ -56,6 +62,7 @@ export interface AppProps {
   /** false disables the startup refresh and poll timer (--no-poll); r still refreshes. */
   isPollingEnabled?: boolean;
   onOnboardingFinish?: () => void;
+  onPreferencesChange?: (patch: AppPreferencePatch) => void;
 }
 
 export function providerIdsForRefresh(
@@ -74,6 +81,7 @@ export function App({
   startup,
   isPollingEnabled = true,
   onOnboardingFinish,
+  onPreferencesChange,
 }: AppProps) {
   const renderer = useRenderer();
   const { width, height } = useTerminalDimensions();
@@ -137,18 +145,39 @@ export function App({
       });
   }, [provider]);
 
+  const pollIntervalMs = pollIntervalMilliseconds(state.pollIntervalMinutes);
+
   useEffect(() => {
     if (!isPollingEnabled) return;
     if (startup.screen !== "onboarding") refresh("startup");
+  }, [isPollingEnabled, refresh, startup.screen]);
+
+  useEffect(() => {
+    if (!isPollingEnabled) return;
     const timer = setInterval(() => {
       if (refreshContextRef.current.screen === "app") refresh("interval");
-    }, POLL_INTERVAL_MS);
-    return () => {
-      clearInterval(timer);
+    }, pollIntervalMs);
+    return () => clearInterval(timer);
+  }, [isPollingEnabled, pollIntervalMs, refresh]);
+
+  useEffect(
+    () => () => {
       refreshAbortRef.current?.abort();
       refreshAbortRef.current = null;
-    };
-  }, [isPollingEnabled, refresh, startup.screen]);
+    },
+    [],
+  );
+
+  const persistedPreferencesRef = useRef({
+    defaultOverviewMode: state.mode,
+    pollIntervalMinutes: state.pollIntervalMinutes,
+    warnThreshold: state.warnThreshold,
+  });
+  const modeRef = useRef(state.mode);
+  const persistPreferences = useCallback((patch: AppPreferencePatch) => {
+    persistedPreferencesRef.current = { ...persistedPreferencesRef.current, ...patch };
+    onPreferencesChange?.(patch);
+  }, [onPreferencesChange]);
 
   const quit = useCallback(
     (exitCode = 0) => {
@@ -179,10 +208,25 @@ export function App({
     () => ({
       setView: (view) => dispatch({ type: "set-view", view }),
       cycleRange: () => dispatch({ type: "cycle-range" }),
-      setMode: (mode: OverviewMode) => dispatch({ type: "set-mode", mode }),
-      toggleMode: () => dispatch({ type: "toggle-mode" }),
-      setScope: (scope: ScopeKey) => dispatch({ type: "set-scope", scope }),
-      toggleScope: () => dispatch({ type: "toggle-scope" }),
+      setMode: (mode: OverviewMode) => {
+        modeRef.current = mode;
+        dispatch({ type: "set-mode", mode });
+        persistPreferences({ defaultOverviewMode: mode });
+      },
+      toggleMode: () => {
+        const mode = modeRef.current === "simple" ? "detailed" : "simple";
+        modeRef.current = mode;
+        dispatch({ type: "toggle-mode" });
+        persistPreferences({ defaultOverviewMode: mode });
+      },
+      setScope: (scope: ScopeKey) => {
+        modeRef.current = "simple";
+        dispatch({ type: "set-scope", scope });
+      },
+      toggleScope: () => {
+        modeRef.current = "simple";
+        dispatch({ type: "toggle-scope" });
+      },
       selectProvider: (id: ProviderId) => dispatch({ type: "select-provider", id }),
       openProvider: (id: ProviderId) => dispatch({ type: "set-view", view: PROVIDER_VIEWS[id] }),
       moveSelection: (delta: number) => dispatch({ type: "move-selection", delta }),
@@ -200,10 +244,32 @@ export function App({
         onOnboardingFinish?.();
         if (isPollingEnabled) refresh("startup");
       },
-      settingsToggle: (id: ProviderId) => dispatch({ type: "settings-toggle-enabled", id }),
+      settingsToggle: (id?: ProviderId) => dispatch({ type: "settings-toggle-enabled", id }),
+      setPollInterval: (pollIntervalMinutes: number) => {
+        if (pollIntervalMinutes === persistedPreferencesRef.current.pollIntervalMinutes) return;
+        dispatch({ type: "set-poll-interval", minutes: pollIntervalMinutes });
+        persistPreferences({ pollIntervalMinutes });
+      },
+      cyclePollInterval: () => {
+        const pollIntervalMinutes = nextPollIntervalMinutes(
+          persistedPreferencesRef.current.pollIntervalMinutes,
+        );
+        dispatch({ type: "cycle-poll-interval" });
+        persistPreferences({ pollIntervalMinutes });
+      },
+      setWarnThreshold: (warnThreshold: number) => {
+        if (warnThreshold === persistedPreferencesRef.current.warnThreshold) return;
+        dispatch({ type: "set-warn-threshold", percent: warnThreshold });
+        persistPreferences({ warnThreshold });
+      },
+      cycleWarnThreshold: () => {
+        const warnThreshold = nextWarnThreshold(persistedPreferencesRef.current.warnThreshold);
+        dispatch({ type: "cycle-warn-threshold" });
+        persistPreferences({ warnThreshold });
+      },
       quit: () => quit(),
     }),
-    [isPollingEnabled, onOnboardingFinish, quit, refresh],
+    [isPollingEnabled, onOnboardingFinish, persistPreferences, quit, refresh],
   );
 
   const handleOnboardingKey = useCallback(
@@ -230,6 +296,14 @@ export function App({
 
   const handleSettingsKey = useCallback((key: KeyEvent): boolean => {
     const char = printableChar(key);
+    if (char === "p") {
+      actions.cyclePollInterval();
+      return true;
+    }
+    if (char === "w") {
+      actions.cycleWarnThreshold();
+      return true;
+    }
     if (key.name === "j" || key.name === "down") {
       dispatch({ type: "settings-move", delta: 1 });
       return true;
@@ -243,7 +317,7 @@ export function App({
       return true;
     }
     return false;
-  }, []);
+  }, [actions]);
 
   const handleFilterKey = useCallback((key: KeyEvent) => {
     const char = printableChar(key);
@@ -275,13 +349,13 @@ export function App({
       else if (char === "q") quit();
       else if (char === "r") refresh("manual");
       else if (char === "t") dispatch({ type: "cycle-range" });
-      else if (char === "m") dispatch({ type: "toggle-mode" });
-      else if (char === "w") dispatch({ type: "toggle-scope" });
+      else if (char === "m") actions.toggleMode();
+      else if (char === "w") actions.toggleScope();
       else if (key.name === "tab") dispatch({ type: "cycle-view" });
       else return false;
       return true;
     },
-    [quit, refresh],
+    [actions, quit, refresh],
   );
 
   const handleSelectionKey = useCallback((key: KeyEvent, char: string | null) => {
@@ -443,11 +517,16 @@ export function App({
         paddingRight={HORIZONTAL_PADDING}
         backgroundColor={COLORS.bgChrome}
       >
-        <StatusBar width={contentWidth} actions={actions} />
+        <StatusBar width={contentWidth} view={state.view} actions={actions} />
       </box>
 
       {state.isHelpOpen ? (
-        <HelpOverlay width={width} height={height} onClose={actions.closeHelp} />
+        <HelpOverlay
+          width={width}
+          height={height}
+          isSettings={state.view === "settings"}
+          onClose={actions.closeHelp}
+        />
       ) : null}
     </box>
   );

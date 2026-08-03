@@ -10,8 +10,8 @@ export interface Meter {
   percentColor: string;
 }
 
-function severityColor(percent: number): string | null {
-  if (percent >= THRESHOLDS.danger) return COLORS.danger;
+function severityColor(percent: number, dangerThreshold: number): string | null {
+  if (percent >= dangerThreshold) return COLORS.danger;
   if (percent >= THRESHOLDS.warn) return COLORS.warn;
   return null;
 }
@@ -25,12 +25,13 @@ export function buildMeter(
   width: number,
   accentColor: string,
   useSeverityColors = false,
+  dangerThreshold: number = THRESHOLDS.danger,
 ): Meter {
   const meterWidth = Math.max(0, Math.floor(width));
   const value = Number.isFinite(percent) ? Math.max(0, percent) : 0;
   const clamped = Math.min(100, value);
   const filled = Math.round((clamped / 100) * meterWidth);
-  const severity = severityColor(value);
+  const severity = severityColor(value, dangerThreshold);
   return {
     fill: "█".repeat(filled),
     track: "█".repeat(meterWidth - filled),

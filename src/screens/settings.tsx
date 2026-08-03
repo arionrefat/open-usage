@@ -1,16 +1,24 @@
-import { COLOR_MODE_LABEL, POLL_INTERVAL_SECONDS } from "../config";
+import { COLOR_MODE_LABEL, POLL_INTERVAL_OPTIONS, WARN_THRESHOLD_OPTIONS } from "../config";
 import { padEnd } from "../lib/text";
-import { COLORS, PROVIDER_COLORS, THRESHOLDS } from "../theme";
+import { COLORS, PROVIDER_COLORS } from "../theme";
 import { PROVIDER_IDS, STATUS_PRESENTATION, type ProviderId, type UsageSnapshot } from "../data/types";
 import type { AppState, OverviewMode } from "../state/app-state";
 import type { AppActions } from "../state/actions";
 import { Line, Rule, SplitLine, Spacer, keyHint, leftClick, type Segment } from "../components/primitives";
-import { toggleSegments } from "../components/toggle";
+import { toggleSegments, type ToggleOption } from "../components/toggle";
 import { MODE_OPTIONS } from "./overview";
 
 const LABEL_COLUMN = 14;
 const SETTING_LABEL_COLUMN = 22;
 const STATUS_COLUMN = 24;
+const POLL_OPTIONS: ToggleOption<number>[] = POLL_INTERVAL_OPTIONS.map((value) => ({
+  label: `${value}m`,
+  value,
+}));
+const WARN_OPTIONS: ToggleOption<number>[] = WARN_THRESHOLD_OPTIONS.map((value) => ({
+  label: `${value}%`,
+  value,
+}));
 
 interface SettingsProps {
   state: AppState;
@@ -106,13 +114,47 @@ function SettingLine({
   hint?: string;
 }) {
   return (
-    <Line
-      segments={[
+    <box flexDirection="column" flexShrink={0}>
+      <Line
+        segments={[
+          { text: padEnd(label, SETTING_LABEL_COLUMN), color: COLORS.textFaint },
+          { text: value, color: COLORS.text },
+        ]}
+      />
+      {hint ? (
+        <Line segments={[
+          { text: " ".repeat(SETTING_LABEL_COLUMN), color: COLORS.textGhost },
+          { text: hint, color: COLORS.textMuted },
+        ]} />
+      ) : null}
+    </box>
+  );
+}
+
+function SettingOptions<T>({
+  label,
+  options,
+  current,
+  onSelect,
+  hint,
+}: {
+  label: string;
+  options: ToggleOption<T>[];
+  current: T;
+  onSelect: (value: T) => void;
+  hint: Segment[];
+}) {
+  return (
+    <box flexDirection="column" flexShrink={0}>
+      <Line segments={[
         { text: padEnd(label, SETTING_LABEL_COLUMN), color: COLORS.textFaint },
-        { text: value, color: COLORS.text },
-        ...(hint ? [{ text: `  ${hint}`, color: COLORS.textGhost }] : []),
-      ]}
-    />
+        ...toggleSegments(options, current, onSelect),
+      ]} />
+      <Line segments={[
+        { text: " ".repeat(SETTING_LABEL_COLUMN), color: COLORS.textGhost },
+        ...hint,
+      ]} />
+    </box>
   );
 }
 
@@ -154,11 +196,27 @@ export function Settings(props: SettingsProps) {
           ...modeToggleSegments(state.mode, actions),
         ]}
       />
-      <SettingLine label="poll interval" value={`${POLL_INTERVAL_SECONDS}s`} hint="r forces a refresh" />
-      <SettingLine
-        label="warn threshold"
-        value={`${THRESHOLDS.danger}%`}
-        hint="bars turn red past this"
+      <SettingOptions
+        label="poll interval"
+        options={POLL_OPTIONS}
+        current={state.pollIntervalMinutes}
+        onSelect={actions.setPollInterval}
+        hint={[
+          { text: "[p]", color: COLORS.info, isBold: true },
+          { text: " cycle options  ·  ", color: COLORS.textMuted },
+          { text: "[r]", color: COLORS.info, isBold: true },
+          { text: " force a refresh", color: COLORS.textMuted },
+        ]}
+      />
+      <SettingOptions
+        label="alert threshold"
+        options={WARN_OPTIONS}
+        current={state.warnThreshold}
+        onSelect={actions.setWarnThreshold}
+        hint={[
+          { text: "[w]", color: COLORS.info, isBold: true },
+          { text: " cycle options  ·  red at this level", color: COLORS.textMuted },
+        ]}
       />
       <SettingLine
         label="colors"
