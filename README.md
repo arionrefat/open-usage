@@ -3,6 +3,24 @@
 A terminal dashboard for unified AI plan usage across Claude Code, Codex, and OpenCode Go.
 Built with [OpenTUI](https://opentui.com/docs/) and React.
 
+## Installing
+
+Requires [Bun](https://bun.sh) 1.0 or newer. Install the CLI globally:
+
+```bash
+bun install -g open-usage
+```
+
+Or run it on demand without installing:
+
+```bash
+bunx open-usage
+```
+
+Prefer a standalone executable? Grab the binary for your OS from the
+[releases page](https://github.com/arionrefat/open-usage/releases), make it executable, and run it directly -
+no Bun required.
+
 ## Running
 
 ```bash
@@ -54,6 +72,8 @@ The `limitless`, `preview`, and `shot` scripts use `src/data/mock-provider.ts` f
 The mock adapter masks pasted credentials but does not authenticate or persist them.
 Settings changes remain in memory for the current session.
 
+Everything is read-only: the app never writes to your home directory, and nothing leaves your machine.
+
 ## Width
 
 The layout targets 140 columns and is tested down to 60 columns.
@@ -93,3 +113,14 @@ For anything involving either, `shot` writes an HTML page that redraws each cell
 ```bash
 bun run shot out.html "wide:--mode detailed" "narrow:--mode detailed --width 80"
 ```
+
+## Releasing
+
+Releases are tag-driven from `main`. CI runs `typecheck`, the test suite, and a headless render smoke test on every push and pull request; a `vX.Y.Z` tag triggers the `release` workflow, which builds per-platform binaries, attaches them to a GitHub release, and publishes `open-usage` to npm.
+
+To cut a release:
+
+1. Bump `version` in `package.json` (the `v` in the UI reads it automatically).
+2. Push `main`, then tag it: `git tag v0.4.0 && git push origin v0.4.0`.
+
+The workflow needs the `NPM_TOKEN` repository secret (an npm access token with publish scope).
