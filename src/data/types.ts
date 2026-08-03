@@ -32,6 +32,8 @@ export interface ProviderMeta {
 export interface ProviderConnection {
   /** false hides the provider from aggregate views without dropping its credential. */
   isEnabled: boolean;
+  /** Whether the provider's coding agent was found on PATH or in its local data directory. */
+  isAgentInstalled?: boolean;
   status: ConnectionStatus;
   /** Masked credential, or an empty string when nothing is stored. */
   credential: string;

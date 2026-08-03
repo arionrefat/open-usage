@@ -10,6 +10,18 @@ import { Line, Rule, SplitLine, Spacer } from "../components/primitives";
 const NAME_COLUMN = 20;
 const STATUS_COLUMN = 24;
 
+const AGENT_NAMES: Record<ProviderId, string> = {
+  cl: "claude code",
+  cx: "codex",
+  go: "opencode",
+};
+
+const AGENT_SETUP: Record<ProviderId, string> = {
+  cl: "reuses your Claude CLI login",
+  cx: "reuses your Codex CLI login",
+  go: "Go estimates work locally · cookie optional",
+};
+
 interface OnboardingProps {
   state: AppState;
   snapshot: UsageSnapshot;
@@ -23,18 +35,26 @@ function pickedProviders(state: AppState): ProviderId[] {
 
 function PickStep({ state, snapshot, width, actions }: OnboardingProps) {
   const picked = pickedProviders(state);
+  const installed = PROVIDER_IDS.filter(
+    (id) => state.connections[id].isAgentInstalled ?? state.connections[id].status !== "none",
+  );
+  const heading = installed.length > 0
+    ? `we found ${installed.length} coding agent${installed.length === 1 ? "" : "s"} on this device`
+    : "no supported coding agents found on this device";
 
   return (
     <box flexDirection="column" flexShrink={0}>
       <Line
         segments={[
-          { text: "which providers do you want to track?", color: COLORS.textBright, isBold: true },
+          { text: heading, color: COLORS.textBright, isBold: true },
         ]}
       />
       <Line
         segments={[
           {
-            text: "pick the ones you pay for - you can change this later in settings",
+            text: installed.length > 0
+              ? "installed agents are selected - existing CLI logins are reused"
+              : "select an agent manually if it is installed outside PATH",
             color: COLORS.textFaint,
           },
         ]}
@@ -43,6 +63,7 @@ function PickStep({ state, snapshot, width, actions }: OnboardingProps) {
       {PROVIDER_IDS.map((id, index) => {
         const isSelected = state.onboarding.cursor === index;
         const isPicked = state.onboarding.picks[id];
+        const isInstalled = state.connections[id].isAgentInstalled ?? state.connections[id].status !== "none";
         const background = isSelected ? COLORS.bgRowActive : undefined;
         const pick = () => actions.onboardingPick(index);
         return (
@@ -60,15 +81,15 @@ function PickStep({ state, snapshot, width, actions }: OnboardingProps) {
                 onClick: pick,
               },
               {
-                text: `  ${padEnd(snapshot.providers[id].meta.name, NAME_COLUMN)}`,
+                text: `  ${padEnd(AGENT_NAMES[id], NAME_COLUMN)}`,
                 color: isSelected ? COLORS.textBright : isPicked ? COLORS.text : COLORS.textDim,
                 background,
                 isBold: true,
                 onClick: pick,
               },
               {
-                text: snapshot.providers[id].meta.requirement,
-                color: COLORS.textFaint,
+                text: isInstalled ? `installed · ${AGENT_SETUP[id]}` : "not found",
+                color: isInstalled ? COLORS.textFaint : COLORS.textDisabled,
                 background,
                 onClick: pick,
               },
@@ -77,7 +98,14 @@ function PickStep({ state, snapshot, width, actions }: OnboardingProps) {
         );
       })}
       <Spacer />
-      <Line segments={[{ text: `${picked.length} of 3 selected`, color: COLORS.textDim }]} />
+      <Line
+        segments={[
+          {
+            text: `${picked.length} selected · ${installed.length} detected`,
+            color: COLORS.textDim,
+          },
+        ]}
+      />
       <Spacer />
       <Rule width={width} />
       <KeyLegend
@@ -148,7 +176,7 @@ function SummaryStep({ state, snapshot, width, actions }: OnboardingProps) {
       <Line
         segments={[
           {
-            text: "provider logins stay in their own CLIs; Limitless never asks for tokens",
+            text: "Claude and Codex reuse CLI logins; OpenCode's dashboard cookie is optional",
             color: COLORS.textGhost,
           },
         ]}
@@ -159,7 +187,7 @@ function SummaryStep({ state, snapshot, width, actions }: OnboardingProps) {
         width={width}
         left={[
           {
-            text: "selected providers are detected automatically",
+            text: "no API key or cookie is required to finish setup",
             color: COLORS.textGhost,
           },
         ]}

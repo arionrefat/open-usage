@@ -38,9 +38,9 @@ const META: Record<ProviderId, ProviderMeta> = {
 };
 
 const INITIAL_CONNECTIONS: Record<ProviderId, ProviderConnection> = {
-  cl: { isEnabled: true, status: "active", credential: "oauth · claude-max", note: "token expires in 27d" },
-  cx: { isEnabled: true, status: "expired", credential: "oauth · codex cli", note: "Plus renewal failed Jul 24" },
-  go: { isEnabled: true, status: "active", credential: "api key on file", note: "renews Aug 3" },
+  cl: { isEnabled: true, isAgentInstalled: true, status: "active", credential: "oauth · claude-max", note: "token expires in 27d" },
+  cx: { isEnabled: true, isAgentInstalled: true, status: "expired", credential: "oauth · codex cli", note: "Plus renewal failed Jul 24" },
+  go: { isEnabled: true, isAgentInstalled: true, status: "active", credential: "api key on file", note: "renews Aug 3" },
 };
 
 const DAILY: Record<ProviderId, number[]> = {

@@ -142,7 +142,7 @@ describe("App interactions", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       await setup.flush();
       const summary = setup.captureCharFrame();
-      expect(summary).toContain("provider logins stay in their own CLIs");
+      expect(summary).toContain("Claude and Codex reuse CLI logins");
       expect(summary).not.toContain("paste credential");
       act(() => setup.mockInput.pressEnter());
       await new Promise((resolve) => setTimeout(resolve, 20));

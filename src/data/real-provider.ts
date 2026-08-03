@@ -35,6 +35,7 @@ import type {
   UsageProvider,
   UsageSnapshot,
 } from "./types";
+import { PROVIDER_IDS } from "./types";
 
 export interface RealProviderPaths {
   opencodeDb: string;
@@ -46,6 +47,9 @@ export interface RealProviderPaths {
   usageSnapshot: string;
   usageCache: string;
   codexHome: string;
+  claudeExecutable?: string | null;
+  codexExecutable?: string | null;
+  opencodeExecutable?: string | null;
 }
 
 export function defaultRealProviderPaths(): RealProviderPaths {
@@ -69,16 +73,39 @@ export function defaultRealProviderPaths(): RealProviderPaths {
     usageSnapshot: join(home, ".claude", "usage-snapshot.json"),
     usageCache: join(home, ".config", "limitless", "usage-cache.json"),
     codexHome: codexHomeEnv || join(home, ".codex"),
+    claudeExecutable: Bun.which("claude"),
+    codexExecutable: Bun.which("codex"),
+    opencodeExecutable: Bun.which("opencode"),
+  };
+}
+
+export function detectAgentInstallations(
+  paths: RealProviderPaths,
+): Record<ProviderId, boolean> {
+  return {
+    cl:
+      Boolean(paths.claudeExecutable) ||
+      existsSync(paths.claudeProjects) ||
+      existsSync(paths.claudeHistory),
+    cx: Boolean(paths.codexExecutable) || existsSync(paths.codexHome),
+    go:
+      Boolean(paths.opencodeExecutable) ||
+      existsSync(paths.opencodeDb) ||
+      existsSync(paths.opencodeAuth),
   };
 }
 
 export function hasRealSources(paths: RealProviderPaths): boolean {
+  const installations = detectAgentInstallations(paths);
   return (
-    existsSync(paths.opencodeDb) ||
-    existsSync(paths.claudeProjects) ||
-    existsSync(paths.codexHome) ||
-    existsSync(paths.usageCache)
+    PROVIDER_IDS.some((id) => installations[id]) ||
+    hasCachedProviderValues(paths.usageCache)
   );
+}
+
+function hasCachedProviderValues(path: string): boolean {
+  const cache = readUsageCache(path);
+  return cache.claude !== null || cache.codex !== null || cache.go !== null;
 }
 
 const STATS_WINDOW_DAYS = 30;
@@ -108,39 +135,63 @@ function buildConnections(
   auth: OpencodeAuth,
   snapshotFile: SnapshotFile | null,
 ): Record<ProviderId, ProviderConnection> {
-  const hasClaude = existsSync(paths.claudeProjects) || existsSync(paths.claudeHistory);
-  const hasCodex = existsSync(paths.codexHome);
+  const installations = detectAgentInstallations(paths);
+  const hasClaudeData = existsSync(paths.claudeProjects) || existsSync(paths.claudeHistory);
+  const hasCodexData = existsSync(paths.codexHome);
+  const hasOpencodeData = existsSync(paths.opencodeDb);
 
   return {
-    cl: hasClaude
+    cl: installations.cl
       ? {
           isEnabled: true,
-          status: "active",
-          credential: "oauth · claude code",
-          note: claudeConnectionNote(snapshotFile, hasStatuslineConfigured(paths.claudeSettings)),
-        }
-      : { isEnabled: true, status: "none", credential: "", note: "claude code not found" },
-    cx: hasCodex
-      ? {
-          isEnabled: true,
-          status: "active",
-          credential: "oauth · codex cli",
-          note: "live account data refreshes with the app poll",
+          isAgentInstalled: true,
+          status: hasClaudeData ? "active" : "none",
+          credential: hasClaudeData ? "oauth · claude code" : "",
+          note: hasClaudeData
+            ? claudeConnectionNote(snapshotFile, hasStatuslineConfigured(paths.claudeSettings))
+            : "claude code found; sign in with its CLI",
         }
       : {
-          isEnabled: true,
+          isEnabled: false,
+          isAgentInstalled: false,
           status: "none",
           credential: "",
-          note: "codex cli not signed in",
+          note: "claude code not found",
         },
-    go: auth.opencodeGo
+    cx: installations.cx
       ? {
           isEnabled: true,
-          status: "active",
-          credential: auth.opencodeGo.maskedKey,
-          note: "api key on file",
+          isAgentInstalled: true,
+          status: hasCodexData ? "active" : "none",
+          credential: hasCodexData ? "oauth · codex cli" : "",
+          note: hasCodexData
+            ? "live account data refreshes with the app poll"
+            : "codex found; sign in with its CLI",
         }
-      : { isEnabled: true, status: "none", credential: "", note: "no opencode go key stored" },
+      : {
+          isEnabled: false,
+          isAgentInstalled: false,
+          status: "none",
+          credential: "",
+          note: "codex not found",
+        },
+    go: installations.go
+      ? {
+          isEnabled: true,
+          isAgentInstalled: true,
+          status: hasOpencodeData || auth.opencodeGo ? "active" : "none",
+          credential: auth.opencodeGo?.maskedKey ?? (hasOpencodeData ? "local · opencode.db" : ""),
+          note: hasOpencodeData
+            ? "local estimate; dashboard cookie is optional"
+            : "opencode found; use Go once to create local usage data",
+        }
+      : {
+          isEnabled: false,
+          isAgentInstalled: false,
+          status: "none",
+          credential: "",
+          note: "opencode not found",
+        },
   };
 }
 

@@ -70,11 +70,12 @@ The mouse wheel scrolls views taller than the terminal.
 The UI reads everything through the `UsageProvider` interface in `src/data/types.ts`.
 Production mode reads local provider sources through `src/data/real-provider.ts`.
 The `limitless`, `preview`, and `shot` scripts use `src/data/mock-provider.ts` for fixed sample figures.
-The setup wizard opens automatically on first launch, auto-detects provider logins, and never asks users to paste tokens.
+The setup wizard opens automatically on first launch and preselects Claude Code, Codex, and OpenCode agents found on `PATH` or in their local data directories.
+Claude and Codex reuse their existing CLI logins, while OpenCode Go works from local estimates without asking users to paste a token or cookie.
 Provider visibility remains in memory for the current session.
 Onboarding completion is stored in `~/.config/limitless/preferences.json`.
 
-Provider access is read-only: the app writes only its small preferences file and never reads provider tokens directly.
+Provider access is read-only: the app writes only its small preferences and usage-cache files and never reads Claude or Codex tokens directly.
 Claude and Codex limits are fetched through their signed-in first-party CLIs; OpenCode Go uses local data unless its optional dashboard integration is explicitly configured.
 
 ### Provider Data
