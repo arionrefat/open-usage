@@ -11,7 +11,7 @@ import {
 } from "../../../src/data/real/usage-cache";
 
 function tempCache(run: (path: string) => void): void {
-  const directory = mkdtempSync(join(tmpdir(), "limitless-usage-cache-"));
+  const directory = mkdtempSync(join(tmpdir(), "open-usage-usage-cache-"));
   try {
     run(join(directory, "usage-cache.json"));
   } finally {

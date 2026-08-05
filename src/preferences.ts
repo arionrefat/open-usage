@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import {
+  configPath,
   DEFAULT_POLL_INTERVAL_MINUTES,
   DEFAULT_WARN_THRESHOLD,
   POLL_INTERVAL_OPTIONS,
@@ -28,7 +28,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
 };
 
 export function defaultPreferencesPath(): string {
-  return join(homedir(), ".config", "limitless", "preferences.json");
+  return configPath("preferences.json");
 }
 
 export function readPreferences(path: string): AppPreferences {

@@ -29,7 +29,7 @@ export interface GoLimitsSourceOptions {
   onUpdate?: (value: GoServerLimits) => void;
 }
 
-export const COOKIE_ENV_VAR = "LIMITLESS_OPENCODE_COOKIE";
+export const COOKIE_ENV_VAR = "OPEN_USAGE_OPENCODE_COOKIE";
 
 const MIN_POLL_MS = 60_000;
 /** opencode.ai is a third-party host, so `r` cannot repeat faster than this. */

@@ -9,10 +9,23 @@ import {
   readFlags,
   startupFromFlagsAndPreferences,
 } from "./lib/args";
+import { helpText, versionText, wantsHelp, wantsVersion } from "./lib/cli-help";
 import { defaultPreferencesPath, readPreferences, updatePreferences } from "./preferences";
 import { COLORS } from "./theme";
 
-const flags = readFlags(process.argv.slice(2));
+const argv = process.argv.slice(2);
+
+// Answer before the renderer takes over the terminal.
+if (wantsHelp(argv)) {
+  console.log(helpText());
+  process.exit(0);
+}
+if (wantsVersion(argv)) {
+  console.log(versionText());
+  process.exit(0);
+}
+
+const flags = readFlags(argv);
 const preferencesPath = defaultPreferencesPath();
 let preferences = readPreferences(preferencesPath);
 const startup = startupFromFlagsAndPreferences(flags, preferences);

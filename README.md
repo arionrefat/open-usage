@@ -1,46 +1,70 @@
-# Limitless
+# open-usage
 
-A terminal dashboard for unified AI plan usage across Claude Code, Codex, and OpenCode Go.
-Built with [OpenTUI](https://opentui.com/docs/) and React.
+Unified AI plan usage for Claude Code, Codex, and OpenCode Go, in your terminal.
 
-## Installing
+[![npm](https://img.shields.io/npm/v/open-usage?color=cb3837&logo=npm)](https://www.npmjs.com/package/open-usage)
+[![ci](https://github.com/arionrefat/open-usage/actions/workflows/ci.yml/badge.svg)](https://github.com/arionrefat/open-usage/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
-Requires [Bun](https://bun.sh) 1.0 or newer. Install the CLI globally:
+If you pay for more than one AI coding plan, you have no single place to see how much of each is left.
+`open-usage` reads what you have already installed and shows every limit on one screen, so you know which agent to reach for before you hit a wall.
+
+![The open-usage overview screen](docs/media/overview.png)
+
+## Install
 
 ```bash
 bun install -g open-usage
 ```
 
-Or run it on demand without installing:
+Then run `open-usage`.
+
+To try it without installing anything:
 
 ```bash
 bunx open-usage
 ```
 
-Prefer a standalone executable? Grab the binary for your OS from the
-[releases page](https://github.com/arionrefat/open-usage/releases), make it executable, and run it directly -
-no Bun required.
-
-## Running
+`open-usage` is built with Bun, so Bun is the natural way to install it - but it is not a requirement.
+The package is a small launcher that fetches one prebuilt binary for your platform, and that binary embeds Bun.
+So npm, pnpm, and yarn work exactly as well, on a machine with no Bun at all:
 
 ```bash
-bun install
-bun run limitless
+npm install -g open-usage      # or: pnpm add -g / yarn global add
+npx open-usage                 # one-off, no install
 ```
 
-`bun dev` runs the same thing with file watching.
+### Standalone binary
 
-The CLI can open any screen directly, which is useful while iterating on a view:
+Download the binary for your OS from the [releases page](https://github.com/arionrefat/open-usage/releases):
 
 ```bash
-bun run limitless --view settings
-bun run limitless --mode simple
-bun run limitless --screen onboarding
-bun run limitless --severity-colors    # bars read green/amber/red instead of brand colors
-bun run limitless --no-daily-split     # hide the stacked daily chart on the overview
+chmod +x open-usage-darwin-arm64
+./open-usage-darwin-arm64
 ```
 
-## Keys
+Supported platforms: macOS (arm64, x64), Linux (x64, arm64), Windows (x64).
+
+On macOS, Gatekeeper quarantines binaries downloaded through a browser.
+Clear it with `xattr -d com.apple.quarantine open-usage-darwin-arm64`, or install through a package manager instead.
+
+## Usage
+
+```bash
+open-usage
+```
+
+The first launch runs a short setup wizard that detects which agents you have installed.
+After that it opens straight to the overview.
+
+```bash
+open-usage --view claude      # jump to a provider
+open-usage --mode simple      # fewer numbers per screen
+open-usage --no-poll          # read once, never refresh
+open-usage --help
+```
+
+### Keys
 
 | Key     | Action                                          |
 | ------- | ----------------------------------------------- |
@@ -57,84 +81,81 @@ bun run limitless --no-daily-split     # hide the stacked daily chart on the ove
 | `?`     | keymap                                          |
 | `q`     | quit                                            |
 
-On the settings screen `space` shows or hides a provider.
-Settings also use `m` for the default overview mode, `p` for the polling interval, and `w` for the alert threshold.
-Available providers refresh at startup and during the regular polling interval; `r` also probes unavailable providers manually.
+Every control is also clickable, and the mouse wheel scrolls views taller than the terminal.
 
-## Mouse
+## What it reads
 
-Every control is clickable: the numbered tabs, the `range` readout, mode and window toggles, provider cards, settings actions, the `o` setup-wizard link, the keymap's dimmed backdrop, onboarding buttons, and each hint in the footer bar.
-The mouse wheel scrolls views taller than the terminal.
+| Provider    | Limits from                          | History from                       |
+| ----------- | ------------------------------------ | ---------------------------------- |
+| Claude Code | the signed-in `claude` CLI           | `~/.claude` transcripts            |
+| Codex       | a sandboxed `codex app-server`       | `~/.codex/sessions`                |
+| OpenCode Go | model-weighted local estimate        | `opencode.db`                      |
 
-## Data
+`open-usage` is read-only, and there is no account to create and no key to paste.
+It reuses the logins your CLIs already have: Claude and Codex limits come from their own signed-in CLIs, so their credentials are never read.
+The one credential file it opens is OpenCode's `auth.json`, and only to show connection status - the key is masked on read and never displayed, logged, or sent anywhere.
 
-The UI reads everything through the `UsageProvider` interface in `src/data/types.ts`.
-Production mode reads local provider sources through `src/data/real-provider.ts`.
-The `limitless`, `preview`, and `shot` scripts use `src/data/mock-provider.ts` for fixed sample figures.
-The setup wizard opens automatically on first launch and preselects Claude Code, Codex, and OpenCode agents found on `PATH` or in their local data directories.
-Claude and Codex reuse their existing CLI logins, while OpenCode Go works from local estimates without asking users to paste a token or cookie.
-Provider visibility remains in memory for the current session.
-Onboarding completion, the default overview mode, the polling interval, and the alert threshold are stored in `~/.config/limitless/preferences.json`.
+Nothing is written outside its own config directory, and there is no telemetry or analytics of any kind.
+The only outbound request it makes on its own is to `opencode.ai`, and only if you opt in by configuring the cookie below.
 
-Provider access is read-only: the app writes only its small preferences and usage-cache files and never reads Claude or Codex tokens directly.
-Claude and Codex limits are fetched through their signed-in first-party CLIs; OpenCode Go uses local data unless its optional dashboard integration is explicitly configured.
+OpenCode Go does not publish per-account limits, so its percentages are local estimates and are labelled as such in the UI.
+[docs/PROVIDERS.md](docs/PROVIDERS.md) explains how each number is derived.
 
-### Provider Data
+## Configuration
 
-- Claude limits come from the signed-in Claude CLI's `/usage` command; charts, model share, token split, prompts, and sessions come from local `~/.claude` history and transcripts. Plan labels are read from `claude auth status --json`.
-- Codex live limits and account-wide analytics come from a short-lived, sandboxed `codex app-server` child process. Local per-device usage is read from native rollout files under `~/.codex/sessions` (with opencode.db as a fallback). Codex refreshes during startup, the regular application poll, and with `r`.
-- OpenCode Go analytics come from `opencode.db` and are model-weighted against published per-model allowances. Exact subscription windows require the optional private dashboard integration; without it, percentages are visibly labeled as model-weighted local estimates.
+Settings live in the app, on the `5` screen.
+They persist to `~/.config/open-usage/preferences.json` (or `$XDG_CONFIG_HOME/open-usage/`).
 
-There is no supported public Codex subscription HTTP API that avoids the first-party CLI process.
-Directly reading Codex OAuth credentials or calling its private backend would be less secure and less stable, so Limitless does neither.
-
-## Width
-
-The layout targets 140 columns and is tested down to 60 columns.
-When a line runs out of room its right-hand readout gives up columns first, then the left is ellipsized; the tab strip drops whole tabs to keep the active one visible.
-Detailed overview columns stack vertically when they cannot fit at their minimum readable width.
-The overview's provider histogram is hidden below 88 columns and the legend takes the full width.
-
-## Layout
-
-```
-src/
-  app.tsx              root layout, keymap, polling timers
-  config.ts            app-level constants (version and poll interval)
-  theme.ts             palette, thresholds, per-provider colors
-  components/          line and chart primitives, chrome, meters
-  data/                UsageProvider contract and the mock adapter
-  lib/                 chart maths, meter building, monospace text helpers
-  screens/             overview, provider detail, settings, onboarding, help
-  state/               reducer, action types, derived selectors
-  layout.test.tsx      asserts no chrome line wraps or collides, 60–140 columns
-scripts/preview.tsx    headless text screenshot harness
-scripts/shot.tsx       headless colour screenshot harness
-```
+| Variable                     | Purpose                                        |
+| ---------------------------- | ---------------------------------------------- |
+| `XDG_CONFIG_HOME`            | relocate the config directory                  |
+| `CODEX_HOME`                 | non-default Codex home                         |
+| `OPENCODE_DB`                | non-default `opencode.db` path                 |
+| `OPEN_USAGE_OPENCODE_COOKIE` | optional, enables exact OpenCode Go windows    |
 
 ## Development
+
+Requires [Bun](https://bun.sh) 1.0 or newer.
+
+```bash
+git clone https://github.com/arionrefat/open-usage.git
+cd open-usage
+bun install
+bun run demo      # sample data, no polling
+bun dev           # real data, file watching
+```
 
 ```bash
 bun run typecheck
 bun test
-bun run preview --view claude --width 140     # print a screen as text, no TTY needed
-bun run preview --screen onboarding --keys ENTER,s,k,ENTER
+bun run build     # compile a standalone binary into dist/
 ```
 
-`preview` prints characters only, so it cannot show colour or how full a bar is.
-For anything involving either, `shot` writes an HTML page that redraws each cell on a canvas at a true terminal aspect, with block glyphs painted as rectangles rather than font glyphs:
+Two headless harnesses render screens without a TTY, which is what the layout tests use:
 
 ```bash
-bun run shot out.html "wide:--mode detailed" "narrow:--mode detailed --width 80"
+bun run preview --view claude --width 140          # text only
+bun run shot out.html "wide:--mode detailed"       # colour, via canvas
 ```
+
+[ARCHITECTURE.md](ARCHITECTURE.md) covers the module layout and state model.
 
 ## Releasing
 
-Releases are tag-driven from `main`. CI runs `typecheck`, the test suite, and a headless render smoke test on every push and pull request; a `vX.Y.Z` tag triggers the `release` workflow, which builds per-platform binaries, attaches them to a GitHub release, and publishes `open-usage` to npm.
+Releases are tag-driven from `main`.
+CI runs typecheck, tests, and a render smoke test on every push and pull request.
 
-To cut a release:
+```bash
+bun run version:set 0.4.0     # bumps the root and platform versions together
+git commit -am "Release v0.4.0"
+git push origin main
+git tag v0.4.0 && git push origin v0.4.0
+```
 
-1. Bump `version` in `package.json` (the `v` in the UI reads it automatically).
-2. Push `main`, then tag it: `git tag v0.4.0 && git push origin v0.4.0`.
+The `v*` tag builds a binary per platform, publishes the five `@open-usage/*` platform packages and then `open-usage` itself, and attaches the binaries to a GitHub release.
 
-The workflow needs the `NPM_TOKEN` repository secret (an npm access token with publish scope).
+[docs/RELEASING.md](docs/RELEASING.md) covers the npm scope, token, and provenance setup the first release needs.
+
+## License
+
+[GPL-3.0-only](LICENSE)

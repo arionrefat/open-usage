@@ -15,7 +15,7 @@ import {
 } from "../../../src/data/real/opencode-server";
 
 function tempConfigFile(contents: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "limitless-config-"));
+  const dir = mkdtempSync(join(tmpdir(), "open-usage-config-"));
   const path = join(dir, "config.json");
   writeFileSync(path, contents);
   return path;

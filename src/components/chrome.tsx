@@ -41,8 +41,8 @@ export function Header({
     <SplitLine
       width={width}
       left={[
-        { text: "LIMIT", color: COLORS.accent, isBold: true },
-        { text: "LESS", color: COLORS.info, isBold: true },
+        { text: "OPEN", color: COLORS.accent, isBold: true },
+        { text: " USAGE", color: COLORS.info, isBold: true },
       ]}
       right={[
         { text: providerCount, color: COLORS.textFaint },

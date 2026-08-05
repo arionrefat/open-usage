@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { withFileLock } from "../../src/lib/file-lock";
 
 test("serializes updates across processes", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "limitless-lock-"));
+  const directory = mkdtempSync(join(tmpdir(), "open-usage-lock-"));
   const target = join(directory, "counter.txt");
   const lockModule = new URL("../../src/lib/file-lock.ts", import.meta.url).href;
   writeFileSync(target, "0");
@@ -13,7 +13,7 @@ test("serializes updates across processes", async () => {
   const workerSource = `
     import { readFileSync, writeFileSync } from "node:fs";
     import { withFileLock } from ${JSON.stringify(lockModule)};
-    const target = process.env.LIMITLESS_LOCK_TARGET;
+    const target = process.env.OPEN_USAGE_LOCK_TARGET;
     if (!target) throw new Error("missing lock target");
     withFileLock(target, () => {
       const value = Number(readFileSync(target, "utf8"));
@@ -25,7 +25,7 @@ test("serializes updates across processes", async () => {
   try {
     const workers = Array.from({ length: 12 }, () =>
       Bun.spawn([process.execPath, "-e", workerSource], {
-        env: { ...process.env, LIMITLESS_LOCK_TARGET: target },
+        env: { ...process.env, OPEN_USAGE_LOCK_TARGET: target },
         stdout: "ignore",
         stderr: "pipe",
       }),
@@ -45,7 +45,7 @@ test("serializes updates across processes", async () => {
 });
 
 test("releases the lock when an update throws", () => {
-  const directory = mkdtempSync(join(tmpdir(), "limitless-lock-"));
+  const directory = mkdtempSync(join(tmpdir(), "open-usage-lock-"));
   const target = join(directory, "preferences.json");
   try {
     expect(() =>

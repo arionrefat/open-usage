@@ -6,6 +6,7 @@ out
 dist
 *.tgz
 .bun-build
+*.bun-build
 
 # code coverage
 coverage

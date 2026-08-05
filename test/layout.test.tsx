@@ -61,14 +61,14 @@ describe("chrome stays on one row", () => {
   for (const width of WIDTHS) {
     test(`header does not wrap at ${width} columns`, async () => {
       const rows = await renderRows(width, "overview", "detailed");
-      const header = rowContaining(rows, "LIMITLESS");
+      const header = rowContaining(rows, "OPEN USAGE");
       // Both groups on one row means the line never overflowed into a second.
       expect(header).toContain("updated");
     });
 
     test(`header keeps a gap before the alert group at ${width} columns`, async () => {
       const rows = await renderRows(width, "overview", "detailed");
-      expect(rowContaining(rows, "LIMITLESS")).toMatch(/\s3 providers ▏ ▲/);
+      expect(rowContaining(rows, "OPEN USAGE")).toMatch(/\s3 providers ▏ ▲/);
     });
 
     test(`tab strip does not wrap at ${width} columns`, async () => {
@@ -81,7 +81,7 @@ describe("chrome stays on one row", () => {
 test("header orders provider count before status", async () => {
   const header = rowContaining(
     await renderRows(140, "overview", "detailed"),
-    "LIMITLESS",
+    "OPEN USAGE",
   );
   expect(header).toMatch(/3 providers ▏ ▲.* ▏ updated/);
 });

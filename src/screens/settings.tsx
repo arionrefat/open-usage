@@ -1,5 +1,11 @@
-import { COLOR_MODE_LABEL, POLL_INTERVAL_OPTIONS, WARN_THRESHOLD_OPTIONS } from "../config";
+import {
+  abbreviateHome,
+  COLOR_MODE_LABEL,
+  POLL_INTERVAL_OPTIONS,
+  WARN_THRESHOLD_OPTIONS,
+} from "../config";
 import { padEnd } from "../lib/text";
+import { defaultPreferencesPath } from "../preferences";
 import { COLORS, PROVIDER_COLORS } from "../theme";
 import { PROVIDER_IDS, STATUS_PRESENTATION, type ProviderId, type UsageSnapshot } from "../data/types";
 import type { AppState, OverviewMode } from "../state/app-state";
@@ -171,7 +177,7 @@ export function Settings(props: SettingsProps) {
           { text: " ▏ ", color: COLORS.rule },
           { text: "providers, connections, refresh", color: COLORS.textFaint },
         ]}
-        right={[{ text: "~/.config/limitless/preferences.json", color: COLORS.textGhost }]}
+        right={[{ text: abbreviateHome(defaultPreferencesPath()), color: COLORS.textGhost }]}
       />
       <Spacer />
       <SplitLine

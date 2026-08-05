@@ -1,6 +1,6 @@
 # Architecture
 
-`Limitless` is a terminal UI (Bun + React via `@opentui/react`) that shows plan usage and limits for Claude Code, Codex, and OpenCode Go.
+`open-usage` is a terminal UI (Bun + React via `@opentui/react`) that shows plan usage and limits for Claude Code, Codex, and OpenCode Go.
 
 ## The 30-second version
 
@@ -25,7 +25,7 @@ flowchart LR
 | Command | What runs |
 | --- | --- |
 | `bun run dev` | Real mode with `--watch` reload. |
-| `bun run limitless` | Sample data with polling disabled. |
+| `bun run demo` | Sample data with polling disabled. |
 | `bun run production` | Real mode with provider polling. |
 | `bun run preview` | Headless text frame for reviewing the UI without a terminal session. |
 | `bun run shot` | Headless HTML screenshot for reviewing colors and chart geometry. |
@@ -62,7 +62,7 @@ Touch when: the UI needs a new piece of data; add it here first, then fill it in
 
 **`mock-provider.ts`**
 A hand-written `UsageSnapshot` with rich sample figures and a fake 1.6s refresh delay.
-This is what `bun run limitless` shows.
+This is what `bun run demo` shows.
 Touch when: designing new UI that needs sample data to look right.
 
 **`real-provider.ts`**
@@ -91,7 +91,7 @@ Touch when a shared provider presentation primitive changes.
 | `claude-transcripts.ts` | `~/.claude/projects/` | Claude token counts bucketed by hour |
 | `claude-history.ts` | `~/.claude/history.jsonl` | Prompt and session counts, last 30 days |
 | `statusline-snapshot.ts` | `~/.claude/usage-snapshot.json` | The actual limit percentages (5h and 7d windows) plus a trend tracker |
-| `usage-cache.ts` | `~/.config/limitless/usage-cache.json` | Last successful Claude, Codex, and OpenCode Go limit readings for startup display |
+| `usage-cache.ts` | `~/.config/open-usage/usage-cache.json` | Last successful Claude, Codex, and OpenCode Go limit readings for startup display |
 | `aggregate.ts` | - | Shared time bucketing and formatting helpers (`formatCountdown`, `seriesFromBuckets`, ...) |
 | `json.ts` | - | The shared `isRecord` guard for parsing unknown JSON |
 

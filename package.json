@@ -2,14 +2,13 @@
   "name": "open-usage",
   "version": "0.3.1",
   "description": "A terminal dashboard for unified AI plan usage across Claude Code, Codex, and OpenCode Go",
-  "module": "src/index.tsx",
   "type": "module",
   "license": "GPL-3.0-only",
   "bin": {
-    "limitless": "src/index.tsx"
+    "open-usage": "bin/open-usage.js"
   },
   "files": [
-    "src/"
+    "bin"
   ],
   "repository": {
     "type": "git",
@@ -32,25 +31,26 @@
     "access": "public"
   },
   "engines": {
-    "bun": ">=1.0.0"
+    "node": ">=18"
   },
   "scripts": {
     "dev": "bun --watch src/index.tsx",
-    "limitless": "NODE_ENV=production bun src/index.tsx --mock --no-poll",
+    "demo": "NODE_ENV=production bun src/index.tsx --mock --no-poll",
     "production": "NODE_ENV=production bun src/index.tsx",
     "preview": "bun scripts/preview.tsx",
     "shot": "bun scripts/shot.tsx",
+    "build": "bun build --compile --minify src/index.tsx --outfile dist/open-usage",
+    "build:npm": "bun scripts/build-npm-packages.ts",
+    "version:set": "bun scripts/set-version.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "@types/react": "^19",
-    "typescript": "^5"
-  },
-  "dependencies": {
     "@opentui/core": "^0.4.5",
     "@opentui/react": "^0.4.5",
-    "react": "^19.2.6"
+    "@types/bun": "latest",
+    "@types/react": "^19",
+    "react": "^19.2.6",
+    "typescript": "^5"
   }
 }

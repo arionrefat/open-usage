@@ -6,25 +6,43 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
+  verify:
+    name: Verify tag matches package.json
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+      - name: Tag must match the manifest version
+        run: |
+          manifest="v$(node -p "require('./package.json').version")"
+          if [ "$manifest" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json ($manifest)" >&2
+            exit 1
+          fi
   build:
     name: build (${{ matrix.artifact }})
+    needs: verify
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-14
-            artifact: limitless-darwin-arm64
+            artifact: open-usage-darwin-arm64
           - os: macos-13
-            artifact: limitless-darwin-x64
+            artifact: open-usage-darwin-x64
           - os: ubuntu-22.04
-            artifact: limitless-linux-x64
+            artifact: open-usage-linux-x64
           - os: ubuntu-24.04-arm
-            artifact: limitless-linux-arm64
+            artifact: open-usage-linux-arm64
           - os: windows-latest
-            artifact: limitless-windows-x64.exe
+            artifact: open-usage-win32-x64.exe
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -42,20 +60,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
       - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun test
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - name: Publish to npm
+
+      - name: Assemble platform packages
+        run: bun run build:npm --binaries dist --out dist/npm
+
+      # Platform packages go first: the root package's optionalDependencies
+      # resolve against them, so publishing the root first would briefly
+      # advertise versions that do not exist yet.
+      - name: Publish platform packages
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
-          npm publish --access public
+          for dir in dist/npm/*/; do
+            echo "publishing $dir"
+            npm publish "$dir" --access public --provenance
+          done
+
+      - name: Publish open-usage
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/open-usage-* --generate-notes

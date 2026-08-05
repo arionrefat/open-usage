@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { hasStatuslineConfigured } from "../../../src/data/real/claude-settings";
 
 function settingsFile(contents: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "limitless-settings-"));
+  const dir = mkdtempSync(join(tmpdir(), "open-usage-settings-"));
   const path = join(dir, "settings.json");
   writeFileSync(path, contents);
   return path;

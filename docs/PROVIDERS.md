@@ -2,7 +2,7 @@
 
 Researched 2026-08-01, re-verified 2026-08-03 (official documentation, upstream source, and local ground-truthing on this machine).
 Where a published claim disagreed with this machine's own files, the measurement won; those cases are kept as corrections rather than quietly overwritten.
-This is the implementation reference for wiring real limit data into Limitless for all three providers.
+This is the implementation reference for wiring real limit data into open-usage for all three providers.
 
 Verdict up front: all three providers can show real or near-real limit data, each through a different mechanism.
 
@@ -105,7 +105,7 @@ No `~/.codex`, and no `codex` on PATH, so both the CLI RPC path and the `auth.js
 The only OpenAI credential here is the `openai` entry in opencode's `auth.json` (`access`, `refresh`, `expires`, `accountId`) - and as of 2026-08-01 that access token is already **expired**.
 
 That makes refresh mandatory rather than optional, which is the problem: OpenAI rotates refresh tokens, so spending opencode's refresh token would likely invalidate the copy opencode still holds and break the user's opencode login.
-Writing the rotated token back into opencode's `auth.json` avoids that but means Limitless mutating another tool's credential store, which this app has so far deliberately never done.
+Writing the rotated token back into opencode's `auth.json` avoids that but means open-usage mutating another tool's credential store, which this app has so far deliberately never done.
 
 ### Implemented
 
@@ -183,7 +183,7 @@ Burning a scarce credit from a background poller - or from a mis-keyed keystroke
 ### Key finding
 
 OpenCode's internal server query publishes exact percent-of-limit and reset data to an authenticated dashboard session.
-Without a session cookie, Limitless computes an estimate locally by summing `message.cost` inside each window and dividing by the Go plan cap.
+Without a session cookie, open-usage computes an estimate locally by summing `message.cost` inside each window and dividing by the Go plan cap.
 The UI labels only locally computed windows as estimates.
 There is still no supported public OpenCode Go quota endpoint, CLI command, local server route, or SDK method.
 Open issue `anomalyco/opencode#16017` and unmerged PR `#16513` propose `GET /zen/go/v1/usage`; production currently returns 404.
@@ -209,9 +209,9 @@ Server limits currently need an opencode.ai session cookie, which is a full dash
 
 ```bash
 # from a logged-in opencode.ai tab: devtools > application > cookies
-echo '{ "opencodeCookie": "auth=<value>" }' > ~/.config/limitless/config.json
+echo '{ "opencodeCookie": "auth=<value>" }' > ~/.config/open-usage/config.json
 # or, per-shell:
-export LIMITLESS_OPENCODE_COOKIE='auth=<value>'
+export OPEN_USAGE_OPENCODE_COOKIE='auth=<value>'
 ```
 
 Only the `auth` / `__Host-auth` cookies are sent; anything else in a pasted header is stripped before the request.

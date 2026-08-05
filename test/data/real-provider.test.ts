@@ -66,7 +66,7 @@ describe("createRealUsageProvider with no sources", () => {
   });
 
   test("a configured statusline still directs refresh through the live cli", () => {
-    const dir = mkdtempSync(join(tmpdir(), "limitless-settings-"));
+    const dir = mkdtempSync(join(tmpdir(), "open-usage-settings-"));
     const settings = join(dir, "settings.json");
     writeFileSync(settings, JSON.stringify({ statusLine: { type: "command", command: "x.sh" } }));
 
@@ -144,7 +144,7 @@ describe("createRealUsageProvider with no sources", () => {
 
 describe("persisted limit cache", () => {
   test("hydrates previous provider values before the first refresh", () => {
-    const dir = mkdtempSync(join(tmpdir(), "limitless-cache-"));
+    const dir = mkdtempSync(join(tmpdir(), "open-usage-cache-"));
     const cachePath = join(dir, "usage-cache.json");
     const fetchedAtMs = Date.now() - 20 * 60_000;
     writeUsageCache(cachePath, {
@@ -203,7 +203,7 @@ describe("refresh pressure on the upstream providers", () => {
   function countingProvider(cachePath: string) {
     const calls = { cl: 0, cx: 0, go: 0 };
     const nowMs = Date.now();
-    const configPath = join(mkdtempSync(join(tmpdir(), "limitless-cookie-")), "config.json");
+    const configPath = join(mkdtempSync(join(tmpdir(), "open-usage-cookie-")), "config.json");
     writeFileSync(configPath, JSON.stringify({ opencodeCookie: "auth=tok" }));
 
     const provider = createRealUsageProvider({
@@ -246,7 +246,7 @@ describe("refresh pressure on the upstream providers", () => {
   }
 
   test("a held refresh key cannot turn into one upstream call per keypress", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "limitless-pressure-"));
+    const dir = mkdtempSync(join(tmpdir(), "open-usage-pressure-"));
     try {
       const { provider, calls } = countingProvider(join(dir, "usage-cache.json"));
       // The app re-fires a queued manual refresh the moment the previous one
@@ -262,7 +262,7 @@ describe("refresh pressure on the upstream providers", () => {
   });
 
   test("concurrent refreshes share one upstream call per provider", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "limitless-concurrent-"));
+    const dir = mkdtempSync(join(tmpdir(), "open-usage-concurrent-"));
     try {
       const { provider, calls } = countingProvider(join(dir, "usage-cache.json"));
       await Promise.all(
@@ -335,7 +335,7 @@ describe("refresh pressure on the upstream providers", () => {
   });
 
   test("an automatic refresh respects each provider's own interval", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "limitless-interval-"));
+    const dir = mkdtempSync(join(tmpdir(), "open-usage-interval-"));
     try {
       const { provider, calls } = countingProvider(join(dir, "usage-cache.json"));
       // Ten minutes of the default one-minute poll timer.
@@ -374,7 +374,7 @@ describe("opencode go spend limits", () => {
   }
 
   test("derives percent and dollar readouts from local spend", () => {
-    const dbPath = join(tmpdir(), `limitless-go-${Date.now()}.db`);
+    const dbPath = join(tmpdir(), `open-usage-go-${Date.now()}.db`);
     const nowMs = Date.now();
     seedDb(dbPath, [
       { atMs: nowMs - HOUR_MS, usd: 3 },
@@ -615,7 +615,7 @@ describe("selectUsageProvider", () => {
   });
 
   test("does not treat a malformed cache as a real usage source", () => {
-    const dir = mkdtempSync(join(tmpdir(), "limitless-invalid-cache-"));
+    const dir = mkdtempSync(join(tmpdir(), "open-usage-invalid-cache-"));
     const cachePath = join(dir, "usage-cache.json");
     writeFileSync(cachePath, JSON.stringify({ version: 1, claude: { percent: "bad" } }));
     try {
@@ -626,7 +626,7 @@ describe("selectUsageProvider", () => {
   });
 
   test("a Codex-only installation selects the real provider", () => {
-    const codexHome = mkdtempSync(join(tmpdir(), "limitless-codex-"));
+    const codexHome = mkdtempSync(join(tmpdir(), "open-usage-codex-"));
     const paths = { ...MISSING_PATHS, codexHome };
     expect(hasRealSources(paths)).toBe(true);
     expect(selectUsageProvider("real", paths)).not.toBe(mockUsageProvider);

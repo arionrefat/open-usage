@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { configPath } from "../config";
 import type { ProviderMode } from "../lib/args";
 import { COLORS } from "../theme";
 import { mockUsageProvider } from "./mock-provider";
@@ -66,12 +67,12 @@ export function defaultRealProviderPaths(): RealProviderPaths {
         : join(opencodeData, opencodeDbEnv)
       : join(opencodeData, "opencode.db"),
     opencodeAuth: join(opencodeData, "auth.json"),
-    configFile: join(home, ".config", "limitless", "config.json"),
+    configFile: configPath("config.json"),
     claudeProjects: join(home, ".claude", "projects"),
     claudeHistory: join(home, ".claude", "history.jsonl"),
     claudeSettings: join(home, ".claude", "settings.json"),
     usageSnapshot: join(home, ".claude", "usage-snapshot.json"),
-    usageCache: join(home, ".config", "limitless", "usage-cache.json"),
+    usageCache: configPath("usage-cache.json"),
     codexHome: codexHomeEnv || join(home, ".codex"),
     claudeExecutable: Bun.which("claude"),
     codexExecutable: Bun.which("codex"),

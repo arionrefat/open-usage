@@ -10,7 +10,7 @@ import {
 } from "../src/preferences";
 
 function preferencesPath(): string {
-  return join(mkdtempSync(join(tmpdir(), "limitless-preferences-")), "preferences.json");
+  return join(mkdtempSync(join(tmpdir(), "open-usage-preferences-")), "preferences.json");
 }
 
 describe("preferences", () => {

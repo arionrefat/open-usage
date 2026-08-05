@@ -30,7 +30,7 @@ function seedRollout(home: string, dir: string, name: string, lines: string[]): 
 }
 
 function withTempHome(run: (home: string) => void): void {
-  const home = mkdtempSync(join(tmpdir(), "limitless-codex-"));
+  const home = mkdtempSync(join(tmpdir(), "open-usage-codex-"));
   try {
     run(home);
   } finally {

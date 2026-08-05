@@ -13,12 +13,12 @@ function missingPaths(root: string): RealProviderPaths {
   return {
     opencodeDb: join(root, "opencode", "opencode.db"),
     opencodeAuth: join(root, "opencode", "auth.json"),
-    configFile: join(root, "limitless", "config.json"),
+    configFile: join(root, "open-usage", "config.json"),
     claudeProjects: join(root, "claude", "projects"),
     claudeHistory: join(root, "claude", "history.jsonl"),
     claudeSettings: join(root, "claude", "settings.json"),
     usageSnapshot: join(root, "claude", "usage-snapshot.json"),
-    usageCache: join(root, "limitless", "usage-cache.json"),
+    usageCache: join(root, "open-usage", "usage-cache.json"),
     codexHome: join(root, "codex"),
   };
 }
@@ -26,7 +26,7 @@ function missingPaths(root: string): RealProviderPaths {
 describe("coding agent detection", () => {
   test("uses executable paths even before an agent creates local data", () => {
     const paths = {
-      ...missingPaths("/nonexistent/limitless-agent-detection"),
+      ...missingPaths("/nonexistent/open-usage-agent-detection"),
       claudeExecutable: "/usr/local/bin/claude",
       codexExecutable: "/usr/local/bin/codex",
     };
@@ -36,7 +36,7 @@ describe("coding agent detection", () => {
   });
 
   test("recognizes each agent from its local data", () => {
-    const root = mkdtempSync(join(tmpdir(), "limitless-agents-"));
+    const root = mkdtempSync(join(tmpdir(), "open-usage-agents-"));
     const paths = missingPaths(root);
     try {
       mkdirSync(paths.claudeProjects, { recursive: true });
@@ -52,7 +52,7 @@ describe("coding agent detection", () => {
 
   test("enables only detected agents in the initial connections", () => {
     const paths = {
-      ...missingPaths("/nonexistent/limitless-agent-connections"),
+      ...missingPaths("/nonexistent/open-usage-agent-connections"),
       codexExecutable: "/usr/local/bin/codex",
     };
     const connections = createRealUsageProvider({ paths }).initialConnections();

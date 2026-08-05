@@ -1,4 +1,4 @@
-import { version as LIMITLESS_VERSION } from "../../../package.json";
+import { APP_NAME, APP_VERSION } from "../../config";
 import { isRecord } from "./json";
 
 /**
@@ -309,7 +309,7 @@ async function runRequests(
     // The protocol handshake is initialize -> initialized -> requests; sending
     // requests before the notification works today but is not guaranteed to.
     writeRpcMessage(proc.stdin, 0, "initialize", {
-      clientInfo: { name: "limitless", title: "Limitless", version: LIMITLESS_VERSION },
+      clientInfo: { name: APP_NAME, title: "Open Usage", version: APP_VERSION },
     });
     await proc.stdin.flush();
 

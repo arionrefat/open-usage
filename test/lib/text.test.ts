@@ -3,7 +3,7 @@ import { columnWidth, padEnd, padStart, truncate } from "../../src/lib/text";
 
 describe("columnWidth", () => {
   test("counts plain ASCII columns", () => {
-    expect(columnWidth("limitless")).toBe(9);
+    expect(columnWidth("dashboard")).toBe(9);
   });
 
   test("counts wide CJK graphemes as two columns", () => {
@@ -21,9 +21,9 @@ describe("truncate", () => {
   });
 
   test("truncates ASCII text to the requested width", () => {
-    const result = truncate("limitless", 6);
+    const result = truncate("dashboard", 6);
 
-    expect(result).toBe("limit…");
+    expect(result).toBe("dashb…");
     expect(columnWidth(result)).toBe(6);
   });
 
