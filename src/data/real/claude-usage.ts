@@ -1,4 +1,5 @@
 import { isRecord } from "./json";
+import { createPolledSource } from "./polled-source";
 import type { PollOptions } from "../types";
 
 export interface ClaudeUsageWindow {
@@ -56,10 +57,11 @@ export function parseClaudeUsage(value: unknown, fetchedAtMs: number): ClaudeCli
     const rawPercent = Number(match[2]);
     if (!label || !Number.isFinite(rawPercent)) continue;
     const reset = match[3];
-    if (!reset && (label !== "current session" || rawPercent !== 0)) continue;
+    // Claude omits the reset clause on windows that have not started accruing yet.
+    if (!reset && rawPercent !== 0) continue;
     const window = {
       percent: Math.min(100, Math.max(0, rawPercent)),
-      reset: reset ?? "starts when a message is sent",
+      reset: reset ?? (label === "current session" ? "starts when a message is sent" : "no usage yet"),
     };
     if (label === "current session") session = window;
     else if (label === "current week (all models)") weekly = window;
@@ -151,11 +153,33 @@ export interface ClaudeLimitsSource {
 export interface ClaudeLimitsSourceOptions {
   initial?: ClaudeCliUsage | null;
   onUpdate?: (value: ClaudeCliUsage) => void;
+  /**
+   * True while a fresh statusline snapshot already carries the session and
+   * weekly windows, which leaves the CLI responsible only for Fable. Checked on
+   * every tick, so the cadence tightens again the moment that cover lapses.
+   */
+  isCoveredBySnapshot?: () => boolean;
 }
 
+/** Cadence when the CLI is the only source of the session and weekly windows. */
 const MIN_POLL_MS = 3 * 60_000;
+/**
+ * Cadence when a fresh statusline snapshot already carries the session and
+ * weekly windows for free. All the CLI still adds is the Fable window, and a
+ * weekly bar cannot move far in twenty minutes, so this trades a little Fable
+ * latency for roughly six times fewer requests against the account.
+ */
+const SNAPSHOT_COVERED_POLL_MS = 20 * 60_000;
 export const CLAUDE_LIMITS_STALE_MS = 10 * 60_000;
+/** Sits above the snapshot-covered cadence so a routine tick never reads stale. */
+export const CLAUDE_FABLE_STALE_MS = SNAPSHOT_COVERED_POLL_MS + 5 * 60_000;
 const BACKOFF_MS = 5 * 60_000;
+const MAX_BACKOFF_MS = 30 * 60_000;
+/**
+ * Every poll is a real request against the account, so `r` is floored harder
+ * than the local-CLI providers: a held key must not turn into an API flood.
+ */
+const MIN_FORCED_POLL_MS = 15_000;
 
 const NOTES: Record<ClaudeUsageFailure, string> = {
   "not-installed": "claude cli not installed",
@@ -176,33 +200,19 @@ export function createClaudeLimitsSource(
   reader: ClaudeUsageReader = readClaudeUsage,
   sourceOptions: ClaudeLimitsSourceOptions = {},
 ): ClaudeLimitsSource {
-  let cached: ClaudeCliUsage | null = sourceOptions.initial ?? null;
-  let note: string | null = null;
-  let nextPollAtMs = 0;
-
-  return {
-    read: () => {
-      return cached;
-    },
-    note: () => note,
-    async poll(now, options = {}) {
-      const nowMs = now.getTime();
-      if (!options.force && nowMs < nextPollAtMs) return;
-      nextPollAtMs = nowMs + MIN_POLL_MS;
-
-      try {
-        cached = await reader(now, { signal: options.signal });
-        sourceOptions.onUpdate?.(cached);
-        note = null;
-      } catch (error) {
-        if (options.signal?.aborted) throw error;
-        nextPollAtMs = nowMs + BACKOFF_MS;
-        if (error instanceof ClaudeUsageError) {
-          note = NOTES[error.kind];
-          return;
-        }
-        note = "claude live limits unavailable";
-      }
-    },
-  };
+  // Staleness is reported by the provider, which weighs the CLI reading against
+  // the statusline snapshot, so no stale note is configured here.
+  return createPolledSource<ClaudeCliUsage>({
+    fetch: (now, signal) => reader(now, { signal }),
+    fetchedAtMs: (value) => value.fetchedAtMs,
+    minPollMs: () =>
+      sourceOptions.isCoveredBySnapshot?.() ? SNAPSHOT_COVERED_POLL_MS : MIN_POLL_MS,
+    describeFailure: (error) =>
+      error instanceof ClaudeUsageError ? NOTES[error.kind] : "claude live limits unavailable",
+    minForcedPollMs: MIN_FORCED_POLL_MS,
+    backoffMs: BACKOFF_MS,
+    maxBackoffMs: MAX_BACKOFF_MS,
+    initial: sourceOptions.initial ?? null,
+    onUpdate: sourceOptions.onUpdate,
+  });
 }

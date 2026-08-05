@@ -51,6 +51,26 @@ describe("parseClaudeUsage", () => {
     });
   });
 
+  test("keeps an unused Fable window that the CLI reports without a reset", () => {
+    expect(
+      parseClaudeUsage(
+        {
+          result: [
+            "Current session: 7% used · resets Aug 6 at 6:50am (Asia/Dhaka)",
+            "Current week (all models): 21% used · resets Aug 12 at 6am (Asia/Dhaka)",
+            "Current week (Fable): 0% used",
+          ].join("\n"),
+        },
+        NOW_MS,
+      ),
+    ).toEqual({
+      session: { percent: 7, reset: "resets Aug 6 at 6:50am (Asia/Dhaka)" },
+      weekly: { percent: 21, reset: "resets Aug 12 at 6am (Asia/Dhaka)" },
+      fable: { percent: 0, reset: "no usage yet" },
+      fetchedAtMs: NOW_MS,
+    });
+  });
+
   test("keeps Fable optional for plans that do not publish it", () => {
     expect(
       parseClaudeUsage(
@@ -153,7 +173,7 @@ describe("createClaudeLimitsSource", () => {
     expect(source.note()).toContain("format changed");
   });
 
-  test("manual refresh bypasses the normal poll throttle", async () => {
+  test("manual refresh bypasses the normal poll throttle but not the api floor", async () => {
     let calls = 0;
     const source = createClaudeLimitsSource((now) => {
       calls += 1;
@@ -163,7 +183,14 @@ describe("createClaudeLimitsSource", () => {
     });
     const start = new Date();
     await source.poll(start);
+
+    // Every poll is a real request against the account, so a held `r` must not
+    // turn into one call per keypress.
     await source.poll(new Date(start.getTime() + 1_000), { force: true });
+    await source.poll(new Date(start.getTime() + 14_000), { force: true });
+    expect(calls).toBe(1);
+
+    await source.poll(new Date(start.getTime() + 16_000), { force: true });
     expect(calls).toBe(2);
   });
 });

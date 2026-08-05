@@ -1,11 +1,13 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import {
+  OpencodeRateLimitError,
   SERVER_FUNCTION_IDS,
   fetchGoServerLimits,
   filterCookieHeader,
   isSignedOut,
   parseSubscription,
   parseWorkspaceId,
+  retryAfterMs,
 } from "../../../src/data/real/opencode-server";
 
 /** Verbatim response shapes from CodexBar's parser fixtures. */
@@ -168,6 +170,76 @@ describe("fetchGoServerLimits", () => {
       );
       expect(limits.monthlyPercent).toBe(99);
       expect(limits.monthlyResetAtMs).toBe(now.getTime() + 90_000_000);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+describe("retryAfterMs", () => {
+  test("reads delta-seconds", () => {
+    expect(retryAfterMs("120")).toBe(120_000);
+    expect(retryAfterMs(" 30 ")).toBe(30_000);
+  });
+
+  test("reads an http date relative to now", () => {
+    const nowMs = Date.parse("2026-08-02T00:00:00Z");
+    expect(retryAfterMs("Sun, 02 Aug 2026 00:05:00 GMT", nowMs)).toBe(300_000);
+  });
+
+  test("never yields a negative or absurd wait", () => {
+    const nowMs = Date.parse("2026-08-02T00:00:00Z");
+    expect(retryAfterMs("Sun, 02 Aug 2026 00:00:00 GMT", nowMs)).toBe(0);
+    // A past date must not read as an instruction to retry immediately forever.
+    expect(retryAfterMs("Sat, 01 Aug 2026 00:00:00 GMT", nowMs)).toBe(0);
+    // A wildly long wait is clamped so a bad header cannot wedge the provider.
+    expect(retryAfterMs("999999")).toBe(60 * 60_000);
+  });
+
+  test("ignores an absent or unparseable header", () => {
+    expect(retryAfterMs(null)).toBeNull();
+    expect(retryAfterMs("")).toBeNull();
+    expect(retryAfterMs("soon")).toBeNull();
+  });
+});
+
+describe("fetchGoServerLimits rate limiting", () => {
+  test("a 429 surfaces as a rate limit carrying the server's Retry-After", async () => {
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        () =>
+          Promise.resolve(
+            new Response("slow down", { status: 429, headers: { "Retry-After": "90" } }),
+          ),
+        { preconnect: (_url: string | URL) => undefined },
+      ),
+    );
+
+    try {
+      const failure = await fetchGoServerLimits("auth=secret", new Date()).catch(
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(OpencodeRateLimitError);
+      expect((failure as OpencodeRateLimitError).retryAfterMs).toBe(90_000);
+      expect((failure as OpencodeRateLimitError).kind).toBe("rate-limited");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("a 429 without a Retry-After still reports a rate limit", async () => {
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(() => Promise.resolve(new Response("slow down", { status: 429 })), {
+        preconnect: (_url: string | URL) => undefined,
+      }),
+    );
+
+    try {
+      const failure = await fetchGoServerLimits("auth=secret", new Date()).catch(
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(OpencodeRateLimitError);
+      expect((failure as OpencodeRateLimitError).retryAfterMs).toBeNull();
     } finally {
       fetchSpy.mockRestore();
     }

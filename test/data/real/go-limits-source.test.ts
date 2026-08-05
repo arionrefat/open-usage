@@ -8,7 +8,11 @@ import {
   createGoLimitsSource,
   readCookie,
 } from "../../../src/data/real/go-limits-source";
-import { OpencodeServerError, type GoServerLimits } from "../../../src/data/real/opencode-server";
+import {
+  OpencodeRateLimitError,
+  OpencodeServerError,
+  type GoServerLimits,
+} from "../../../src/data/real/opencode-server";
 
 function tempConfigFile(contents: string): string {
   const dir = mkdtempSync(join(tmpdir(), "limitless-config-"));
@@ -113,7 +117,7 @@ describe("createGoLimitsSource", () => {
     expect(source.note()).toContain("cached limits stale");
   });
 
-  test("manual refresh bypasses the normal poll throttle", async () => {
+  test("manual refresh bypasses the normal poll throttle but not the request floor", async () => {
     const path = configWithCookie("auth=tok");
     let calls = 0;
     const source = createGoLimitsSource(path, {}, (_cookie, now) => {
@@ -122,7 +126,12 @@ describe("createGoLimitsSource", () => {
     });
     const start = new Date();
     await source.poll(start);
+
     await source.poll(new Date(start.getTime() + 1_000), { force: true });
+    expect(calls).toBe(1);
+
+    // Past the floor but well inside the 60s interval: `r` still works.
+    await source.poll(new Date(start.getTime() + 6_000), { force: true });
     expect(calls).toBe(2);
   });
 
@@ -145,6 +154,48 @@ describe("createGoLimitsSource", () => {
     // The 5-minute backoff holds off the next attempt.
     await source.poll(new Date(start.getTime() + 122_000));
     expect(calls).toBe(2);
+  });
+
+  test("a rate limit is honored for as long as the server asked", async () => {
+    const path = configWithCookie("auth=tok");
+    let calls = 0;
+    const source = createGoLimitsSource(path, {}, () => {
+      calls += 1;
+      return Promise.reject(new OpencodeRateLimitError(10 * 60_000));
+    });
+
+    const start = new Date();
+    await source.poll(start);
+    expect(calls).toBe(1);
+    expect(source.note()).toContain("rate limiting");
+
+    // Pressing `r` through a rate limit is how an account gets blocked outright.
+    await source.poll(new Date(start.getTime() + 60_000), { force: true });
+    await source.poll(new Date(start.getTime() + 9 * 60_000), { force: true });
+    expect(calls).toBe(1);
+
+    await source.poll(new Date(start.getTime() + 11 * 60_000), { force: true });
+    expect(calls).toBe(2);
+  });
+
+  test("repeated failures widen the gap between attempts", async () => {
+    const path = configWithCookie("auth=tok");
+    let calls = 0;
+    const source = createGoLimitsSource(path, {}, () => {
+      calls += 1;
+      return Promise.reject(new OpencodeServerError("request failed", "network"));
+    });
+
+    const startMs = Date.now();
+    await source.poll(new Date(startMs));
+    await source.poll(new Date(startMs + 6 * 60_000));
+    expect(calls).toBe(2);
+
+    // The second failure doubles the 5-minute backoff, so 6 more minutes is short.
+    await source.poll(new Date(startMs + 12 * 60_000));
+    expect(calls).toBe(2);
+    await source.poll(new Date(startMs + 17 * 60_000));
+    expect(calls).toBe(3);
   });
 
   test("an expired session clears the reading and says how to fix it", async () => {

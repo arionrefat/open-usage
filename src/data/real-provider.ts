@@ -315,6 +315,14 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
   const claudeLimits = options.claudeLimits ?? createClaudeLimitsSource(undefined, {
     initial: cached.claude,
     onUpdate: (value) => persist("claude", value),
+    // Claude Code writes the statusline snapshot itself, at no cost to the
+    // account. While it is fresh it already carries the session and weekly
+    // windows, so the CLI only needs to keep the Fable window current.
+    isCoveredBySnapshot: () => {
+      const now = new Date();
+      const snapshotFile = readUsageSnapshot(paths.usageSnapshot, now);
+      return snapshotFile !== null && snapshotFile.ageMs < SNAPSHOT_FRESH_MS;
+    },
   });
   const claudeAuth = options.claudeAuth ?? createClaudeAuthSource();
   const trend = createWeeklyTrend();

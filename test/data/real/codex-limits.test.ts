@@ -42,7 +42,7 @@ describe("createCodexLimitsSource", () => {
     expect(source.note()).toContain("cached limits stale");
   });
 
-  test("manual refresh bypasses the normal poll throttle", async () => {
+  test("manual refresh bypasses the normal poll throttle but not the spawn floor", async () => {
     let calls = 0;
     const source = createCodexLimitsSource((now) => {
       calls += 1;
@@ -50,7 +50,12 @@ describe("createCodexLimitsSource", () => {
     });
     const start = new Date();
     await source.poll(start);
+
     await source.poll(new Date(start.getTime() + 1_000), { force: true });
+    expect(calls).toBe(1);
+
+    // Past the floor but well inside the 60s interval: `r` still works.
+    await source.poll(new Date(start.getTime() + 6_000), { force: true });
     expect(calls).toBe(2);
   });
 

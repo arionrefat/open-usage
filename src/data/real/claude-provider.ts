@@ -4,6 +4,7 @@ import { HOUR_MS, formatAge, formatClock, formatCountdown, formatRate, seriesFro
 import type { HistoryStats } from "./claude-history";
 import type { TranscriptAggregate } from "./claude-transcripts";
 import {
+  CLAUDE_FABLE_STALE_MS,
   CLAUDE_LIMITS_STALE_MS,
   type ClaudeCliUsage,
   type ClaudeLimitsSource,
@@ -297,6 +298,10 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
           ? cliWindow(live.weekly, null)
           : null;
   const fable = live?.fable ? cliWindow(live.fable, null) : null;
+  // Fable has no statusline equivalent, so the CLI polls for it on a slower
+  // cadence than the session and weekly windows. Judging it by their staleness
+  // window would brand a perfectly current reading as stale.
+  const fableIsFresh = live !== null && nowMs - live.fetchedAtMs <= CLAUDE_FABLE_STALE_MS;
   const isFresh = liveIsFresh || snapshotIsFresh;
   const trendAtMs =
     live && useLive ? live.fetchedAtMs : snapshotFile ? snapshotFile.writtenAtMs : live?.fetchedAtMs ?? null;
@@ -316,7 +321,7 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
       seven,
       fable,
       isFresh,
-      liveIsFresh,
+      fableIsFresh,
       snapshotFile,
       live,
       limitsSource.note(),

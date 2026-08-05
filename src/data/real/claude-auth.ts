@@ -55,6 +55,7 @@ export async function readClaudeAuth(
 
 const STALE_MS = 30 * 60_000;
 const MIN_POLL_MS = 60_000;
+const MIN_FORCED_POLL_MS = 5_000;
 
 export interface ClaudeAuthSource {
   read(): ClaudeAuthInfo | null;
@@ -71,22 +72,39 @@ type ClaudeAuthReader = typeof readClaudeAuth;
 export function createClaudeAuthSource(reader: ClaudeAuthReader = readClaudeAuth): ClaudeAuthSource {
   let cached: ClaudeAuthInfo | null = null;
   let nextPollAtMs = 0;
+  let lastAttemptAtMs = Number.NEGATIVE_INFINITY;
+  let inFlight: Promise<void> | null = null;
+
+  async function request(now: Date, options: PollOptions): Promise<void> {
+    const nowMs = now.getTime();
+    lastAttemptAtMs = nowMs;
+    nextPollAtMs = nowMs + MIN_POLL_MS;
+    try {
+      cached = await reader(now, { signal: options.signal });
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      // Auth is supplemental; a failure should not replace cached data.
+    }
+  }
 
   return {
     read: () => {
       if (!cached || Date.now() - cached.fetchedAtMs > STALE_MS) return null;
       return cached;
     },
-    async poll(now, options = {}) {
+    poll(now, options = {}) {
+      // Same guarantee as the limits sources: never two `claude` children at once.
+      if (inFlight) return inFlight;
       const nowMs = now.getTime();
-      if (!options.force && nowMs < nextPollAtMs) return;
-      nextPollAtMs = nowMs + MIN_POLL_MS;
-      try {
-        cached = await reader(now, { signal: options.signal });
-      } catch {
-        if (options.signal?.aborted) throw options.signal.reason;
-        // Auth is supplemental; a failure should not replace cached data.
-      }
+      const floorMs = options.force ? MIN_FORCED_POLL_MS : MIN_POLL_MS;
+      if (nowMs - lastAttemptAtMs < floorMs) return Promise.resolve();
+      if (!options.force && nowMs < nextPollAtMs) return Promise.resolve();
+
+      const pending = request(now, options).finally(() => {
+        if (inFlight === pending) inFlight = null;
+      });
+      inFlight = pending;
+      return pending;
     },
   };
 }

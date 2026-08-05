@@ -3,6 +3,8 @@ import {
   readCodexLimits,
   type CodexAccountLimits,
 } from "./codex-app-server";
+import { formatAge } from "./aggregate";
+import { createPolledSource } from "./polled-source";
 import type { PollOptions } from "../types";
 
 /**
@@ -23,7 +25,10 @@ export interface CodexLimitsSourceOptions {
 }
 
 const MIN_POLL_MS = 60_000;
+/** Spawning the CLI is not free, so `r` cannot repeat faster than this. */
+const MIN_FORCED_POLL_MS = 5_000;
 const BACKOFF_MS = 5 * 60_000;
+const MAX_BACKOFF_MS = 30 * 60_000;
 /** Past this, a cached reading is rendered with a stale notice. */
 export const CODEX_LIMITS_STALE_MS = 15 * 60_000;
 
@@ -47,42 +52,20 @@ export function createCodexLimitsSource(
   reader: CodexLimitsReader = readCodexLimits,
   sourceOptions: CodexLimitsSourceOptions = {},
 ): CodexLimitsSource {
-  let cached: CodexAccountLimits | null = sourceOptions.initial ?? null;
-  let note: string | null = null;
-  let nextPollAtMs = 0;
-
-  function readCache(): CodexAccountLimits | null {
-    if (!cached) return null;
-    return cached;
-  }
-
-  return {
-    read: readCache,
-    note: () => {
-      if (note) return note;
-      if (cached && Date.now() - cached.fetchedAtMs > CODEX_LIMITS_STALE_MS) {
-        return `cached limits stale (${Math.max(1, Math.floor((Date.now() - cached.fetchedAtMs) / 60_000))}m old) - press r to refresh`;
-      }
-      return null;
-    },
-    async poll(now, options = {}) {
-      const nowMs = now.getTime();
-      const pollIsThrottled = nowMs < nextPollAtMs;
-      if (!options.force && pollIsThrottled) return;
-      nextPollAtMs = nowMs + MIN_POLL_MS;
-
-      try {
-        cached = await reader(now, { signal: options.signal });
-        sourceOptions.onUpdate?.(cached);
-        note = null;
-      } catch (error) {
-        // A cancelled refresh is not a provider failure.
-        if (options.signal?.aborted) throw error;
-        nextPollAtMs = nowMs + BACKOFF_MS;
-        note = error instanceof CodexProbeError
-          ? (NOTES[error.kind] ?? "codex limits unavailable")
-          : "codex limits unavailable";
-      }
-    },
-  };
+  return createPolledSource<CodexAccountLimits>({
+    fetch: (now, signal) => reader(now, { signal }),
+    fetchedAtMs: (value) => value.fetchedAtMs,
+    describeFailure: (error) =>
+      error instanceof CodexProbeError
+        ? (NOTES[error.kind] ?? "codex limits unavailable")
+        : "codex limits unavailable",
+    staleAfterMs: CODEX_LIMITS_STALE_MS,
+    staleNote: (ageMs) => `cached limits stale (${formatAge(ageMs)} old) - press r to refresh`,
+    minPollMs: MIN_POLL_MS,
+    minForcedPollMs: MIN_FORCED_POLL_MS,
+    backoffMs: BACKOFF_MS,
+    maxBackoffMs: MAX_BACKOFF_MS,
+    initial: sourceOptions.initial ?? null,
+    onUpdate: sourceOptions.onUpdate,
+  });
 }

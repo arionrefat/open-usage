@@ -154,7 +154,7 @@ describe("buildClaudeProvider", () => {
           session: { percent: 10, reset: "resets later" },
           weekly: { percent: 20, reset: "resets later" },
           fable: { percent: 65, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
-          fetchedAtMs: NOW_MS - 11 * 60_000,
+          fetchedAtMs: NOW_MS - 40 * 60_000,
         }),
         note: () => null,
         poll: () => Promise.resolve(),
@@ -172,6 +172,40 @@ describe("buildClaudeProvider", () => {
       percent: 65,
       footnote: expect.stringContaining("cached live limits stale"),
     });
+  });
+
+  test("Fable is not called stale merely for outliving the shared windows", () => {
+    const provider = buildClaudeProvider({
+      meta: createClaudeMeta(),
+      transcripts: {
+        buckets: new Map(),
+        latestMs: 0,
+        modelTokens: new Map(),
+        tokenSplit: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      },
+      history: { available: true, prompts: 0, sessions: 0, latestMs: 0 },
+      snapshotFile: snapshot(60_000),
+      limitsSource: {
+        // Past the 10-minute window the session and weekly rows use, but well
+        // inside the slower cadence the CLI runs at while the snapshot covers
+        // those rows for free.
+        read: () => ({
+          session: { percent: 10, reset: "resets later" },
+          weekly: { percent: 20, reset: "resets later" },
+          fable: { percent: 65, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
+          fetchedAtMs: NOW_MS - 11 * 60_000,
+        }),
+        note: () => null,
+        poll: () => Promise.resolve(),
+      },
+      hasStatusline: true,
+      trend: trend(null),
+      dates: ["2026-01-15"],
+      now: NOW,
+    });
+
+    expect(provider.limits[2]).toMatchObject({ id: "fable", percent: 65 });
+    expect(provider.limits[2]?.footnote).toBeUndefined();
   });
 
   test("a missing snapshot yields capless session and weekly limits", () => {

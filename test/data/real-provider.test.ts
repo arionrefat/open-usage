@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COLORS } from "../../src/theme";
 import { DAY_MS, HOUR_MS } from "../../src/data/real/aggregate";
-import { stubCodexLimitsSource } from "../../src/data/real/codex-limits";
-import { dormantGoLimitsSource } from "../../src/data/real/go-limits-source";
-import { dormantClaudeLimitsSource } from "../../src/data/real/claude-usage";
+import { createCodexLimitsSource, stubCodexLimitsSource } from "../../src/data/real/codex-limits";
+import { createGoLimitsSource, dormantGoLimitsSource } from "../../src/data/real/go-limits-source";
+import { createClaudeLimitsSource, dormantClaudeLimitsSource } from "../../src/data/real/claude-usage";
 import { PROVIDER_IDS } from "../../src/data/types";
 import {
   createRealUsageProvider,
@@ -192,6 +192,158 @@ describe("persisted limit cache", () => {
       expect(snapshot.providers.cl.notice?.segments[0]?.text).toContain("cached live limits stale");
       expect(snapshot.providers.cx.notice?.segments[0]?.text).toContain("cached limits stale");
       expect(snapshot.providers.go.notice?.segments[0]?.text).toContain("cached limits stale");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("refresh pressure on the upstream providers", () => {
+  /** Counts every call each provider would actually make to its upstream. */
+  function countingProvider(cachePath: string) {
+    const calls = { cl: 0, cx: 0, go: 0 };
+    const nowMs = Date.now();
+    const configPath = join(mkdtempSync(join(tmpdir(), "limitless-cookie-")), "config.json");
+    writeFileSync(configPath, JSON.stringify({ opencodeCookie: "auth=tok" }));
+
+    const provider = createRealUsageProvider({
+      paths: { ...MISSING_PATHS, usageCache: cachePath },
+      claudeLimits: createClaudeLimitsSource((now) => {
+        calls.cl += 1;
+        return Promise.resolve({
+          session: { percent: 5, reset: "resets soon" },
+          weekly: { percent: 5, reset: "resets soon" },
+          fetchedAtMs: now.getTime(),
+        });
+      }),
+      codexLimits: createCodexLimitsSource((now) => {
+        calls.cx += 1;
+        return Promise.resolve({
+          session: null,
+          weekly: { usedPercent: 5, resetsAtMs: nowMs + HOUR_MS, windowMinutes: 10080 },
+          planType: "plus",
+          resetCredits: 0,
+          additionalRateLimits: [],
+          credits: null,
+          usage: null,
+          fetchedAtMs: now.getTime(),
+        });
+      }),
+      goLimits: createGoLimitsSource(configPath, {}, (_cookie, now) => {
+        calls.go += 1;
+        return Promise.resolve({
+          rollingPercent: 5,
+          rollingResetAtMs: nowMs + HOUR_MS,
+          weeklyPercent: null,
+          weeklyResetAtMs: null,
+          monthlyPercent: null,
+          monthlyResetAtMs: null,
+          fetchedAtMs: now.getTime(),
+        });
+      }),
+    });
+    return { provider, calls };
+  }
+
+  test("a held refresh key cannot turn into one upstream call per keypress", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "limitless-pressure-"));
+    try {
+      const { provider, calls } = countingProvider(join(dir, "usage-cache.json"));
+      // The app re-fires a queued manual refresh the moment the previous one
+      // settles, so a held `r` arrives as a burst of back-to-back refreshes.
+      for (let press = 0; press < 40; press += 1) {
+        await provider.refresh({ reason: "manual", providerIds: ["cl", "cx", "go"] });
+      }
+      // One call each: the burst lands well inside every provider's floor.
+      expect(calls).toEqual({ cl: 1, cx: 1, go: 1 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("concurrent refreshes share one upstream call per provider", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "limitless-concurrent-"));
+    try {
+      const { provider, calls } = countingProvider(join(dir, "usage-cache.json"));
+      await Promise.all(
+        Array.from({ length: 8 }, () =>
+          provider.refresh({ reason: "manual", providerIds: ["cl", "cx", "go"] }),
+        ),
+      );
+      expect(calls).toEqual({ cl: 1, cx: 1, go: 1 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a fresh statusline snapshot slows the claude cli poll without silencing it", async () => {
+    let calls = 0;
+    const claudeLimits = createClaudeLimitsSource(
+      (now) => {
+        calls += 1;
+        return Promise.resolve({
+          session: { percent: 5, reset: "resets soon" },
+          weekly: { percent: 5, reset: "resets soon" },
+          fable: { percent: 0, reset: "no usage yet" },
+          fetchedAtMs: now.getTime(),
+        });
+      },
+      // Claude Code is writing the snapshot, so it covers session and weekly.
+      { isCoveredBySnapshot: () => true },
+    );
+
+    const startMs = Date.now();
+    // Ten minutes of the one-minute poll timer.
+    for (let tick = 0; tick <= 10; tick += 1) {
+      await claudeLimits.poll(new Date(startMs + tick * 60_000));
+    }
+    // The old 3-minute cadence would have spent four requests here.
+    expect(calls).toBe(1);
+
+    // Fable still refreshes, just on the slower cadence.
+    await claudeLimits.poll(new Date(startMs + 21 * 60_000));
+    expect(calls).toBe(2);
+  });
+
+  test("a stale statusline snapshot puts the claude cli back on the tight cadence", async () => {
+    let calls = 0;
+    let isCovered = true;
+    const claudeLimits = createClaudeLimitsSource(
+      (now) => {
+        calls += 1;
+        return Promise.resolve({
+          session: { percent: 5, reset: "resets soon" },
+          weekly: { percent: 5, reset: "resets soon" },
+          fetchedAtMs: now.getTime(),
+        });
+      },
+      { isCoveredBySnapshot: () => isCovered },
+    );
+
+    const startMs = Date.now();
+    await claudeLimits.poll(new Date(startMs));
+    expect(calls).toBe(1);
+
+    await claudeLimits.poll(new Date(startMs + 4 * 60_000));
+    expect(calls).toBe(1);
+
+    // Claude Code stopped writing the snapshot, so the CLI is the only source of
+    // the session and weekly windows again and must resume polling for them.
+    isCovered = false;
+    await claudeLimits.poll(new Date(startMs + 4 * 60_000 + 1));
+    expect(calls).toBe(2);
+  });
+
+  test("an automatic refresh respects each provider's own interval", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "limitless-interval-"));
+    try {
+      const { provider, calls } = countingProvider(join(dir, "usage-cache.json"));
+      // Ten minutes of the default one-minute poll timer.
+      for (let tick = 0; tick < 10; tick += 1) {
+        await provider.refresh({ reason: "interval", providerIds: ["cl", "cx", "go"] });
+      }
+      // Every tick lands in the same instant, so the floors admit exactly one.
+      expect(calls).toEqual({ cl: 1, cx: 1, go: 1 });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

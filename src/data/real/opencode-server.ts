@@ -166,12 +166,32 @@ export function isSignedOut(text: string): boolean {
 export class OpencodeServerError extends Error {
   constructor(
     message: string,
-    readonly kind: "credentials" | "network" | "parse",
+    readonly kind: "credentials" | "network" | "parse" | "rate-limited",
     options?: ErrorOptions,
   ) {
     super(message, options);
     this.name = "OpencodeServerError";
   }
+}
+
+/** Carries the server's own Retry-After so the caller can honor it exactly. */
+export class OpencodeRateLimitError extends OpencodeServerError {
+  constructor(readonly retryAfterMs: number | null) {
+    super("opencode rate limited the request", "rate-limited");
+    this.name = "OpencodeRateLimitError";
+  }
+}
+
+const MAX_RETRY_AFTER_MS = 60 * 60_000;
+
+/** Accepts both Retry-After forms: delta-seconds and an HTTP date. */
+export function retryAfterMs(header: string | null, nowMs = Date.now()): number | null {
+  const value = header?.trim();
+  if (!value) return null;
+  const clamp = (ms: number) => Math.min(MAX_RETRY_AFTER_MS, Math.max(0, ms));
+  if (/^\d+$/.test(value)) return clamp(Number(value) * 1000);
+  const dateMs = Date.parse(value);
+  return Number.isFinite(dateMs) ? clamp(dateMs - nowMs) : null;
 }
 
 async function callServer(
@@ -215,6 +235,11 @@ async function callServer(
 
   if (response.status === 401 || response.status === 403) {
     throw new OpencodeServerError("opencode session expired", "credentials");
+  }
+  // Being told to slow down is the one failure we must never retry on the normal
+  // schedule, so it is reported apart from ordinary network trouble.
+  if (response.status === 429) {
+    throw new OpencodeRateLimitError(retryAfterMs(response.headers.get("Retry-After")));
   }
   if (!response.ok) {
     throw new OpencodeServerError(`HTTP ${response.status}`, "network");
