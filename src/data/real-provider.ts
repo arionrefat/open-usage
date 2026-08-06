@@ -16,7 +16,7 @@ import { buildCodexProvider, codexWindowNote, createCodexMeta } from "./real/cod
 import { readCodexSessions } from "./real/codex-sessions";
 import { createCodexLimitsSource, type CodexLimitsSource } from "./real/codex-limits";
 import { buildGoProvider, createGoMeta } from "./real/go-provider";
-import { createGoLimitsSource, type GoLimitsSource } from "./real/go-limits-source";
+import { createGoLimitsSource, readCookie, type GoLimitsSource } from "./real/go-limits-source";
 import { readOpencodeAuth, type OpencodeAuth } from "./real/opencode-auth";
 import { readOpencodeUsage } from "./real/opencode-db";
 import { readGoSpend } from "./real/opencode-go-spend";
@@ -96,10 +96,26 @@ export function detectAgentInstallations(
   };
 }
 
-export function hasRealSources(paths: RealProviderPaths): boolean {
+/**
+ * A dashboard cookie is a go source in its own right: it reports exact limits
+ * with no opencode install. It never carries history, so it complements
+ * opencode.db rather than replacing it.
+ */
+export function hasOpencodeCookie(
+  paths: RealProviderPaths,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return readCookie(paths.configFile, env) !== null;
+}
+
+export function hasRealSources(
+  paths: RealProviderPaths,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
   const installations = detectAgentInstallations(paths);
   return (
     PROVIDER_IDS.some((id) => installations[id]) ||
+    hasOpencodeCookie(paths, env) ||
     hasCachedProviderValues(paths.usageCache)
   );
 }
@@ -131,15 +147,61 @@ function claudeConnectionNote(snapshotFile: SnapshotFile | null, hasStatusline: 
     : `live limits via claude cli; statusline snapshot ${age} old`;
 }
 
+const GO_COOKIE_CREDENTIAL = "cookie · opencode.ai";
+
+function goCredential(auth: OpencodeAuth, hasCookie: boolean, hasLocalData: boolean): string {
+  // The cookie is what authorizes the figures on screen, so it outranks the
+  // stored api key, which nothing here ever spends.
+  if (hasCookie) return GO_COOKIE_CREDENTIAL;
+  return auth.opencodeGo?.maskedKey ?? (hasLocalData ? "local · opencode.db" : "");
+}
+
+function goNote(hasCookie: boolean, hasLocalData: boolean): string {
+  if (hasCookie) {
+    return hasLocalData
+      ? "exact limits via dashboard cookie"
+      : "exact limits via cookie; no local history";
+  }
+  return hasLocalData
+    ? "local estimate; dashboard cookie is optional"
+    : "opencode found; use Go once to create local usage data";
+}
+
+/** Visible when opencode is installed or a cookie is configured; either alone is enough. */
+function goConnection(
+  paths: RealProviderPaths,
+  auth: OpencodeAuth,
+  isAgentInstalled: boolean,
+  hasCookie: boolean,
+): ProviderConnection {
+  if (!isAgentInstalled && !hasCookie) {
+    return {
+      isEnabled: false,
+      isAgentInstalled: false,
+      status: "none",
+      credential: "",
+      note: "opencode not found",
+    };
+  }
+  const hasLocalData = existsSync(paths.opencodeDb);
+  return {
+    isEnabled: true,
+    isAgentInstalled,
+    status: hasCookie || hasLocalData || auth.opencodeGo ? "active" : "none",
+    credential: goCredential(auth, hasCookie, hasLocalData),
+    note: goNote(hasCookie, hasLocalData),
+  };
+}
+
 function buildConnections(
   paths: RealProviderPaths,
   auth: OpencodeAuth,
   snapshotFile: SnapshotFile | null,
+  hasCookie: boolean,
 ): Record<ProviderId, ProviderConnection> {
   const installations = detectAgentInstallations(paths);
   const hasClaudeData = existsSync(paths.claudeProjects) || existsSync(paths.claudeHistory);
   const hasCodexData = existsSync(paths.codexHome);
-  const hasOpencodeData = existsSync(paths.opencodeDb);
 
   return {
     cl: installations.cl
@@ -176,28 +238,13 @@ function buildConnections(
           credential: "",
           note: "codex not found",
         },
-    go: installations.go
-      ? {
-          isEnabled: true,
-          isAgentInstalled: true,
-          status: hasOpencodeData || auth.opencodeGo ? "active" : "none",
-          credential: auth.opencodeGo?.maskedKey ?? (hasOpencodeData ? "local · opencode.db" : ""),
-          note: hasOpencodeData
-            ? "local estimate; dashboard cookie is optional"
-            : "opencode found; use Go once to create local usage data",
-        }
-      : {
-          isEnabled: false,
-          isAgentInstalled: false,
-          status: "none",
-          credential: "",
-          note: "opencode not found",
-        },
+    go: goConnection(paths, auth, installations.go, hasCookie),
   };
 }
 
 interface RealProviderOptions {
   paths?: RealProviderPaths;
+  env?: Record<string, string | undefined>;
   codexLimits?: CodexLimitsSource;
   goLimits?: GoLimitsSource;
   claudeLimits?: ClaudeLimitsSource;
@@ -301,6 +348,7 @@ function buildSnapshot(
 
 export function createRealUsageProvider(options: RealProviderOptions = {}): UsageProvider {
   const paths = options.paths ?? defaultRealProviderPaths();
+  const env = options.env ?? process.env;
   const cached = readUsageCache(paths.usageCache);
   const persist = (key: keyof UsageCache, value: UsageCache[typeof key]) => {
     updateUsageCache(paths.usageCache, key, value);
@@ -309,7 +357,7 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
     initial: cached.codex,
     onUpdate: (value) => persist("codex", value),
   });
-  const goLimits = options.goLimits ?? createGoLimitsSource(paths.configFile, process.env, undefined, {
+  const goLimits = options.goLimits ?? createGoLimitsSource(paths.configFile, env, undefined, {
     initial: cached.go,
     onUpdate: (value) => persist("go", value),
   });
@@ -338,6 +386,7 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
         paths,
         readOpencodeAuth(paths.opencodeAuth),
         readUsageSnapshot(paths.usageSnapshot, new Date()),
+        hasOpencodeCookie(paths, env),
       ),
     readSnapshot: () => snapshot,
     refresh: async (request: RefreshRequest) => {
@@ -401,8 +450,9 @@ function withFallbackNote(base: UsageProvider): UsageProvider {
 export function selectUsageProvider(
   mode: ProviderMode,
   paths = defaultRealProviderPaths(),
+  env: Record<string, string | undefined> = process.env,
 ): UsageProvider {
   if (mode === "mock") return mockUsageProvider;
-  if (hasRealSources(paths)) return createRealUsageProvider({ paths });
+  if (hasRealSources(paths, env)) return createRealUsageProvider({ paths, env });
   return withFallbackNote(mockUsageProvider);
 }

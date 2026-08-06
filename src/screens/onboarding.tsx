@@ -19,7 +19,7 @@ const AGENT_NAMES: Record<ProviderId, string> = {
 const AGENT_SETUP: Record<ProviderId, string> = {
   cl: "reuses your Claude CLI login",
   cx: "reuses your Codex CLI login",
-  go: "Go estimates work locally · cookie optional",
+  go: "local estimate or a dashboard cookie",
 };
 
 interface OnboardingProps {
@@ -33,10 +33,12 @@ function pickedProviders(state: AppState): ProviderId[] {
   return PROVIDER_IDS.filter((id) => state.onboarding.picks[id]);
 }
 
-function PickStep({ state, snapshot, width, actions }: OnboardingProps) {
+function PickStep({ state, width, actions }: OnboardingProps) {
   const picked = pickedProviders(state);
+  // A provider with a usable credential counts as found even when its agent is
+  // absent, which is how a cookie-only opencode go shows up here.
   const installed = PROVIDER_IDS.filter(
-    (id) => state.connections[id].isAgentInstalled ?? state.connections[id].status !== "none",
+    (id) => state.connections[id].isAgentInstalled || state.connections[id].status !== "none",
   );
   const heading = installed.length > 0
     ? `we found ${installed.length} coding agent${installed.length === 1 ? "" : "s"} on this device`
@@ -63,7 +65,8 @@ function PickStep({ state, snapshot, width, actions }: OnboardingProps) {
       {PROVIDER_IDS.map((id, index) => {
         const isSelected = state.onboarding.cursor === index;
         const isPicked = state.onboarding.picks[id];
-        const isInstalled = state.connections[id].isAgentInstalled ?? state.connections[id].status !== "none";
+        const isInstalled =
+          state.connections[id].isAgentInstalled || state.connections[id].status !== "none";
         const background = isSelected ? COLORS.bgRowActive : undefined;
         const pick = () => actions.onboardingPick(index);
         return (

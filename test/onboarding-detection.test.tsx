@@ -61,7 +61,7 @@ describe("agent-aware onboarding", () => {
 
     try {
       await setup.flush();
-      expect(setup.captureCharFrame()).toContain("Go estimates work locally · cookie optional");
+      expect(setup.captureCharFrame()).toContain("local estimate or a dashboard cookie");
       act(() => setup.mockInput.pressEnter());
       await setup.flush();
       const summary = setup.captureCharFrame();

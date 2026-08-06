@@ -88,8 +88,14 @@ function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: nu
   return limits;
 }
 
-function sessionsFooter(stats: OpencodeSessionStats | undefined): string | undefined {
-  if (!stats || stats.sessions <= 0) return undefined;
+/** The cookie carries percentages only, so an empty chart is expected, not broken. */
+function sessionsFooter(
+  stats: OpencodeSessionStats | undefined,
+  hasServerLimits: boolean,
+): string | undefined {
+  if (!stats || stats.sessions <= 0) {
+    return hasServerLimits ? "no local history ▏ limits from cookie" : undefined;
+  }
   return `sessions 30d ${stats.sessions} ▏ avg per session ${formatTokenCount(stats.tokens / stats.sessions)} ▏ tokens from opencode.db`;
 }
 
@@ -243,6 +249,15 @@ interface GoProviderResult {
   usesEstimate: boolean;
 }
 
+/** Server limits come off the dashboard, so the stated source must follow them. */
+function goMetaFor(meta: ProviderMeta, server: GoServerLimits | null, usesEstimate: boolean): ProviderMeta {
+  if (!server) return meta;
+  const fromServer = { ...meta, source: "opencode.ai dashboard" };
+  return usesEstimate
+    ? fromServer
+    : { ...fromServer, plan: "Go", planShort: "Go", planDetail: "Go" };
+}
+
 export function buildGoProvider(input: GoProviderInput): GoProviderResult {
   const { meta, buckets, stats, spend, limitsSource, dates, now } = input;
   const nowMs = now.getTime();
@@ -255,8 +270,10 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
     usesEstimate,
     provider: {
       id: "go",
-      meta: usesEstimate ? meta : { ...meta, plan: "Go", planShort: "Go", planDetail: "Go" },
+      meta: goMetaFor(meta, server, usesEstimate),
       series: seriesFromBuckets(buckets, dates, now),
+      // opencode.db is the only history source; the cookie carries percentages only.
+      hasHistory: stats !== undefined,
       limits: goLimits(server, spend, note, nowMs),
       scopes: {
         session: sessionScope(server, spend, note, nowMs),
@@ -274,7 +291,7 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
             },
           }
         : {}),
-      detailFooter: sessionsFooter(stats),
+      detailFooter: sessionsFooter(stats, server !== null),
     },
   };
 }

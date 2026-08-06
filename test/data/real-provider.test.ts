@@ -30,6 +30,9 @@ const MISSING_PATHS: RealProviderPaths = {
   codexHome: "/nonexistent/codex",
 };
 
+/** An empty environment keeps a developer's own cookie out of the assertions. */
+const NO_ENV: Record<string, string | undefined> = {};
+
 /** Keeps the suite off the network and away from a real codex process. */
 const OFFLINE = {
   claudeLimits: dormantClaudeLimitsSource,
@@ -611,7 +614,7 @@ describe("selectUsageProvider", () => {
   });
 
   test("hasRealSources is false for missing paths", () => {
-    expect(hasRealSources(MISSING_PATHS)).toBe(false);
+    expect(hasRealSources(MISSING_PATHS, NO_ENV)).toBe(false);
   });
 
   test("does not treat a malformed cache as a real usage source", () => {
@@ -619,7 +622,7 @@ describe("selectUsageProvider", () => {
     const cachePath = join(dir, "usage-cache.json");
     writeFileSync(cachePath, JSON.stringify({ version: 1, claude: { percent: "bad" } }));
     try {
-      expect(hasRealSources({ ...MISSING_PATHS, usageCache: cachePath })).toBe(false);
+      expect(hasRealSources({ ...MISSING_PATHS, usageCache: cachePath }, NO_ENV)).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

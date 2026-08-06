@@ -122,6 +122,11 @@ export interface ProviderUsage {
   series: UsageSeries;
   /** Whether the provider's activity series covers an account or this device. */
   activityScope?: "account" | "local";
+  /**
+   * false when no history source exists at all, which is not the same as a
+   * measured zero and must not be rendered as one. Absent means history exists.
+   */
+  hasHistory?: boolean;
   /** Distinct local sessions in the raw 30-day activity window, when available. */
   sessions30d?: number;
   notice?: ProviderNotice;

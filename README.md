@@ -89,7 +89,7 @@ Every control is also clickable, and the mouse wheel scrolls views taller than t
 | ----------- | ------------------------------------ | ---------------------------------- |
 | Claude Code | the signed-in `claude` CLI           | `~/.claude` transcripts            |
 | Codex       | a sandboxed `codex app-server`       | `~/.codex/sessions`                |
-| OpenCode Go | model-weighted local estimate        | `opencode.db`                      |
+| OpenCode Go | local estimate, or the dashboard cookie | `opencode.db`                   |
 
 `open-usage` is read-only, and there is no account to create and no key to paste.
 It reuses the logins your CLIs already have: Claude and Codex limits come from their own signed-in CLIs, so their credentials are never read.
@@ -99,6 +99,7 @@ Nothing is written outside its own config directory, and there is no telemetry o
 The only outbound request it makes on its own is to `opencode.ai`, and only if you opt in by configuring the cookie below.
 
 OpenCode Go does not publish per-account limits, so its percentages are local estimates and are labelled as such in the UI.
+Configuring the cookie below replaces those estimates with exact figures, and is enough on its own: OpenCode itself need not be installed, though without it the Go card has no token history to chart.
 [docs/PROVIDERS.md](docs/PROVIDERS.md) explains how each number is derived.
 
 ## Configuration
@@ -110,8 +111,8 @@ They persist to `~/.config/open-usage/preferences.json` (or `$XDG_CONFIG_HOME/op
 | ---------------------------- | ---------------------------------------------- |
 | `XDG_CONFIG_HOME`            | relocate the config directory                  |
 | `CODEX_HOME`                 | non-default Codex home                         |
-| `OPENCODE_DB`                | non-default `opencode.db` path                 |
-| `OPEN_USAGE_OPENCODE_COOKIE` | optional, enables exact OpenCode Go windows    |
+| `OPENCODE_DB`                | non-default `opencode.db` path, for history    |
+| `OPEN_USAGE_OPENCODE_COOKIE` | exact OpenCode Go windows, no install needed   |
 
 ## Development
 

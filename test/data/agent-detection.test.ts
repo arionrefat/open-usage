@@ -55,7 +55,8 @@ describe("coding agent detection", () => {
       ...missingPaths("/nonexistent/open-usage-agent-connections"),
       codexExecutable: "/usr/local/bin/codex",
     };
-    const connections = createRealUsageProvider({ paths }).initialConnections();
+    // An empty environment keeps a developer's own cookie from enabling go here.
+    const connections = createRealUsageProvider({ paths, env: {} }).initialConnections();
 
     expect(connections.cl).toMatchObject({ isEnabled: false, isAgentInstalled: false });
     expect(connections.cx).toMatchObject({ isEnabled: true, isAgentInstalled: true });

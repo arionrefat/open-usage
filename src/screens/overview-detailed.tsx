@@ -300,6 +300,9 @@ function UsageShare({ state, derived, snapshot, width }: OverviewDetailedProps) 
               ? "session"
               : "sessions";
           const tokenLabel = provider.activityScope === "account" ? "account tokens" : "tokens";
+          // Without a history source there is no share to state, and printing 0%
+          // beside a card reading 59% used would read as a contradiction.
+          const hasHistory = provider.hasHistory !== false;
           return (
             <box key={id} flexDirection={isStacked ? "column" : "row"} flexShrink={0}>
               {index > 0 ? <ColumnGap isStacked={isStacked} /> : null}
@@ -308,33 +311,48 @@ function UsageShare({ state, derived, snapshot, width }: OverviewDetailedProps) 
                   segments={[
                     { text: "▎", color: PROVIDER_COLORS[id] },
                     { text: ` ${provider.meta.name}`, color: COLORS.textFaint, isBold: true },
-                    { text: ` ${sharePercent}%`, color: PROVIDER_COLORS[id], isBold: true },
+                    hasHistory
+                      ? { text: ` ${sharePercent}%`, color: PROVIDER_COLORS[id], isBold: true }
+                      : { text: " no history", color: COLORS.textGhost },
                   ]}
                 />
                 <Line
                   width={column}
                   segments={[
-                    ...shareBarSegments(share, column, PROVIDER_COLORS[id]),
+                    ...shareBarSegments(hasHistory ? share : 0, column, PROVIDER_COLORS[id]),
                   ]}
                 />
                 <SplitLine
                   width={column}
-                  left={[{ text: `${formatTokens(tokens)} ${tokenLabel}`, color: COLORS.textGhost }]}
+                  left={[
+                    {
+                      text: hasHistory ? `${formatTokens(tokens)} ${tokenLabel}` : "no local history",
+                      color: COLORS.textGhost,
+                    },
+                  ]}
                   right={
                     sessions30d === undefined
                       ? []
                       : [{ text: `${sessions30d} ${sessionLabel}`, color: COLORS.textGhost }]
                   }
                 />
+                {/* Kept as a blank row so the columns stay aligned. */}
                 <Line
                   width={column}
-                  segments={[
-                    { text: "trend ", color: COLORS.textFaint },
-                    {
-                      text: sparkline(derived.series[id], Math.max(1, Math.min(SPARKLINE_WIDTH, column - 6))),
-                      color: PROVIDER_COLORS[id],
-                    },
-                  ]}
+                  segments={
+                    hasHistory
+                      ? [
+                          { text: "trend ", color: COLORS.textFaint },
+                          {
+                            text: sparkline(
+                              derived.series[id],
+                              Math.max(1, Math.min(SPARKLINE_WIDTH, column - 6)),
+                            ),
+                            color: PROVIDER_COLORS[id],
+                          },
+                        ]
+                      : []
+                  }
                 />
               </box>
             </box>

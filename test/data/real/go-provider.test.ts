@@ -97,6 +97,24 @@ describe("buildGoProvider limits", () => {
     expect(result.provider.limits.every((limit) => limit.footnote === undefined)).toBe(true);
   });
 
+  test("names the dashboard as the source once server limits arrive", () => {
+    expect(build({ server: SERVER }).provider.meta.source).toBe("opencode.ai dashboard");
+    expect(build().provider.meta.source).toContain("opencode.db");
+  });
+
+  test("marks history as absent without opencode.db, present with it", () => {
+    expect(build({ server: SERVER }).provider.hasHistory).toBe(false);
+    expect(build({ server: SERVER, stats: { sessions: 2, tokens: 10, latestMs: NOW_MS, topModel: null } })
+      .provider.hasHistory).toBe(true);
+  });
+
+  test("explains the empty chart when the cookie is the only source", () => {
+    expect(build({ server: SERVER }).provider.detailFooter).toBe(
+      "no local history ▏ limits from cookie",
+    );
+    expect(build().provider.detailFooter).toBeUndefined();
+  });
+
   test("renders all three local spend rows with estimate footnotes", () => {
     const spend = goSpendFrom([{ atMs: NOW_MS - HOUR_MS, usd: 3 }], NOW);
     const result = build({ spend });

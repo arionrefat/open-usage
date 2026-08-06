@@ -218,6 +218,8 @@ Only the `auth` / `__Host-auth` cookies are sent; anything else in a pasted head
 The cookie's Iron seal carries its own expiry, and the app warns during its final seven days.
 Any session failure produces the same visible warning while the local estimate continues.
 Without a cookie the app shows the local estimate and says so, which is why the cookie is optional rather than a setup step.
+A cookie is also sufficient on its own: it counts as a go source with no opencode install present, so uninstalling opencode leaves the limits intact and costs only the local history.
+That case is labelled rather than left blank - the card reads "no local history", the chart collapses to a rule, and the stated source becomes the dashboard instead of `opencode.db`.
 This private integration is opt-in and not recommended for general distribution: OpenCode's hosted Terms prohibit programmatic extraction and reverse engineering.
 Do not request a user's cookie during support, and do not add automatic browser-cookie extraction.
 

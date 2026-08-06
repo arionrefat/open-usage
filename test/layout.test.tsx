@@ -4,6 +4,7 @@ import { act } from "react";
 import { App } from "../src/app";
 import { toggleSegments } from "../src/components/toggle";
 import { mockUsageProvider } from "../src/data/mock-provider";
+import type { UsageProvider, UsageSnapshot } from "../src/data/types";
 import {
   VIEW_KEYS,
   type OverviewMode,
@@ -130,6 +131,40 @@ test("usage share gives each provider a bar and trend label", async () => {
   expect(frame).toContain("━━━━━━━━");
   expect(frame).toContain("trend");
   expect(frame).not.toContain("local sessions");
+});
+
+test("a provider with no history source says so instead of claiming a zero share", async () => {
+  const patch = (snapshot: UsageSnapshot): UsageSnapshot => ({
+    ...snapshot,
+    providers: {
+      ...snapshot.providers,
+      go: { ...snapshot.providers.go, hasHistory: false },
+    },
+  });
+  const provider: UsageProvider = {
+    ...mockUsageProvider,
+    readSnapshot: () => patch(mockUsageProvider.readSnapshot()),
+    refresh: (request) => mockUsageProvider.refresh(request).then(patch),
+  };
+  const setup = await testRender(
+    <App
+      provider={provider}
+      startup={{ screen: "app", view: "overview", mode: "detailed" }}
+      isPollingEnabled={false}
+    />,
+    { width: 140, height: HEIGHT },
+  );
+
+  try {
+    await setup.flush();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("opencode go no history");
+    expect(frame).toContain("no local history");
+    // The other providers keep their share figures and trends.
+    expect(frame).toContain("trend");
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
 });
 
 describe("every view renders at every width", () => {

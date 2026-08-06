@@ -240,42 +240,61 @@ export function ProviderDetail({
       ) : null}
 
       <Spacer />
-      <SplitLine
-        width={width}
-        left={[
-          { text: "┌─ ", color: COLORS.borderPanel },
-          {
-            text: `${chartTokenLabel} ${derived.rangeName} · ${formatTokens(totalTokens)} total · ${activeDays}/${series.length} active `,
-            color: COLORS.textMuted,
-            isBold: true,
-          },
-        ]}
-        right={[
-          { text: ` peak ${formatTokens(Math.max(0, ...series))} `, color: COLORS.textGhost },
-          { text: "─┐", color: COLORS.borderPanel },
-        ]}
-        filler="─"
-        fillerColor={COLORS.borderPanel}
-      />
-      <Chart
-        rows={chartRows}
-        labels={chartLabels}
-        labelWidth={width}
-        labelBorderColor={COLORS.borderPanel}
-      />
-      <SplitLine
-        width={width}
-        left={[
-          { text: "└─ ", color: COLORS.borderPanel },
-          { text: `${derived.axis[0]} `, color: COLORS.textGhost },
-        ]}
-        right={[
-          { text: ` ${derived.axis[2]} `, color: COLORS.textGhost },
-          { text: "─┘", color: COLORS.borderPanel },
-        ]}
-        filler="─"
-        fillerColor={COLORS.borderPanel}
-      />
+      {/* An empty frame reads as a broken chart, so no history collapses to a rule. */}
+      {totalTokens <= 0 ? (
+        <SplitLine
+          width={width}
+          left={[
+            { text: "─ ", color: COLORS.borderPanel },
+            {
+              text: `${chartTokenLabel} ${derived.rangeName} · no activity `,
+              color: COLORS.textMuted,
+              isBold: true,
+            },
+          ]}
+          filler="─"
+          fillerColor={COLORS.borderPanel}
+        />
+      ) : (
+        <>
+          <SplitLine
+            width={width}
+            left={[
+              { text: "┌─ ", color: COLORS.borderPanel },
+              {
+                text: `${chartTokenLabel} ${derived.rangeName} · ${formatTokens(totalTokens)} total · ${activeDays}/${series.length} active `,
+                color: COLORS.textMuted,
+                isBold: true,
+              },
+            ]}
+            right={[
+              { text: ` peak ${formatTokens(Math.max(0, ...series))} `, color: COLORS.textGhost },
+              { text: "─┐", color: COLORS.borderPanel },
+            ]}
+            filler="─"
+            fillerColor={COLORS.borderPanel}
+          />
+          <Chart
+            rows={chartRows}
+            labels={chartLabels}
+            labelWidth={width}
+            labelBorderColor={COLORS.borderPanel}
+          />
+          <SplitLine
+            width={width}
+            left={[
+              { text: "└─ ", color: COLORS.borderPanel },
+              { text: `${derived.axis[0]} `, color: COLORS.textGhost },
+            ]}
+            right={[
+              { text: ` ${derived.axis[2]} `, color: COLORS.textGhost },
+              { text: "─┘", color: COLORS.borderPanel },
+            ]}
+            filler="─"
+            fillerColor={COLORS.borderPanel}
+          />
+        </>
+      )}
 
       {provider.details?.some((section) => section.rows.length > 0) ? (
         <>
