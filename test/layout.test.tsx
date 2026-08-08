@@ -36,10 +36,22 @@ test("toggle pills have only a plain gap and share the accent background", () =>
 const WIDTHS = [60, 80, 100, 140];
 const HEIGHT = 44;
 
-async function renderRows(width: number, view: ViewKey, mode: OverviewMode): Promise<string[]> {
+async function renderRows(
+  width: number,
+  view: ViewKey,
+  mode: OverviewMode,
+  patch?: (snapshot: UsageSnapshot) => UsageSnapshot,
+): Promise<string[]> {
+  const provider: UsageProvider = patch
+    ? {
+        ...mockUsageProvider,
+        readSnapshot: () => patch(mockUsageProvider.readSnapshot()),
+        refresh: (request) => mockUsageProvider.refresh(request).then(patch),
+      }
+    : mockUsageProvider;
   const setup = await testRender(
     <App
-      provider={mockUsageProvider}
+      provider={provider}
       startup={{ screen: "app", view, mode, useSeverityColors: false, isDailySplitVisible: true }}
     />,
     { width, height: HEIGHT },
@@ -119,52 +131,147 @@ test("simple overview keeps all three providers in the legend", async () => {
   expect(rows.join("\n")).toContain("subscription ended");
 });
 
-test("detailed overview shows usage-share trends", async () => {
-  const frame = (await renderRows(140, "overview", "detailed")).join("\n");
-  expect(frame).toContain("trend");
-});
+/** Half-height block: full blocks would fuse the rows into one wedge. */
+const SHARE_BAR = "▀";
 
-test("usage share gives each provider a bar and trend label", async () => {
+/** The share row for one provider: name, figures and bar on a single line. */
+function shareRow(rows: string[], name: string): string {
+  return (
+    rows.find(
+      (row) => new RegExp(`^\\s+${name}\\s{2,}`).test(row) && /[▀·]/.test(row),
+    ) ?? ""
+  );
+}
+
+test("usage share states the window its arrows compare", async () => {
   const frame = (await renderRows(140, "overview", "detailed")).join("\n");
   expect(frame).toContain("usage share");
   expect(frame).toContain("total");
-  expect(frame).toContain("━━━━━━━━");
-  expect(frame).toContain("trend");
-  expect(frame).not.toContain("local sessions");
+  expect(frame).toContain("▲▼ 7d change");
+});
+
+test("usage share gives each provider one bar, a percent and a token count", async () => {
+  const rows = await renderRows(140, "overview", "detailed");
+  const row = shareRow(rows, "claude code");
+  expect(row).toContain(SHARE_BAR);
+  expect(row).toMatch(/\s60%\s/);
+  expect(row).toContain("1.44B");
+  // The old three-column layout scaled each bar to its own column; one row per
+  // provider on a shared baseline is what makes the shares comparable.
+  expect(rows.join("\n")).not.toContain("━━━━━━━━");
+});
+
+test("usage share ranks the heaviest provider first", async () => {
+  const patch = (snapshot: UsageSnapshot): UsageSnapshot => ({
+    ...snapshot,
+    providers: {
+      ...snapshot.providers,
+      cl: { ...snapshot.providers.cl, series: { ...snapshot.providers.cl.series, daily: [1] } },
+    },
+  });
+  const rows = await renderRows(140, "overview", "detailed", patch);
+  const order = rows
+    .map((row) => ["codex", "opencode go", "claude code"].find((name) => shareRow(rows, name) === row))
+    .filter((name): name is string => name !== undefined);
+  expect(order).toEqual(["codex", "opencode go", "claude code"]);
 });
 
 test("a provider with no history source says so instead of claiming a zero share", async () => {
-  const patch = (snapshot: UsageSnapshot): UsageSnapshot => ({
+  const rows = await renderRows(140, "overview", "detailed", (snapshot) => ({
     ...snapshot,
     providers: {
       ...snapshot.providers,
       go: { ...snapshot.providers.go, hasHistory: false },
     },
-  });
-  const provider: UsageProvider = {
-    ...mockUsageProvider,
-    readSnapshot: () => patch(mockUsageProvider.readSnapshot()),
-    refresh: (request) => mockUsageProvider.refresh(request).then(patch),
-  };
-  const setup = await testRender(
-    <App
-      provider={provider}
-      startup={{ screen: "app", view: "overview", mode: "detailed" }}
-      isPollingEnabled={false}
-    />,
-    { width: 140, height: HEIGHT },
-  );
+  }));
+  const row = shareRow(rows, "opencode go");
 
-  try {
-    await setup.flush();
-    const frame = setup.captureCharFrame();
-    expect(frame).toContain("opencode go no history");
-    expect(frame).toContain("no local history");
-    // The other providers keep their share figures and trends.
-    expect(frame).toContain("trend");
-  } finally {
-    act(() => setup.renderer.destroy());
-  }
+  expect(row).toContain("no history");
+  // A dotted lane, never a bar or a measured-looking zero.
+  expect(row).toContain("·");
+  expect(row).not.toContain(SHARE_BAR);
+  expect(row).not.toContain("0%");
+  expect(shareRow(rows, "claude code")).toContain(SHARE_BAR);
+});
+
+test("a provider with no cap states its rate instead of projecting against nothing", async () => {
+  const rows = await renderRows(140, "overview", "detailed", (snapshot) => ({
+    ...snapshot,
+    providers: {
+      ...snapshot.providers,
+      cl: {
+        ...snapshot.providers.cl,
+        burn: { ...snapshot.providers.cl.burn, rate: "9K tok/h", capsOutAt: null },
+      },
+    },
+  }));
+  const frame = rows.join("\n");
+
+  expect(frame).toContain("9K tok/h");
+  expect(frame).toContain("no cap to project against");
+  // The old template spliced the placeholder straight into the sentence.
+  expect(frame).not.toContain("you cap out no cap data");
+  expect(frame).not.toContain("projected 0% at reset");
+});
+
+/** Strips the cache figure from every provider, leaving nothing for the column to state. */
+function withoutCacheReads(snapshot: UsageSnapshot): UsageSnapshot {
+  const strip = (provider: UsageSnapshot["providers"]["cl"]) => {
+    const { cacheRead30d: _dropped, ...rest } = provider;
+    return rest;
+  };
+  return {
+    ...snapshot,
+    providers: {
+      cl: strip(snapshot.providers.cl),
+      cx: strip(snapshot.providers.cx),
+      go: strip(snapshot.providers.go),
+    },
+  };
+}
+
+test("usage share states cache reads beside the tokens they are held out of", async () => {
+  const rows = await renderRows(140, "overview", "detailed");
+  const row = shareRow(rows, "claude code");
+
+  expect(rows.join("\n")).toContain("+ cache read");
+  // Both figures on one row: the cache volume is stated without being folded
+  // into the token count, which would make the cross-provider share meaningless.
+  expect(row).toContain("1.44B");
+  expect(row).toContain("2.68B");
+});
+
+test("a source reporting no cache breakdown reads as unknown, not as zero", async () => {
+  const rows = await renderRows(140, "overview", "detailed");
+  // codex's server figure carries no cache split at all; printing 0 would claim
+  // a measurement nobody made.
+  expect(shareRow(rows, "codex")).toMatch(/551M\s+-\s/);
+  expect(shareRow(rows, "codex")).not.toMatch(/551M\s+0\s/);
+});
+
+test("the cache column drops out entirely when no provider reports cache reads", async () => {
+  const rows = await renderRows(140, "overview", "detailed", withoutCacheReads);
+
+  expect(rows.join("\n")).not.toContain("+ cache read");
+  // The token figures stay put; only the column of nothing-but-dashes goes.
+  expect(shareRow(rows, "claude code")).toContain("1.44B");
+  expect(shareRow(rows, "claude code")).not.toMatch(/1\.44B\s+-\s/);
+});
+
+test("cache outlives the session count when the row runs out of room", async () => {
+  const withSessions = (snapshot: UsageSnapshot): UsageSnapshot => ({
+    ...snapshot,
+    providers: { ...snapshot.providers, cl: { ...snapshot.providers.cl, sessions30d: 204 } },
+  });
+  const roomy = shareRow(await renderRows(80, "overview", "detailed", withSessions), "claude code");
+  const cramped = shareRow(await renderRows(70, "overview", "detailed", withSessions), "claude code");
+
+  expect(roomy).toContain("204 sessions");
+  expect(roomy).toContain("2.68B");
+  // The session count is the first to give way; the cache volume can dwarf every
+  // other figure on the row and is stated nowhere else on this screen.
+  expect(cramped).not.toContain("204 sessions");
+  expect(cramped).toContain("2.68B");
 });
 
 describe("every view renders at every width", () => {

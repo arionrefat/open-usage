@@ -79,6 +79,14 @@ describe("buildGoProvider details", () => {
     ]);
   });
 
+  test("reports a measured zero for cache reads, and nothing at all without a split", () => {
+    // opencode.db is the only source of the split; absent it, the field must stay
+    // undefined so the overview reads it as unknown rather than as a measured zero.
+    expect(build({ stats }).provider.cacheRead30d).toBe(0);
+    expect(build({ stats: { ...stats, tokenSplit30d: undefined } }).provider.cacheRead30d).toBeUndefined();
+    expect(build({}).provider.cacheRead30d).toBeUndefined();
+  });
+
   test("shows the server balance fallback flag", () => {
     const on = build({ stats, server: { ...SERVER, useBalance: true } }).provider.details;
     const off = build({ stats, server: { ...SERVER, useBalance: false } }).provider.details;

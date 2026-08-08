@@ -52,6 +52,30 @@ Across 40 transcripts, 3074 assistant rows collapsed to 1312 unique messages, me
 
 The lesson worth keeping: this was measurable locally in a few minutes and the published claim pointed the wrong direction. Verify token-accounting claims against real files before encoding them.
 
+### Cache reads are shown, not summed
+
+`parseTranscriptLine` sums `input + output + cache_creation` and holds `cache_read_input_tokens` out.
+That looks like a 40x undercount - on the machine this was measured on, cache reads are 2,684.1M of 2,753.3M, or 97.5% - and it was briefly "fixed" by folding them in. That was wrong, for two reasons found afterwards.
+
+**Codex's own convention excludes them.** `TokenUsage::blended_total` in `codex-rs/protocol` is `non_cached_input + output`, commented as the "primary count for display as a single absolute value".
+Anthropic's schema splits the same quantity differently - `input_tokens` already excludes both cache kinds - so `input + output + cache_creation` is the near-equivalent shape.
+Folding cache reads into the Claude figure alone inverted the usage share to claude code 82% / codex 18%, comparing one provider's full throughput against another's blended figure.
+
+**Anthropic weights them far below input.** Cache reads bill at 10% of the input rate and count *nothing* toward ITPM ([rate limits](https://platform.claude.com/docs/en/api/rate-limits) - only Haiku 3.5 counts them).
+On a subscription they do draw plan usage, but at the cached rate, not whole.
+Claude Code's own `/usage` never merges them either; it prints the four kinds side by side.
+
+What *was* a real defect: `modelTokens` counted cache reads while the headline did not, so the overview read 68.2M while the detail screen's per-model bars summed to 2.70B off the same events. Both now use the blended figure, and `tokenSplit` still carries all four kinds for the detail screen.
+
+**Excluding them is not the same as hiding them.** A figure this large going unstated on the main screen is its own kind of wrong: a heavy Claude user reads a 10% share and reasonably concludes the tool is undercounting them.
+So `ProviderUsage.cacheRead30d` carries the volume to the overview's usage share, in its own column, held apart from the token figure rather than added to it.
+The field is deliberately optional. Claude and opencode go report a cache split and set it; Codex has no such breakdown, so it stays absent and the column renders `-`.
+That is the honest reading - "this source does not say" is a different fact from "this source measured zero", and the column keeps them apart.
+
+**Unverified.** Whether the server-side `dailyUsageBuckets[].tokens` follows `blended_total` is an assumption, not a measurement - the field is opaque and account-wide, and this machine's local threads cover too little of it to compare (2026-08-03: 25.2K locally against a 201.7M bucket).
+To settle it, run one Codex session on a quiet day and compare the next day's bucket against that session's own `blended_total`.
+Limit percentages and the burn projection are unaffected either way, since those come from the statusline percentages rather than token counts.
+
 ### Staleness handling
 
 Surface the snapshot's age (mtime), but remove its percentages once it exceeds ten minutes.
