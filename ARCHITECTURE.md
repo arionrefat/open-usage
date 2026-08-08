@@ -138,7 +138,7 @@ Touch when: adding a key binding or changing app lifecycle.
 `primitives.tsx` (width-exact `Line`/`SplitLine`/`Chart` with mouse hit-ranges), `chrome.tsx` (header, tabs, filter bar, status bar), `limit-meter.tsx` (the percent bars), `toggle.tsx` (segmented controls).
 
 **`lib/`** - pure layout math, no React:
-`chart.ts` (bars, sparkline, stacked bar, resampling), `meter.ts` (fill and severity color), `text.ts` (grapheme-safe width, pad, truncate via `Bun.stringWidth`).
+`chart.ts` (bars, sparkline, stacked bar, resampling, period-over-period delta), `meter.ts` (fill and severity color), `text.ts` (grapheme-safe width, pad, truncate via `Bun.stringWidth`).
 
 **`hooks/`** - the only per-second re-renders in the app, deliberately quarantined:
 `use-seconds-since.ts` ("updated Xs ago", ticks 1s then coarsens to 10s), `use-blink.ts` (cursor blink).
