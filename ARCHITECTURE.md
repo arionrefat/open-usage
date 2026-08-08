@@ -29,7 +29,7 @@ flowchart LR
 | `bun run production` | Real mode with provider polling. |
 | `bun run preview` | Headless text frame for reviewing the UI without a terminal session. |
 | `bun run shot` | Headless HTML screenshot for reviewing colors and chart geometry. |
-| `bun test` | Runs all 239 tests under the top-level `test/` directory. |
+| `bun test` | Runs the suite under the top-level `test/` directory. |
 | `bun run typecheck` | Runs `tsc --noEmit`. |
 
 The main UI entry points accept `--mock`, `--real`, `--no-poll`, `--screen`, `--view`, and `--mode`.
