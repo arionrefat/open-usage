@@ -60,10 +60,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      # Trusted publishing needs npm 11.5.1+, and Node 22 still bundles npm 10.
+      - run: npm install -g npm@latest
       - run: bun install --frozen-lockfile
       - uses: actions/download-artifact@v4
         with:
@@ -76,19 +79,17 @@ jobs:
       # Platform packages go first: the root package's optionalDependencies
       # resolve against them, so publishing the root first would briefly
       # advertise versions that do not exist yet.
+      # No token: npm authenticates the run through its GitHub OIDC identity,
+      # which also attaches provenance without the --provenance flag.
       - name: Publish platform packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for dir in dist/npm/*/; do
             echo "publishing $dir"
-            npm publish "$dir" --access public --provenance
+            npm publish "$dir" --access public
           done
 
       - name: Publish open-usage
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --provenance
+        run: npm publish --access public
 
       - name: Create GitHub release
         env:

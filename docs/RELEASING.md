@@ -35,40 +35,36 @@ Change the `@open-usage/` prefix in two places and everything else follows:
 
 The unscoped `open-usage` name is already free, so the root package is unaffected either way.
 
-### 2. Create the publish token
+### 2. Configure trusted publishing
 
-Use a **Granular Access Token**, not a classic one.
-Classic tokens with 2FA enabled will prompt for an OTP and hang the workflow.
+There is no npm token in this repository.
+The workflow authenticates through GitHub's OIDC identity, so there is no secret to rotate, expire, or leak.
 
-1. npm → Access Tokens → Generate New Token → Granular Access Token.
-2. Tick **Bypass two-factor authentication (2FA)**.
-   The account has 2FA enabled for publishing, so without this the workflow fails with `EOTP` on the first `npm publish`.
-   A granular token alone is not enough to avoid the prompt.
-3. Packages and scopes permission: **Read and write**.
-4. Packages and scopes selection: **All packages** for the first release.
-   The selector only autocompletes packages that already exist, and on the first release neither `open-usage` nor any `@open-usage/*` package has been published yet, so there is nothing to pick.
-   After the first release lands, regenerate a narrower token restricted to the `@open-usage` scope and the `open-usage` package.
-5. Organizations permission: leave at **No access**.
-   That permission governs member and team management, not publishing.
-6. Set an expiry you will actually track, and note the renewal date.
+npm has to be told which workflow may publish each package, and that is set per package.
+Repeat for all six: `open-usage` and the five `@open-usage/*` packages.
 
-### 3. Store it in the repository
+1. Open the package on npm, then Settings.
+2. Under **Trusted Publisher**, pick GitHub Actions and fill in:
+   - Organization or user: `arionrefat`
+   - Repository: `open-usage`
+   - Workflow filename: `release.yml`
+   - Environment: leave empty
+3. Save.
 
-GitHub → Settings → Secrets and variables → Actions → New repository secret.
+Every field is case-sensitive and must match exactly, including the `.yml` extension.
 
-- Name: `NPM_TOKEN`
-- Value: the token from step 2
+Trusted publishing needs npm 11.5.1 or newer on Node 22.14.0 or newer.
+Node 22 still bundles npm 10, which is why the publish job installs `npm@latest` before it publishes anything.
 
-### 4. Check the provenance requirements
+### 3. Provenance
 
-The workflow publishes with `--provenance`, which attaches a signed link from the package back to the commit and workflow that built it.
-It needs all of the following, and the publish step fails if any is missing:
+Provenance is attached automatically under trusted publishing, so the workflow no longer passes `--provenance`.
+It still requires a public repository, `id-token: write` in the workflow, and a GitHub-hosted runner.
 
-- the repository is **public**
-- the workflow has `id_token: write` (already set in [`release.yml`](../.github/workflows/release.yml))
-- the run happens on a GitHub-hosted runner
+### 4. Adding a platform package later
 
-If you want to keep the repository private for now, drop `--provenance` from both publish steps.
+A trusted publisher can only be attached to a package that already exists, which leaves a new target with nothing to authenticate against on its very first publish.
+Publish that one package manually with `npm publish --access public`, configure its trusted publisher, and the workflow takes over from the next release.
 
 ## Cutting a release
 
