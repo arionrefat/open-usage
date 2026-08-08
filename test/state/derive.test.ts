@@ -30,6 +30,37 @@ describe("derived state", () => {
     expect(session.alertColor).toBe(COLORS.danger);
   });
 
+  test("splits the last 14 days into two comparable 7-day halves", () => {
+    const snapshot = mockUsageProvider.readSnapshot();
+    const daily = snapshot.providers.cl.series.daily;
+    const week = deriveState(initialState(), snapshot).weekOverWeek.cl;
+
+    expect(week).not.toBeNull();
+    expect(week?.recent).toBeCloseTo(daily.slice(-7).reduce((a, b) => a + b, 0), 6);
+    expect(week?.prior).toBeCloseTo(daily.slice(-14, -7).reduce((a, b) => a + b, 0), 6);
+  });
+
+  test("holds the week-over-week windows fixed as the range cycles", () => {
+    const snapshot = mockUsageProvider.readSnapshot();
+    const at = (range: AppState["range"]) =>
+      deriveState({ ...initialState(), range }, snapshot).weekOverWeek.cl;
+
+    expect(at("7d")).toEqual(at("30d"));
+    expect(at("today")).toEqual(at("all"));
+    expect(at("month")).toEqual(at("30d"));
+  });
+
+  test("reports no week-over-week comparison without 14 days of history", () => {
+    const snapshot = mockUsageProvider.readSnapshot();
+    const short = { ...snapshot, dailyDates: snapshot.dailyDates.slice(-13) };
+
+    expect(deriveState(initialState(), short).weekOverWeek).toEqual({
+      cl: null,
+      cx: null,
+      go: null,
+    });
+  });
+
   test("names the all range 'all time'", () => {
     const snapshot = mockUsageProvider.readSnapshot();
 

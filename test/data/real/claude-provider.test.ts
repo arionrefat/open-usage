@@ -79,6 +79,11 @@ describe("buildClaudeProvider", () => {
     expect(build({ historyAvailable: false, sessions: 7 }).sessions30d).toBeUndefined();
   });
 
+  test("carries cache reads in millions, apart from the token series", () => {
+    // 600 raw cache-read tokens, and the series stays the blended figure.
+    expect(build().cacheRead30d).toBeCloseTo(0.0006, 10);
+  });
+
   test("a fresh snapshot exposes session and weekly percentages without a notice", () => {
     const provider = build({ snapshotFile: snapshot(60_000) });
 

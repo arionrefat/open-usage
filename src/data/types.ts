@@ -79,7 +79,11 @@ export interface BurnRate {
   timeToReset: string;
   rate: string;
   projectedPercent: number;
-  capsOutAt: string;
+  /**
+   * null when there is no cap to run out against, which makes
+   * `projectedPercent` meaningless too - the measured rate is still real.
+   */
+  capsOutAt: string | null;
 }
 
 export interface NoticeSegment {
@@ -129,6 +133,13 @@ export interface ProviderUsage {
   hasHistory?: boolean;
   /** Distinct local sessions in the raw 30-day activity window, when available. */
   sessions30d?: number;
+  /**
+   * Cache-read tokens over the 30-day window, in millions to match `series`.
+   * Held apart from the series rather than added to it - see docs/PROVIDERS.md.
+   * Absent when the source reports no cache breakdown at all, which is not the
+   * same as a measured zero and must not be rendered as one.
+   */
+  cacheRead30d?: number;
   notice?: ProviderNotice;
   details?: DetailSection[];
   /** Extra stat line under the detail chart, e.g. codex code-review runs. */
