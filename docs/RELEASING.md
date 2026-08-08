@@ -41,10 +41,16 @@ Use a **Granular Access Token**, not a classic one.
 Classic tokens with 2FA enabled will prompt for an OTP and hang the workflow.
 
 1. npm → Access Tokens → Generate New Token → Granular Access Token.
-2. Permission: **Read and write**.
-3. Packages and scopes: select the `@open-usage` scope *and* the `open-usage` package.
-   The token must cover packages that do not exist yet, so grant it at scope level rather than per package.
-4. Set an expiry you will actually track, and note the renewal date.
+2. Tick **Bypass two-factor authentication (2FA)**.
+   The account has 2FA enabled for publishing, so without this the workflow fails with `EOTP` on the first `npm publish`.
+   A granular token alone is not enough to avoid the prompt.
+3. Packages and scopes permission: **Read and write**.
+4. Packages and scopes selection: **All packages** for the first release.
+   The selector only autocompletes packages that already exist, and on the first release neither `open-usage` nor any `@open-usage/*` package has been published yet, so there is nothing to pick.
+   After the first release lands, regenerate a narrower token restricted to the `@open-usage` scope and the `open-usage` package.
+5. Organizations permission: leave at **No access**.
+   That permission governs member and team management, not publishing.
+6. Set an expiry you will actually track, and note the renewal date.
 
 ### 3. Store it in the repository
 
