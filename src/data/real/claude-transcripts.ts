@@ -58,6 +58,14 @@ export function parseTranscriptLine(line: string): TranscriptEvent | null {
   const outputTokens = tokenCount(usage.output_tokens);
   const cacheReadTokens = tokenCount(usage.cache_read_input_tokens);
   const cacheWriteTokens = tokenCount(usage.cache_creation_input_tokens);
+  /**
+   * Cache reads are deliberately excluded, which keeps this comparable to Codex:
+   * its `TokenUsage::blended_total` - the "primary count for display as a single
+   * absolute value" - is `non_cached_input + output`, the same shape. Anthropic
+   * also bills cache reads at 10% of input and excludes them from ITPM entirely,
+   * so counting them whole would overstate this figure against both.
+   * `tokenSplit` below still reports all four kinds for the detail screen.
+   */
   const tokens = inputTokens + outputTokens + cacheWriteTokens;
   if (tokens <= 0) return null;
   const id = typeof message.id === "string" ? message.id : null;
@@ -147,10 +155,10 @@ export function readClaudeTranscripts(
       mergeBuckets(combined, entry.buckets);
       for (const event of entry.events) {
         if (event.epochMs < cutoffMs) continue;
+        // Same blended figure as `event.tokens`, so the per-model bars sum to the
+        // headline total instead of contradicting it by the cache-read volume.
         if (event.model !== null) {
-          const allTokens =
-            event.inputTokens + event.outputTokens + event.cacheReadTokens + event.cacheWriteTokens;
-          modelTokens.set(event.model, (modelTokens.get(event.model) ?? 0) + allTokens);
+          modelTokens.set(event.model, (modelTokens.get(event.model) ?? 0) + event.tokens);
         }
         tokenSplit.input += event.inputTokens;
         tokenSplit.output += event.outputTokens;
