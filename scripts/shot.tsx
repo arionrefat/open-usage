@@ -9,8 +9,8 @@
 import { testRender } from "@opentui/react/test-utils";
 import type { RGBA } from "@opentui/core";
 import { App } from "../src/app";
-import { mockUsageProvider } from "../src/data/mock-provider";
-import { readFlags, startupFromFlags } from "../src/lib/args";
+import { selectUsageProvider } from "../src/data/real-provider";
+import { providerModeFromFlags, readFlags, startupFromFlags } from "../src/lib/args";
 import { COLORS } from "../src/theme";
 
 const DEFAULT_WIDTH = 140;
@@ -44,9 +44,10 @@ function toHex(color: RGBA): string {
 async function capture(label: string, spec: string): Promise<Shot> {
   const flags = readFlags(spec.split(/\s+/).filter(Boolean));
 
+  // Shots stay deterministic on the mock; pass --real to read local sources.
   const setup = await testRender(
     <App
-      provider={mockUsageProvider}
+      provider={selectUsageProvider(providerModeFromFlags(flags, "mock"))}
       startup={startupFromFlags(flags)}
     />,
     {
