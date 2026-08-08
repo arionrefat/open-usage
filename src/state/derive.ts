@@ -209,7 +209,7 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
     scopeTotal,
     ranked,
     worstId: ranked[0] ?? null,
-    bestId: ranked.length > 0 ? (ranked[ranked.length - 1] ?? null) : null,
+    bestId: ranked.at(-1) ?? null,
     windowNote: windowNote(state, snapshot, visibleIds, liveIds, disconnectedIds),
   };
 }
