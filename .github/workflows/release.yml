@@ -35,14 +35,14 @@ jobs:
         include:
           - os: macos-14
             artifact: open-usage-darwin-arm64
-          - os: macos-13
-            artifact: open-usage-darwin-x64
           - os: ubuntu-22.04
             artifact: open-usage-linux-x64
           - os: ubuntu-24.04-arm
             artifact: open-usage-linux-arm64
           - os: windows-latest
             artifact: open-usage-win32-x64.exe
+          - os: windows-11-arm
+            artifact: open-usage-win32-arm64.exe
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

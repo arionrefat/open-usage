@@ -7,9 +7,9 @@ import { spawnSync } from "node:child_process";
 
 const PLATFORM_PACKAGES = {
   "darwin-arm64": "@open-usage/darwin-arm64",
-  "darwin-x64": "@open-usage/darwin-x64",
   "linux-arm64": "@open-usage/linux-arm64",
   "linux-x64": "@open-usage/linux-x64",
+  "win32-arm64": "@open-usage/win32-arm64",
   "win32-x64": "@open-usage/win32-x64",
 };
 

@@ -43,7 +43,7 @@ chmod +x open-usage-darwin-arm64
 ./open-usage-darwin-arm64
 ```
 
-Supported platforms: macOS (arm64, x64), Linux (x64, arm64), Windows (x64).
+Supported platforms: macOS (Apple Silicon), Linux (x64, arm64), Windows (x64, arm64).
 
 On macOS, Gatekeeper quarantines binaries downloaded through a browser.
 Clear it with `xattr -d com.apple.quarantine open-usage-darwin-arm64`, or install through a package manager instead.

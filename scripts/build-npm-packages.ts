@@ -18,9 +18,9 @@ interface PlatformTarget {
 
 const TARGETS: PlatformTarget[] = [
   { slug: "darwin-arm64", os: "darwin", cpu: "arm64" },
-  { slug: "darwin-x64", os: "darwin", cpu: "x64" },
   { slug: "linux-arm64", os: "linux", cpu: "arm64" },
   { slug: "linux-x64", os: "linux", cpu: "x64" },
+  { slug: "win32-arm64", os: "win32", cpu: "arm64" },
   { slug: "win32-x64", os: "win32", cpu: "x64" },
 ];
 

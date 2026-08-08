@@ -6,10 +6,10 @@
 | -------------------------- | ----------------------------------------- |
 | `open-usage`               | a ~17 kB Node launcher, no runtime deps    |
 | `@open-usage/darwin-arm64` | the compiled binary for that platform      |
-| `@open-usage/darwin-x64`   | "                                          |
 | `@open-usage/linux-x64`    | "                                          |
 | `@open-usage/linux-arm64`  | "                                          |
 | `@open-usage/win32-x64`    | "                                          |
+| `@open-usage/win32-arm64`  | "                                          |
 
 Installing `open-usage` pulls exactly one platform package, because each declares `os` and `cpu` and all five are optional dependencies.
 The launcher resolves the matching binary and execs it.
