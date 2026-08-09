@@ -46,8 +46,8 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@opentui/core": "^0.4.5",
-    "@opentui/react": "^0.4.5",
+    "@opentui/core": "^0.5.1",
+    "@opentui/react": "^0.5.1",
     "@types/bun": "latest",
     "@types/react": "^19",
     "react": "^19.2.6",
