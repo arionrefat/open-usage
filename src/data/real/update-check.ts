@@ -99,19 +99,38 @@ export function writeUpdateCache(path: string, entry: UpdateCacheEntry): void {
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
-/** null on any failure: offline, DNS, proxy, timeout and a bad body are one case here. */
+/**
+ * Resolves to null if `promise` has not settled in time. The abort signal below
+ * already asks a well-behaved fetch to stop, but the signal only binds an
+ * implementation that honours it - and `FetchLike` is injectable. This makes the
+ * deadline a property of the caller instead of a favour from the callee.
+ */
+function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    // A pending check must never be the reason the process stays alive.
+    timer.unref?.();
+    const settle = (value: T | null) => {
+      clearTimeout(timer);
+      resolve(value);
+    };
+    promise.then(settle, () => settle(null));
+  });
+}
+
+async function readLatestVersion(fetchImpl: FetchLike): Promise<string | null> {
+  const response = await fetchImpl(REGISTRY_URL, {
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) return null;
+  const body: unknown = await response.json();
+  if (!isRecord(body) || typeof body.version !== "string") return null;
+  return body.version;
+}
+
+/** null on any failure: offline, DNS, proxy, timeout, a hang and a bad body are one case here. */
 export async function fetchLatestVersion(fetchImpl: FetchLike = fetch): Promise<string | null> {
-  try {
-    const response = await fetchImpl(REGISTRY_URL, {
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    if (!response.ok) return null;
-    const body: unknown = await response.json();
-    if (!isRecord(body) || typeof body.version !== "string") return null;
-    return body.version;
-  } catch {
-    return null;
-  }
+  return withDeadline(readLatestVersion(fetchImpl), REQUEST_TIMEOUT_MS);
 }
 
 export interface UpdateCheckOptions {

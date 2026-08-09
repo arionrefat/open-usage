@@ -93,6 +93,29 @@ describe("fetchLatestVersion", () => {
     expect(await fetchLatestVersion(respondWith({ version: "0.3.0" }, false))).toBeNull();
     expect(await fetchLatestVersion(respondWith({ nope: true }))).toBeNull();
   });
+
+  test("gives up on a fetch that never settles, rather than hanging forever", async () => {
+    // A fetch that ignores the abort signal would otherwise leave the promise
+    // pending for the life of the process. The deadline has to hold regardless.
+    const hangs: FetchLike = () => new Promise(() => {});
+    const started = Date.now();
+    expect(await fetchLatestVersion(hangs)).toBeNull();
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  test("a hung fetch leaves checkForUpdate silent and caches nothing", async () => {
+    const hangs: FetchLike = () => new Promise(() => {});
+    const path = cachePath();
+    const result = await checkForUpdate({
+      currentVersion: "0.2.0",
+      path,
+      now: NOW,
+      env: {},
+      fetchImpl: hangs,
+    });
+    expect(result).toBeNull();
+    expect(readUpdateCache(path)).toBeNull();
+  });
 });
 
 describe("checkForUpdate", () => {
