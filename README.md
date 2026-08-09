@@ -83,6 +83,17 @@ open-usage --help
 
 Every control is also clickable, and the mouse wheel scrolls views taller than the terminal.
 
+### Staying current
+
+When a newer version has been published, the header says so:
+
+```
+OPEN USAGE                    v0.4.0 available ▏ 3 providers ▏ ✓ all clear ▏ updated now
+```
+
+Update with the same command that installed it - `bun install -g open-usage@latest`, or the npm, pnpm or yarn equivalent.
+The check runs at most once a day, and [Configuration](#configuration) below covers switching it off.
+
 ## What it reads
 
 | Provider    | Limits from                          | History from                       |
