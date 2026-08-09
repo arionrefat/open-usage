@@ -13,6 +13,8 @@ interface HeaderProps {
   alertColor: string;
   fetchedAt: number;
   isRefreshing: boolean;
+  /** Newer published version, or null when the app is current or did not ask. */
+  updateVersion?: string | null;
 }
 
 const SPINNER_INTERVAL_MS = 80;
@@ -24,6 +26,7 @@ export function Header({
   alertColor,
   fetchedAt,
   isRefreshing,
+  updateVersion = null,
 }: HeaderProps) {
   const secondsSinceUpdate = useSecondsSince(fetchedAt);
   const updatedLabel = isRefreshing ? "now" : `${secondsSinceUpdate}s ago`;
@@ -45,6 +48,14 @@ export function Header({
         { text: " USAGE", color: COLORS.info, isBold: true },
       ]}
       right={[
+        // Leads the cluster so it is not the first thing dropped when the header
+        // is tight, but stays dim: it is news, not a problem to act on now.
+        ...(updateVersion
+          ? ([
+              { text: `v${updateVersion} available`, color: COLORS.textDisabled },
+              { text: " ▏ ", color: COLORS.rule },
+            ] satisfies Segment[])
+          : []),
         { text: providerCount, color: COLORS.textFaint },
         { text: " ▏ ", color: COLORS.rule },
         { text: alertText, color: alertColor },

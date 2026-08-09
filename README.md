@@ -96,7 +96,10 @@ It reuses the logins your CLIs already have: Claude and Codex limits come from t
 The one credential file it opens is OpenCode's `auth.json`, and only to show connection status - the key is masked on read and never displayed, logged, or sent anywhere.
 
 Nothing is written outside its own config directory, and there is no telemetry or analytics of any kind.
-The only outbound request it makes on its own is to `opencode.ai`, and only if you opt in by configuring the cookie below.
+It makes two outbound requests of its own accord.
+One is to `opencode.ai`, and only if you opt in by configuring the cookie below.
+The other asks `registry.npmjs.org` whether a newer version has been published, so an installed copy can tell you it is out of date - it sends nothing but the request, caches the answer for a day, gives up after 1.5 seconds, and stays silent on any failure.
+Set `OPEN_USAGE_NO_UPDATE_CHECK` to switch it off.
 
 OpenCode Go does not publish per-account limits, so its percentages are local estimates and are labelled as such in the UI.
 Configuring the cookie below replaces those estimates with exact figures, and is enough on its own: OpenCode itself need not be installed, though without it the Go card has no token history to chart.
@@ -113,6 +116,7 @@ They persist to `~/.config/open-usage/preferences.json` (or `$XDG_CONFIG_HOME/op
 | `CODEX_HOME`                 | non-default Codex home                         |
 | `OPENCODE_DB`                | non-default `opencode.db` path, for history    |
 | `OPEN_USAGE_OPENCODE_COOKIE` | exact OpenCode Go windows, no install needed   |
+| `OPEN_USAGE_NO_UPDATE_CHECK` | set to anything to stop the daily version check |
 
 ## Development
 

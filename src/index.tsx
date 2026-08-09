@@ -2,6 +2,8 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { App } from "./app";
+import { APP_VERSION } from "./config";
+import { checkForUpdate } from "./data/real/update-check";
 import { selectUsageProvider } from "./data/real-provider";
 import {
   isFlagEnabled,
@@ -37,6 +39,8 @@ const persistPreferences = (patch: Partial<typeof preferences>) => {
   }
 };
 const provider = selectUsageProvider(providerModeFromFlags(flags, "real"));
+// Stable identity: a fresh closure each render would re-run the effect behind it.
+const checkUpdate = () => checkForUpdate({ currentVersion: APP_VERSION });
 const renderer = await createCliRenderer({
   targetFps: 30,
   useMouse: true,
@@ -62,6 +66,7 @@ createRoot(renderer).render(
     provider={provider}
     startup={startup}
     isPollingEnabled={!isFlagEnabled(flags, "no-poll")}
+    checkUpdate={checkUpdate}
     onOnboardingFinish={() => persistPreferences({ hasCompletedOnboarding: true })}
     onPreferencesChange={persistPreferences}
   />,

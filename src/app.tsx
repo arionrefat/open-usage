@@ -61,6 +61,12 @@ export interface AppProps {
   startup: Omit<AppStateOptions, "connections">;
   /** false disables the startup refresh and poll timer (--no-poll); r still refreshes. */
   isPollingEnabled?: boolean;
+  /**
+   * Resolves to a newer published version, or null when there is nothing to say.
+   * Supplied only by the real entry point, so tests, previews and screenshots
+   * never reach the registry. Absent means the check does not run at all.
+   */
+  checkUpdate?: () => Promise<string | null>;
   onOnboardingFinish?: () => void;
   onPreferencesChange?: (patch: AppPreferencePatch) => void;
 }
@@ -80,6 +86,7 @@ export function App({
   provider,
   startup,
   isPollingEnabled = true,
+  checkUpdate,
   onOnboardingFinish,
   onPreferencesChange,
 }: AppProps) {
@@ -167,6 +174,22 @@ export function App({
     },
     [],
   );
+
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+  useEffect(() => {
+    if (!checkUpdate) return;
+    let isActive = true;
+    // Never awaited by render, and a rejection is swallowed: a courtesy notice
+    // must not be able to delay or break the dashboard behind it.
+    void checkUpdate()
+      .then((version) => {
+        if (isActive) setUpdateVersion(version);
+      })
+      .catch(() => {});
+    return () => {
+      isActive = false;
+    };
+  }, [checkUpdate]);
 
   const persistedPreferencesRef = useRef({
     defaultOverviewMode: state.mode,
@@ -451,6 +474,7 @@ export function App({
           alertColor={state.refreshError ? COLORS.danger : derived.alertColor}
           fetchedAt={snapshot.fetchedAt}
           isRefreshing={state.isRefreshing}
+          updateVersion={updateVersion}
         />
         <box height={1} flexShrink={0} />
         <Tabs
