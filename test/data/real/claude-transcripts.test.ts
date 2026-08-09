@@ -23,6 +23,23 @@ const ASSISTANT_LINE = JSON.stringify({
   },
 });
 
+/** Cache reads with nothing else: unobserved locally, but it would be silent if it happened. */
+const CACHE_ONLY_LINE = JSON.stringify({
+  type: "assistant",
+  timestamp: "2026-07-30T11:15:00.000Z",
+  sessionId: "abc",
+  message: {
+    id: "msg_cache_only",
+    model: "claude-fable-5",
+    usage: {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 40_000,
+    },
+  },
+});
+
 describe("parseTranscriptLine", () => {
   test("blends input, output and cache writes, holding cache reads out", () => {
     const event = parseTranscriptLine(ASSISTANT_LINE);
@@ -40,6 +57,15 @@ describe("parseTranscriptLine", () => {
     // token split needs all four kinds.
     expect(event?.cacheReadTokens).toBe(900_000);
     expect(event?.tokens).toBeLessThan(event!.cacheReadTokens);
+  });
+
+  test("keeps an event whose only measured tokens are cache reads", () => {
+    // No blended tokens at all, but 40,000 reads really happened. Dropping the
+    // row would undercount `cacheRead30d` with nothing on screen to show for it.
+    const event = parseTranscriptLine(CACHE_ONLY_LINE);
+    expect(event).not.toBeNull();
+    expect(event?.tokens).toBe(0);
+    expect(event?.cacheReadTokens).toBe(40_000);
   });
 
   test("skips non-assistant lines cheaply", () => {
@@ -101,6 +127,17 @@ describe("aggregateTranscriptLines", () => {
     ]);
     expect([...buckets.values()][0]).toBe(150);
     expect(events.length).toBe(2);
+  });
+
+  test("keeps a cache-only event out of the histogram while banking its reads", () => {
+    const { events, buckets } = aggregateTranscriptLines([ASSISTANT_LINE, CACHE_ONLY_LINE]);
+
+    // Both events survive the parse, but only the blended one moves the chart
+    // and the burn rate - a zero-token bucket would flatten neither honestly.
+    expect(events.length).toBe(2);
+    expect(buckets.size).toBe(1);
+    expect([...buckets.values()][0]).toBe(3_210);
+    expect(events.map((event) => event.cacheReadTokens)).toEqual([900_000, 40_000]);
   });
 
   test("totals the four token kinds and models for 30 days", () => {

@@ -67,7 +67,10 @@ export function parseTranscriptLine(line: string): TranscriptEvent | null {
    * `tokenSplit` below still reports all four kinds for the detail screen.
    */
   const tokens = inputTokens + outputTokens + cacheWriteTokens;
-  if (tokens <= 0) return null;
+  // An event carrying only cache reads has no blended tokens, but its reads are
+  // still measured volume behind `cacheRead30d`. Dropping it here would undercount
+  // that figure silently. Callers below hold `tokens === 0` out of the headline.
+  if (tokens <= 0 && cacheReadTokens <= 0) return null;
   const id = typeof message.id === "string" ? message.id : null;
   const model = typeof message.model === "string" ? message.model : null;
   return { epochMs, tokens, id, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
@@ -94,7 +97,9 @@ export function aggregateTranscriptLines(
       if (seen.has(event.id)) continue;
       seen.add(event.id);
     }
-    addToBucket(buckets, event.epochMs, event.tokens);
+    // Cache-only events carry no blended tokens, so they stay out of the activity
+    // histogram and the burn rate; `tokenSplit` still banks their reads.
+    if (event.tokens > 0) addToBucket(buckets, event.epochMs, event.tokens);
     events.push(event);
     latestMs = Math.max(latestMs, event.epochMs);
   }
@@ -157,7 +162,7 @@ export function readClaudeTranscripts(
         if (event.epochMs < cutoffMs) continue;
         // Same blended figure as `event.tokens`, so the per-model bars sum to the
         // headline total instead of contradicting it by the cache-read volume.
-        if (event.model !== null) {
+        if (event.model !== null && event.tokens > 0) {
           modelTokens.set(event.model, (modelTokens.get(event.model) ?? 0) + event.tokens);
         }
         tokenSplit.input += event.inputTokens;
