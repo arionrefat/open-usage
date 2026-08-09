@@ -234,7 +234,8 @@ test("usage share states cache reads beside the tokens they are held out of", as
   const rows = await renderRows(140, "overview", "detailed");
   const row = shareRow(rows, "claude code");
 
-  expect(rows.join("\n")).toContain("+ cache read");
+  // The period is named: the column stays 30d while the range beside it cycles.
+  expect(rows.join("\n")).toContain("+ 30d cache read");
   // Both figures on one row: the cache volume is stated without being folded
   // into the token count, which would make the cross-provider share meaningless.
   expect(row).toContain("1.44B");
@@ -252,7 +253,7 @@ test("a source reporting no cache breakdown reads as unknown, not as zero", asyn
 test("the cache column drops out entirely when no provider reports cache reads", async () => {
   const rows = await renderRows(140, "overview", "detailed", withoutCacheReads);
 
-  expect(rows.join("\n")).not.toContain("+ cache read");
+  expect(rows.join("\n")).not.toContain("cache read");
   // The token figures stay put; only the column of nothing-but-dashes goes.
   expect(shareRow(rows, "claude code")).toContain("1.44B");
   expect(shareRow(rows, "claude code")).not.toMatch(/1\.44B\s+-\s/);

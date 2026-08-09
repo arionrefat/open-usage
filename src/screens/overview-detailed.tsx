@@ -449,11 +449,13 @@ function UsageShare({ state, derived, snapshot, width }: OverviewDetailedProps) 
               ] satisfies Segment[])
             : []),
           // The leading + says the column adds to the token figure beside it
-          // rather than being a slice of it, which is what the share means.
+          // rather than being a slice of it, which is what the share means. The
+          // period is named because the sources only carry a 30-day cache total,
+          // so the column holds still while the range beside it cycles.
           ...(layout.cacheWidth > 0
             ? ([
                 { text: " ▏ ", color: COLORS.rule },
-                { text: "+ cache read", color: COLORS.textDisabled },
+                { text: "+ 30d cache read", color: COLORS.textDisabled },
               ] satisfies Segment[])
             : []),
         ]}

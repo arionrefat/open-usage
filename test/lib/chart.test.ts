@@ -132,7 +132,9 @@ describe("stackedBar seams", () => {
 
   test("spans exactly the requested width for every seam and part count", () => {
     for (const width of [1, 2, 3, 7, 40, 111]) {
-      for (const gap of [0, 1, 2, 3]) {
+      // Fractional, negative and non-finite seams round down to whole columns
+      // rather than overrunning the row a cell at a time.
+      for (const gap of [0, 1, 2, 3, 1.5, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
         const segments = stackedBar(
           [
             { value: 3, color: "red" },

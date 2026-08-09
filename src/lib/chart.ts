@@ -305,6 +305,9 @@ export function stackedBar(
   gap = STACK_GAP,
 ): ChartSegment[] {
   if (width <= 0) return [];
+  // Whole columns only: the loops below count cells, so a fractional seam would
+  // overrun the row and break the exactly-`width` guarantee.
+  const seamGap = Number.isFinite(gap) ? Math.max(0, Math.floor(gap)) : 0;
   const values = parts.map((part) => Math.max(0, part.value));
   const total = sum(values);
   if (total <= 0) return [{ text: char.repeat(width), color: COLORS.track }];
@@ -319,7 +322,7 @@ export function stackedBar(
     const cellCount = Math.max(0, boundary - used);
     used += cellCount;
     // The trailing segment needs no seam, and no segment gives up its last column.
-    const gapCells = index === lastActive ? 0 : Math.min(gap, Math.max(0, cellCount - 1));
+    const gapCells = index === lastActive ? 0 : Math.min(seamGap, Math.max(0, cellCount - 1));
     for (let i = 0; i < cellCount - gapCells; i++) cells.push({ char, color: part.color });
     for (let i = 0; i < gapCells; i++) cells.push({ char: " ", color: COLORS.bg });
   });
