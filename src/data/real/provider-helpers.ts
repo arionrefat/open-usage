@@ -42,8 +42,7 @@ export function localBurn(rate: number): BurnRate {
     timeToReset: NO_CAP_DATA,
     rate: formatRate(rate),
     projectedPercent: 0,
-    capsOutAt: NO_CAP_DATA,
+    capsOutAt: null,
   };
 }
 
-export { NO_CAP_DATA };

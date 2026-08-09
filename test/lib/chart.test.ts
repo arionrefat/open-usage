@@ -2,11 +2,13 @@ import { describe, expect, test } from "bun:test";
 import {
   barLabels,
   bars,
+  formatDelta,
   formatTokens,
   planChart,
   sparkline,
   stackedBar,
   type ChartRow,
+  type ChartSegment,
 } from "../../src/lib/chart";
 import { buildMeter } from "../../src/lib/meter";
 import { COLORS } from "../../src/theme";
@@ -36,6 +38,116 @@ describe("chart edge cases", () => {
     expect(stackedBar([{ value: 0, color: "red" }], 3)).toEqual([
       { text: "▀▀▀", color: COLORS.track },
     ]);
+  });
+});
+
+describe("formatDelta", () => {
+  test("states a modest change as a percentage in either direction", () => {
+    expect(formatDelta(120, 100)).toEqual({ text: "20%", direction: "up" });
+    expect(formatDelta(80, 100)).toEqual({ text: "20%", direction: "down" });
+  });
+
+  test("switches to a multiplier once growth outruns readable percentages", () => {
+    expect(formatDelta(399, 100)).toEqual({ text: "299%", direction: "up" });
+    expect(formatDelta(400, 100)).toEqual({ text: "4.0x", direction: "up" });
+    expect(formatDelta(6130, 680)).toEqual({ text: "9.0x", direction: "up" });
+    expect(formatDelta(20000, 100)).toEqual({ text: "200x", direction: "up" });
+  });
+
+  test("calls a silent prior window new rather than dividing by zero", () => {
+    expect(formatDelta(50, 0)).toEqual({ text: "new", direction: "up" });
+    expect(formatDelta(0, 0)).toBeNull();
+  });
+
+  test("returns nothing when there is no prior window to compare", () => {
+    expect(formatDelta(50, null)).toBeNull();
+  });
+
+  test("reports a rounding-level change as flat, not a bogus 0%", () => {
+    expect(formatDelta(100.2, 100)).toEqual({ text: "flat", direction: "flat" });
+  });
+});
+
+describe("stackedBar seams", () => {
+  const stackText = (segments: ChartSegment[]): string =>
+    segments.map((segment) => segment.text).join("");
+
+  test("blanks the seam between adjacent segments without changing the width", () => {
+    const segments = stackedBar(
+      [
+        { value: 1, color: "red" },
+        { value: 1, color: "green" },
+      ],
+      20,
+      "▀",
+      2,
+    );
+    expect(stackText(segments)).toBe(`${"▀".repeat(8)}  ${"▀".repeat(10)}`);
+  });
+
+  test("leaves a sole segment solid across the full width", () => {
+    const segments = stackedBar(
+      [
+        { value: 0, color: "red" },
+        { value: 5, color: "green" },
+        { value: 0, color: "blue" },
+      ],
+      12,
+      "▀",
+      2,
+    );
+    expect(stackText(segments)).toBe("▀".repeat(12));
+  });
+
+  test("adds no seam after the last segment carrying a value", () => {
+    const segments = stackedBar(
+      [
+        { value: 1, color: "red" },
+        { value: 1, color: "green" },
+        { value: 0, color: "blue" },
+      ],
+      10,
+      "▀",
+      2,
+    );
+    expect(stackText(segments)).toBe(`${"▀".repeat(3)}  ${"▀".repeat(5)}`);
+    expect(segments.at(-1)?.color).toBe("green");
+  });
+
+  test("keeps one colored column when a segment is narrower than the seam", () => {
+    const segments = stackedBar(
+      [
+        { value: 1, color: "red" },
+        { value: 11, color: "green" },
+      ],
+      12,
+      "▀",
+      2,
+    );
+    // A 1-column share cannot fund a seam, so it stays visible instead of blanking.
+    expect(stackText(segments)).toBe("▀".repeat(12));
+    expect(segments[0]?.text).toBe("▀");
+    expect(segments[0]?.color).toBe("red");
+  });
+
+  test("spans exactly the requested width for every seam and part count", () => {
+    for (const width of [1, 2, 3, 7, 40, 111]) {
+      // Fractional, negative and non-finite seams round down to whole columns
+      // rather than overrunning the row a cell at a time.
+      for (const gap of [0, 1, 2, 3, 1.5, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
+        const segments = stackedBar(
+          [
+            { value: 3, color: "red" },
+            { value: 4, color: "green" },
+            { value: 5, color: "blue" },
+          ],
+          width,
+          "▀",
+          gap,
+        );
+        expect(stackText(segments)).toHaveLength(width);
+      }
+    }
   });
 
   test("preserves an over-limit value in the meter label", () => {

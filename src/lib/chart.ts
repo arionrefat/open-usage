@@ -284,21 +284,34 @@ export function sparkline(values: number[], width: number): string {
     .join("");
 }
 
+/** Blank columns marking the seam between two adjacent stacked segments. */
+const STACK_GAP = 2;
+
 /**
  * One 100%-stacked bar: each entry's share of the row's total. `char` defaults
  * to a half-height block so stacked rows keep a gap between them - a full block
  * would fuse consecutive rows into a single slab on terminals with no extra
  * line spacing.
+ *
+ * Each seam between segments is blanked out so the colours read as separate
+ * runs. The gap is cut from the tail of the outgoing segment rather than added
+ * to the row, which keeps the bar exactly `width` columns and leaves every
+ * boundary where an ungapped bar would have put it.
  */
 export function stackedBar(
   parts: Array<{ value: number; color: string }>,
   width: number,
   char = "▀",
+  gap = STACK_GAP,
 ): ChartSegment[] {
   if (width <= 0) return [];
+  // Whole columns only: the loops below count cells, so a fractional seam would
+  // overrun the row and break the exactly-`width` guarantee.
+  const seamGap = Number.isFinite(gap) ? Math.max(0, Math.floor(gap)) : 0;
   const values = parts.map((part) => Math.max(0, part.value));
   const total = sum(values);
   if (total <= 0) return [{ text: char.repeat(width), color: COLORS.track }];
+  const lastActive = values.reduce((last, value, index) => (value > 0 ? index : last), -1);
 
   const cells: Cell[] = [];
   let used = 0;
@@ -308,13 +321,42 @@ export function stackedBar(
     const boundary = index === parts.length - 1 ? width : Math.round((cumulative / total) * width);
     const cellCount = Math.max(0, boundary - used);
     used += cellCount;
-    for (let i = 0; i < cellCount; i++) cells.push({ char, color: part.color });
+    // The trailing segment needs no seam, and no segment gives up its last column.
+    const gapCells = index === lastActive ? 0 : Math.min(seamGap, Math.max(0, cellCount - 1));
+    for (let i = 0; i < cellCount - gapCells; i++) cells.push({ char, color: part.color });
+    for (let i = 0; i < gapCells; i++) cells.push({ char: " ", color: COLORS.bg });
   });
   return mergeCells(cells);
 }
 
 export function sum(values: number[]): number {
   return values.reduce((a, b) => a + b, 0);
+}
+
+export interface TokenDelta {
+  text: string;
+  direction: "up" | "down" | "flat";
+}
+
+/** Growth at or past this ratio reads better as a multiplier than a percentage. */
+const DELTA_MULTIPLIER_RATIO = 4;
+
+/**
+ * Period-over-period change. Strong growth is stated as a multiplier, because a
+ * near-silent prior window otherwise produces percentages like 803% that take
+ * longer to read than "9.0x" and say no more. Returns null with nothing to
+ * compare against.
+ */
+export function formatDelta(current: number, previous: number | null): TokenDelta | null {
+  if (previous === null) return null;
+  if (previous <= 0) return current > 0 ? { text: "new", direction: "up" } : null;
+  const ratio = current / previous;
+  if (ratio >= DELTA_MULTIPLIER_RATIO) {
+    return { text: `${ratio.toFixed(ratio >= 100 ? 0 : 1)}x`, direction: "up" };
+  }
+  const percent = Math.round((ratio - 1) * 100);
+  if (percent === 0) return { text: "flat", direction: "flat" };
+  return { text: `${Math.abs(percent)}%`, direction: percent > 0 ? "up" : "down" };
 }
 
 /**

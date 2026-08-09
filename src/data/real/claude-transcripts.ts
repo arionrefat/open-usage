@@ -58,8 +58,19 @@ export function parseTranscriptLine(line: string): TranscriptEvent | null {
   const outputTokens = tokenCount(usage.output_tokens);
   const cacheReadTokens = tokenCount(usage.cache_read_input_tokens);
   const cacheWriteTokens = tokenCount(usage.cache_creation_input_tokens);
+  /**
+   * Cache reads are deliberately excluded, which keeps this comparable to Codex:
+   * its `TokenUsage::blended_total` - the "primary count for display as a single
+   * absolute value" - is `non_cached_input + output`, the same shape. Anthropic
+   * also bills cache reads at 10% of input and excludes them from ITPM entirely,
+   * so counting them whole would overstate this figure against both.
+   * `tokenSplit` below still reports all four kinds for the detail screen.
+   */
   const tokens = inputTokens + outputTokens + cacheWriteTokens;
-  if (tokens <= 0) return null;
+  // An event carrying only cache reads has no blended tokens, but its reads are
+  // still measured volume behind `cacheRead30d`. Dropping it here would undercount
+  // that figure silently. Callers below hold `tokens === 0` out of the headline.
+  if (tokens <= 0 && cacheReadTokens <= 0) return null;
   const id = typeof message.id === "string" ? message.id : null;
   const model = typeof message.model === "string" ? message.model : null;
   return { epochMs, tokens, id, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
@@ -86,7 +97,9 @@ export function aggregateTranscriptLines(
       if (seen.has(event.id)) continue;
       seen.add(event.id);
     }
-    addToBucket(buckets, event.epochMs, event.tokens);
+    // Cache-only events carry no blended tokens, so they stay out of the activity
+    // histogram and the burn rate; `tokenSplit` still banks their reads.
+    if (event.tokens > 0) addToBucket(buckets, event.epochMs, event.tokens);
     events.push(event);
     latestMs = Math.max(latestMs, event.epochMs);
   }
@@ -147,10 +160,10 @@ export function readClaudeTranscripts(
       mergeBuckets(combined, entry.buckets);
       for (const event of entry.events) {
         if (event.epochMs < cutoffMs) continue;
-        if (event.model !== null) {
-          const allTokens =
-            event.inputTokens + event.outputTokens + event.cacheReadTokens + event.cacheWriteTokens;
-          modelTokens.set(event.model, (modelTokens.get(event.model) ?? 0) + allTokens);
+        // Same blended figure as `event.tokens`, so the per-model bars sum to the
+        // headline total instead of contradicting it by the cache-read volume.
+        if (event.model !== null && event.tokens > 0) {
+          modelTokens.set(event.model, (modelTokens.get(event.model) ?? 0) + event.tokens);
         }
         tokenSplit.input += event.inputTokens;
         tokenSplit.output += event.outputTokens;

@@ -112,6 +112,7 @@ const SNAPSHOT: UsageSnapshot = {
           },
         ],
       },
+      cacheRead30d: 2684.07,
       details: [
         {
           title: "model share",
@@ -249,6 +250,7 @@ const SNAPSHOT: UsageSnapshot = {
           { text: " as the provider in your opencode configuration to use Go models." },
         ],
       },
+      cacheRead30d: 38.4,
       details: [
         {
           title: "model share",

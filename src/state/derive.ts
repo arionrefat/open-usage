@@ -17,6 +17,9 @@ const RANGE_NAMES: Record<RangeKey, string> = {
   all: "all time",
 };
 
+/** Half of the fixed window behind the week-over-week recency signal. */
+const WEEK_DAYS = 7;
+
 const RANGE_LABELS: Record<RangeKey, string> = {
   today: "today",
   "7d": "7d",
@@ -39,6 +42,14 @@ export interface DerivedState {
   alertColor: string;
   series: Record<ProviderId, number[]>;
   totals: Record<ProviderId, number>;
+  /**
+   * Tokens in the last 7 days against the 7 before them. Deliberately fixed
+   * rather than tied to the selected range, so the recency signal keeps one
+   * meaning as the range cycles - and so it stays available at 30d, where the
+   * sources' own 30-day history leaves no prior window to compare against.
+   * null per provider when history cannot fill both halves.
+   */
+  weekOverWeek: Record<ProviderId, { recent: number; prior: number } | null>;
   visibleTotal: number;
   axis: readonly [string, string, string];
   rangeName: string;
@@ -96,6 +107,21 @@ function seriesForRange(snapshot: UsageSnapshot, range: RangeKey, dailyStart: nu
     cx: providerSeries("cx").daily.slice(dailyStart),
     go: providerSeries("go").daily.slice(dailyStart),
   };
+}
+
+function weekOverWeek(
+  snapshot: UsageSnapshot,
+): Record<ProviderId, { recent: number; prior: number } | null> {
+  const length = snapshot.dailyDates.length;
+  if (length < WEEK_DAYS * 2) return { cl: null, cx: null, go: null };
+  const windowsFor = (id: ProviderId) => {
+    const daily = snapshot.providers[id].series.daily;
+    return {
+      recent: sum(daily.slice(length - WEEK_DAYS)),
+      prior: sum(daily.slice(length - WEEK_DAYS * 2, length - WEEK_DAYS)),
+    };
+  };
+  return { cl: windowsFor("cl"), cx: windowsFor("cx"), go: windowsFor("go") };
 }
 
 function consumptionByProvider(
@@ -201,6 +227,7 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
     alertColor: alertColor(liveIds.length, hotIds.length, disconnectedIds.length),
     series,
     totals,
+    weekOverWeek: weekOverWeek(snapshot),
     visibleTotal,
     axis: isHourly ? snapshot.hourlyAxis : axisForDates(visibleDates),
     rangeName: RANGE_NAMES[state.range],

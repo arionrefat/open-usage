@@ -1,6 +1,6 @@
 import { COLORS } from "../../theme";
 import type { DetailRow, DetailSection, ProviderMeta, ProviderUsage, UsageLimit } from "../types";
-import { HOUR_MS, formatAge, formatClock, formatCountdown, formatRate, seriesFromBuckets, tokensPerHour } from "./aggregate";
+import { HOUR_MS, formatAge, formatClock, formatCountdown, formatRate, seriesFromBuckets, toMillions, tokensPerHour } from "./aggregate";
 import type { HistoryStats } from "./claude-history";
 import type { TranscriptAggregate } from "./claude-transcripts";
 import {
@@ -10,7 +10,7 @@ import {
   type ClaudeLimitsSource,
   type ClaudeUsageWindow,
 } from "./claude-usage";
-import { NO_CAP_DATA, capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
+import { capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
 import type { ClaudeAuthInfo, ClaudeAuthSource } from "./claude-auth";
 import { SNAPSHOT_FRESH_MS, type RateWindowReading, type SnapshotFile, type WeeklyTrend } from "./statusline-snapshot";
 
@@ -28,7 +28,7 @@ export function createClaudeMeta(): ProviderMeta {
 
 interface ClaudeProjection {
   projectedPercent: number;
-  capsOutAt: string;
+  capsOutAt: string | null;
 }
 
 function projectWeekly(
@@ -36,7 +36,7 @@ function projectWeekly(
   trendRate: number | null,
   nowMs: number,
 ): ClaudeProjection {
-  if (!seven) return { projectedPercent: 0, capsOutAt: NO_CAP_DATA };
+  if (!seven) return { projectedPercent: 0, capsOutAt: null };
   const current = Math.round(seven.percent);
   if (trendRate === null || seven.resetsAtMs === null) {
     // No usable snapshot delta yet - the projection is just the current figure.
@@ -357,6 +357,7 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
         }
       : localBurn(rate),
     ...(history.available ? { sessions30d: history.sessions } : {}),
+    cacheRead30d: toMillions(transcripts.tokenSplit.cacheRead),
     ...(details.length > 0 ? { details } : {}),
     ...(isFresh
       ? {}

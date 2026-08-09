@@ -1,6 +1,6 @@
 import { COLORS } from "../../theme";
 import type { DetailSection, ProviderMeta, ProviderUsage, ScopeSummary, UsageLimit } from "../types";
-import { DAY_MS, formatCountdown, seriesFromBuckets, tokensPerHour, type HourBuckets } from "./aggregate";
+import { DAY_MS, formatCountdown, seriesFromBuckets, toMillions, tokensPerHour, type HourBuckets } from "./aggregate";
 import type { GoLimitsSource } from "./go-limits-source";
 import type { OpencodeSessionStats } from "./opencode-db";
 import type { GoSpend, SpendWindow } from "./opencode-go-spend";
@@ -281,6 +281,7 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
       },
       burn: localBurn(tokensPerHour(buckets, now)),
       ...(stats?.sessions !== undefined ? { sessions30d: stats.sessions } : {}),
+      ...(stats?.tokenSplit30d ? { cacheRead30d: toMillions(stats.tokenSplit30d.cacheRead) } : {}),
       details: detailSections(stats, server?.useBalance ?? null),
       ...(noticeText
         ? {
