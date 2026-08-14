@@ -16,3 +16,7 @@ jobs:
       - run: bun test
       - name: Smoke test render path
         run: bun run preview --screen overview --width 140
+      - run: bun run build
+      - name: Smoke test the compiled binary
+        timeout-minutes: 2
+        run: ./dist/open-usage --help

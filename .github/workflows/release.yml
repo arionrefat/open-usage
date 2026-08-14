@@ -48,6 +48,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun build --compile --minify src/index.tsx --outfile ${{ matrix.artifact }}
+      # A successful compile only proves the bundler found libopentui. `--help`
+      # exits before the renderer starts but after the static `@opentui/core`
+      # import, so it dlopens the embedded native library without needing a TTY.
+      - name: Smoke test the binary before publishing it
+        timeout-minutes: 2
+        run: ./${{ matrix.artifact }} --help
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
