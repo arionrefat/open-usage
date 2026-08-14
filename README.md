@@ -102,6 +102,9 @@ The check runs at most once a day, and [Configuration](#configuration) below cov
 | Codex       | a sandboxed `codex app-server`       | `~/.codex/sessions`                |
 | OpenCode Go | local estimate, or the dashboard cookie | `opencode.db`                   |
 
+Those three are what ships today.
+More providers are planned, so if a plan you pay for is missing, [open an issue](https://github.com/arionrefat/open-usage/issues) and say which one.
+
 `open-usage` is read-only, and there is no account to create and no key to paste.
 It reuses the logins your CLIs already have: Claude and Codex limits come from their own signed-in CLIs, so their credentials are never read.
 The one credential file it opens is OpenCode's `auth.json`, and only to show connection status - the key is masked on read and never displayed, logged, or sent anywhere.
@@ -113,7 +116,7 @@ The other asks `registry.npmjs.org` whether a newer version has been published, 
 Set `OPEN_USAGE_NO_UPDATE_CHECK` to switch it off.
 
 OpenCode Go does not publish per-account limits, so its percentages are local estimates and are labelled as such in the UI.
-Configuring the cookie below replaces those estimates with exact figures, and is enough on its own: OpenCode itself need not be installed, though without it the Go card has no token history to chart.
+[Exact OpenCode Go limits](#exact-opencode-go-limits) below covers the optional cookie that replaces them with the dashboard's own figures.
 [docs/PROVIDERS.md](docs/PROVIDERS.md) explains how each number is derived.
 
 ## Configuration
@@ -128,6 +131,40 @@ They persist to `~/.config/open-usage/preferences.json` (or `$XDG_CONFIG_HOME/op
 | `OPENCODE_DB`                | non-default `opencode.db` path, for history    |
 | `OPEN_USAGE_OPENCODE_COOKIE` | exact OpenCode Go windows, no install needed   |
 | `OPEN_USAGE_NO_UPDATE_CHECK` | set to anything to stop the daily version check |
+
+### Exact OpenCode Go limits
+
+OpenCode publishes Go plan usage to its dashboard but not to any public API, so the exact numbers sit behind your signed-in `opencode.ai` session.
+Hand `open-usage` that session cookie and the Go card swaps its local estimate for the dashboard's own rolling, weekly, and monthly figures.
+
+1. Sign in at [opencode.ai](https://opencode.ai) and open the dashboard.
+2. Open devtools and find the cookie store: **Application → Cookies** in Chrome and Edge, **Storage → Cookies** in Firefox and Safari.
+3. Select `https://opencode.ai` and copy the value of the `auth` cookie - `__Host-auth` if that is the name your browser holds.
+4. Give it to `open-usage`, either in `~/.config/open-usage/config.json` - a file you create, separate from `preferences.json`:
+
+   ```json
+   { "opencodeCookie": "auth=<value>" }
+   ```
+
+   or per-shell:
+
+   ```bash
+   export OPEN_USAGE_OPENCODE_COOKIE='auth=<value>'
+   ```
+
+The config file is re-read on every poll, so a cookie pasted there lands within a minute - press `r` to skip the wait.
+The environment variable is read once at launch, so exporting it means restarting the app.
+
+The cookie is optional, and it is also sufficient on its own.
+Without it the Go card still works, on the local estimate; with it, OpenCode need not be installed at all, though a machine with no `opencode.db` has no token history to chart and the card says so.
+
+Only the `auth` / `__Host-auth` pair is ever sent, and anything else in a pasted header is stripped before the request leaves your machine.
+The cookie carries its own expiry, and the card warns you through its final seven days and again once it lapses, so a dead session cannot quietly pass for a live one.
+If the dashboard changes shape underneath it, the card falls back to the estimate with a note rather than showing a figure it can no longer stand behind.
+
+Treat the value like a password: it is a full dashboard credential, not a usage-scoped token.
+Prefer the config file over the environment variable to keep it out of your shell history, never paste it into a bug report, and know that nobody should ever ask you for it.
+This is deliberately a manual step - `open-usage` never reads your browser's cookie jar for you.
 
 ## Development
 
