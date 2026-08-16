@@ -9,9 +9,9 @@ export type ConnectionStatus = "active" | "expired" | "none";
 
 export type ScopeKey = "session" | "weekly";
 
-export type RangeKey = "today" | "7d" | "30d" | "month" | "all";
+export type RangeKey = "today" | "7d" | "30d" | "month";
 
-export const RANGE_KEYS: readonly RangeKey[] = ["today", "7d", "30d", "month", "all"] as const;
+export const RANGE_KEYS: readonly RangeKey[] = ["today", "7d", "30d", "month"] as const;
 
 export interface ProviderMeta {
   id: ProviderId;

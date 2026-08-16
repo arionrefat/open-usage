@@ -107,14 +107,44 @@ describe("createGoLimitsSource", () => {
     expect(calls).toBe(2);
   });
 
-  test("a reading older than the staleness window remains visible with a warning", async () => {
+  test("reuses a discovered workspace id on later polls", async () => {
+    const path = configWithCookie("auth=tok");
+    const workspaceIds: Array<string | undefined> = [];
+    const source = createGoLimitsSource(path, {}, (_cookie, now, options) => {
+      workspaceIds.push(options?.workspaceId);
+      return Promise.resolve({ ...reading(now.getTime()), workspaceId: "wrk_cached" });
+    });
+    const start = new Date();
+
+    await source.poll(start);
+    await source.poll(new Date(start.getTime() + 61_000));
+
+    expect(workspaceIds).toEqual([undefined, "wrk_cached"]);
+  });
+
+  test("a reading older than the staleness window is retained but no longer displayed", async () => {
     const path = configWithCookie("auth=tok");
     const stale = Date.now() - 20 * 60_000;
     const source = createGoLimitsSource(path, {}, () => Promise.resolve(reading(stale)));
 
     await source.poll(new Date());
-    expect(source.read()?.rollingPercent).toBe(17);
+    expect(source.read()).toBeNull();
     expect(source.note()).toContain("cached limits stale");
+  });
+
+  test("removing the cookie immediately stops exposing a retained server reading", async () => {
+    const path = configWithCookie("auth=tok");
+    const start = new Date();
+    const source = createGoLimitsSource(path, {}, (_cookie, now) =>
+      Promise.resolve(reading(now.getTime())),
+    );
+
+    await source.poll(start);
+    expect(source.read(start)?.rollingPercent).toBe(17);
+
+    writeFileSync(path, "{}");
+    expect(source.read(start)).toBeNull();
+    expect(source.note(start)).toBeNull();
   });
 
   test("manual refresh bypasses the normal poll throttle but not the request floor", async () => {
@@ -149,7 +179,7 @@ describe("createGoLimitsSource", () => {
     await source.poll(new Date(start.getTime() + 61_000));
     expect(calls).toBe(2);
     expect(source.read()?.rollingPercent).toBe(17);
-    expect(source.note()).toContain("local estimate");
+    expect(source.note()).toBe("opencode unreachable");
 
     // The 5-minute backoff holds off the next attempt.
     await source.poll(new Date(start.getTime() + 122_000));

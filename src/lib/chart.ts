@@ -1,4 +1,5 @@
 import { BLOCK_RAMP, COLORS } from "../theme";
+import { truncate } from "./text";
 
 export interface ChartSegment {
   text: string;
@@ -156,7 +157,7 @@ export function barLabels(
   }
 
   const candidates = points
-    .map((value, index) => ({ value, index, text: formatValue(value) }))
+    .map((value, index) => ({ value, index, text: truncate(formatValue(value), width) }))
     .filter((candidate) => candidate.value > 0);
   if (candidates.length === 0) return [];
 

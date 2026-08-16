@@ -212,6 +212,12 @@ describe("bars", () => {
       { offset: 12, text: "50K" },
     ]);
   });
+
+  test("clips labels that are wider than the chart", () => {
+    const labels = barLabels([123_456], 3, String, "red");
+    expect(labels).toEqual([{ offset: 0, text: "12…", color: "red" }]);
+    expect(labels[0]!.offset + Bun.stringWidth(labels[0]!.text)).toBeLessThanOrEqual(3);
+  });
 });
 
 describe("planChart", () => {

@@ -170,6 +170,7 @@ describe("fetchGoServerLimits", () => {
       );
       expect(limits.monthlyPercent).toBe(99);
       expect(limits.monthlyResetAtMs).toBe(now.getTime() + 90_000_000);
+      expect(limits.workspaceId).toBe("wrk_01K6AR1ZET89H8NB691FQ2C2VB");
     } finally {
       fetchSpy.mockRestore();
     }

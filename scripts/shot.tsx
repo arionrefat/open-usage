@@ -10,7 +10,12 @@ import { testRender } from "@opentui/react/test-utils";
 import type { RGBA } from "@opentui/core";
 import { App } from "../src/app";
 import { selectUsageProvider } from "../src/data/real-provider";
-import { providerModeFromFlags, readFlags, startupFromFlags } from "../src/lib/args";
+import {
+  positiveIntegerFlag,
+  providerModeFromFlags,
+  readFlags,
+  startupFromFlags,
+} from "../src/lib/args";
 import { COLORS } from "../src/theme";
 
 const DEFAULT_WIDTH = 140;
@@ -42,7 +47,15 @@ function toHex(color: RGBA): string {
 }
 
 async function capture(label: string, spec: string): Promise<Shot> {
-  const flags = readFlags(spec.split(/\s+/).filter(Boolean));
+  const argv = spec.split(/\s+/).filter(Boolean);
+  const flags = readFlags(argv);
+  const width = positiveIntegerFlag(flags, "width", DEFAULT_WIDTH);
+  const height = positiveIntegerFlag(flags, "height", DEFAULT_HEIGHT);
+  const hasFlag = (name: string) => argv.some((arg) => arg === `--${name}` || arg.startsWith(`--${name}=`));
+  if (width === null || height === null || (hasFlag("width") && !flags.has("width")) || (hasFlag("height") && !flags.has("height"))) {
+    console.error('usage: bun run shot <out.html> "label:--width <positive-integer> --height <positive-integer>" ...');
+    process.exit(1);
+  }
 
   // Shots stay deterministic on the mock; pass --real to read local sources.
   const setup = await testRender(
@@ -51,8 +64,8 @@ async function capture(label: string, spec: string): Promise<Shot> {
       startup={startupFromFlags(flags)}
     />,
     {
-      width: Number(flags.get("width") ?? DEFAULT_WIDTH),
-      height: Number(flags.get("height") ?? DEFAULT_HEIGHT),
+      width,
+      height,
     },
   );
 
@@ -117,7 +130,10 @@ console.error = (...args: unknown[]) => {
 };
 
 const [, , outPath, ...specs] = process.argv;
-if (!outPath) throw new Error("usage: bun run shot <out.html> \"label:--flags\" ...");
+if (!outPath) {
+  console.error('usage: bun run shot <out.html> "label:--flags" ...');
+  process.exit(1);
+}
 
 const shots: Shot[] = [];
 for (const spec of specs) {

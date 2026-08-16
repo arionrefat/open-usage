@@ -42,7 +42,7 @@ function projectWeekly(
     // No usable snapshot delta yet - the projection is just the current figure.
     return {
       projectedPercent: current,
-      capsOutAt: current > 100 ? "already capped" : "not before reset",
+      capsOutAt: current >= 100 ? "already capped" : "not before reset",
     };
   }
   const hoursToReset = Math.max(0, (seven.resetsAtMs - nowMs) / HOUR_MS);
@@ -56,9 +56,10 @@ function staleSnapshotNote(
   snapshotFile: SnapshotFile | null,
   hasStatusline: boolean,
   live: ClaudeCliUsage | null,
+  useLive: boolean,
   nowMs: number,
 ): string {
-  if (live && nowMs - live.fetchedAtMs > CLAUDE_LIMITS_STALE_MS) {
+  if (live && useLive && nowMs - live.fetchedAtMs > CLAUDE_LIMITS_STALE_MS) {
     return `cached live limits stale (${formatAge(nowMs - live.fetchedAtMs)} old) - press r for live limits`;
   }
   if (snapshotFile) {
@@ -148,13 +149,16 @@ function claudeLimits(
   fableIsFresh: boolean,
   snapshotFile: SnapshotFile | null,
   live: ClaudeCliUsage | null,
+  useLive: boolean,
   sourceNote: string | null,
   projection: ClaudeProjection,
   rateLabel: string,
   nowMs: number,
   hasStatusline: boolean,
 ): UsageLimit[] {
-  const staleNote = sourceNote ?? staleSnapshotNote(snapshotFile, hasStatusline, live, nowMs);
+  const staleNote = sourceNote ?? staleSnapshotNote(snapshotFile, hasStatusline, live, useLive, nowMs);
+  const fableStaleNote =
+    sourceNote ?? staleSnapshotNote(snapshotFile, hasStatusline, live, true, nowMs);
   const session = sessionLimit(five, isFresh, staleNote, nowMs);
   const weekly = weeklyLimit(seven, projection, rateLabel, staleNote, nowMs);
   if (!isFresh) weekly.footnote = staleNote;
@@ -165,7 +169,7 @@ function claudeLimits(
       label: "weekly · Fable",
       percent: Math.round(fable.percent),
       reset: fable.resetLabel ?? "reset unavailable",
-      ...(!fableIsFresh ? { footnote: staleNote } : {}),
+      ...(!fableIsFresh ? { footnote: fableStaleNote } : {}),
     });
   }
   return limits;
@@ -280,7 +284,11 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
   const snapshotIsFresh = snapshotFile !== null && snapshotFile.ageMs < SNAPSHOT_FRESH_MS;
   const live = limitsSource.read();
   const liveIsFresh = live !== null && nowMs - live.fetchedAtMs <= CLAUDE_LIMITS_STALE_MS;
-  const useLive = liveIsFresh || (!snapshotIsFresh && live !== null);
+  const useLive =
+    liveIsFresh ||
+    (!snapshotIsFresh &&
+      live !== null &&
+      (snapshotFile === null || live.fetchedAtMs >= snapshotFile.writtenAtMs));
   const five: ClaudeWindow | null =
     live && useLive
       ? cliWindow(live.session, snapshotIsFresh ? snapshotFile!.reading.fiveHour : null)
@@ -324,6 +332,7 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
       fableIsFresh,
       snapshotFile,
       live,
+      useLive,
       limitsSource.note(),
       projection,
       rateLabel,
@@ -369,7 +378,7 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
               {
                 text:
                   limitsSource.note() ??
-                  (live
+                  (live && useLive
                     ? `cached live limits stale (${formatAge(nowMs - live.fetchedAtMs)} old) - press r to refresh`
                     : claudeNoticeText(snapshotFile, hasStatusline)),
               },

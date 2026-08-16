@@ -99,6 +99,50 @@ describe("App interactions", () => {
     }
   });
 
+  test("reconciles a provider signed in after startup when refresh succeeds", async () => {
+    let isSignedIn = false;
+    const provider: UsageProvider = {
+      ...mockUsageProvider,
+      initialConnections: () => {
+        const connections = mockUsageProvider.initialConnections();
+        connections.cx = {
+          ...connections.cx,
+          status: isSignedIn ? "active" : "none",
+          credential: isSignedIn ? "oauth · codex cli" : "",
+          note: isSignedIn ? "live account data" : "codex found; sign in with its CLI",
+        };
+        return connections;
+      },
+      refresh: () => {
+        isSignedIn = true;
+        return Promise.resolve(mockUsageProvider.readSnapshot());
+      },
+    };
+    const setup = await testRender(
+      <App
+        provider={provider}
+        startup={{ screen: "app", view: "settings", mode: "detailed" }}
+        isPollingEnabled={false}
+      />,
+      { width: 100, height: 40 },
+    );
+
+    try {
+      await setup.flush();
+      expect(setup.captureCharFrame()).toContain("codex found; sign in with its CLI");
+      await act(async () => {
+        setup.renderer.stdin.emit("data", Buffer.from("r"));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      await setup.flush();
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("oauth · codex cli");
+      expect(frame).toContain("live account data");
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
   test("persists the final settings after batched shortcuts", async () => {
     const patches: Array<Record<string, unknown>> = [];
     const setup = await testRender(
@@ -257,6 +301,33 @@ describe("App interactions", () => {
     }
   });
 
+  test("simplified summary ranks every rendered provider despite a filter", async () => {
+    const setup = await testRender(
+      <App
+        provider={pendingProvider()}
+        startup={{ screen: "app", view: "overview", mode: "simple" }}
+        isPollingEnabled={false}
+      />,
+      { width: 110, height: 40 },
+    );
+
+    try {
+      for (const input of ["/", "g", "o", "\r"]) {
+        await act(async () => {
+          setup.renderer.stdin.emit("data", Buffer.from(input));
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        });
+        await setup.flush();
+      }
+      await setup.flush();
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("claude code 88% closest to cap");
+      expect(frame).toContain("opencode go");
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
   test("any key closes the help overlay", async () => {
     const setup = await testRender(
       <App
@@ -270,7 +341,10 @@ describe("App interactions", () => {
       act(() => setup.renderer.stdin.emit("data", Buffer.from("?")));
       await new Promise((resolve) => setTimeout(resolve, 20));
       await setup.flush();
-      expect(setup.captureCharFrame()).toContain("keymap");
+      const help = setup.captureCharFrame();
+      expect(help).toContain("keymap");
+      expect(help).toContain("today / 7d / 30d / cal month");
+      expect(help).not.toContain("month / all");
 
       act(() => setup.renderer.stdin.emit("data", Buffer.from("j")));
       await new Promise((resolve) => setTimeout(resolve, 20));

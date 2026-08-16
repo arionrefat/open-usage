@@ -13,8 +13,7 @@ const RANGE_NAMES: Record<RangeKey, string> = {
   today: "today",
   "7d": "last 7 days",
   "30d": "last 30 days",
-  month: "billing month",
-  all: "all time",
+  month: "calendar month",
 };
 
 /** Half of the fixed window behind the week-over-week recency signal. */
@@ -24,8 +23,7 @@ const RANGE_LABELS: Record<RangeKey, string> = {
   today: "today",
   "7d": "7d",
   "30d": "30d",
-  month: "month",
-  all: "all",
+  month: "cal month",
 };
 
 export interface DerivedState {
@@ -59,6 +57,8 @@ export interface DerivedState {
   scopeTotal: number;
   /** Live providers with a cap in this scope, most-consumed first. */
   ranked: ProviderId[];
+  /** Unfiltered live-provider ranking used by simplified mode, which renders every provider. */
+  unfilteredRanked: ProviderId[];
   worstId: ProviderId | null;
   bestId: ProviderId | null;
   windowNote: string;
@@ -147,7 +147,8 @@ function rankConsumption(
     .sort((first, second) => (percent(second) ?? 0) - (percent(first) ?? 0));
 }
 
-function alertText(liveCount: number, issueCount: number): string {
+function alertText(liveCount: number, issueCount: number, disconnectedCount: number): string {
+  if (disconnectedCount > 0) return "▲ warning";
   if (liveCount === 0) return "○ nothing tracked";
   if (issueCount === 0) return "✓ all clear";
   return "▲ warning";
@@ -158,8 +159,8 @@ function alertColor(
   hotCount: number,
   disconnectedCount: number,
 ): string {
+  if (disconnectedCount > 0 || hotCount > 0) return COLORS.danger;
   if (liveCount === 0) return COLORS.textFaint;
-  if (hotCount > 0 || disconnectedCount > 0) return COLORS.danger;
   return COLORS.ok;
 }
 
@@ -211,6 +212,7 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
   const scopeTotal = visibleIds.reduce((acc, id) => acc + scopeConsumption[id], 0);
 
   const ranked = rankConsumption(snapshot, state.scope, visibleLiveIds);
+  const unfilteredRanked = rankConsumption(snapshot, state.scope, liveIds);
 
   const hotIds = liveIds.filter(
     (id) => (snapshot.providers[id].scopes[state.scope].percent ?? 0) >= state.warnThreshold,
@@ -223,7 +225,7 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
     enabledCount,
     disconnectedIds,
     hotIds,
-    alertText: alertText(liveIds.length, alertCount),
+    alertText: alertText(liveIds.length, alertCount, disconnectedIds.length),
     alertColor: alertColor(liveIds.length, hotIds.length, disconnectedIds.length),
     series,
     totals,
@@ -235,6 +237,7 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
     scopeConsumption,
     scopeTotal,
     ranked,
+    unfilteredRanked,
     worstId: ranked[0] ?? null,
     bestId: ranked.at(-1) ?? null,
     windowNote: windowNote(state, snapshot, visibleIds, liveIds, disconnectedIds),

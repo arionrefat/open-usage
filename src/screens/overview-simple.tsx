@@ -20,6 +20,10 @@ const LEGEND_BAR_MAX_WIDTH = 46;
 const PLAN_CHART_MIN_CONTENT_WIDTH = 88;
 const PLAN_CHART_GAP = 4;
 
+export function legendBarWidth(legendWidth: number): number {
+  return Math.max(0, Math.min(LEGEND_BAR_MAX_WIDTH, legendWidth - PERCENT_COLUMN));
+}
+
 const PLAN_LABELS: Record<ProviderId, string> = {
   cl: "claude",
   cx: "codex",
@@ -267,10 +271,10 @@ export function OverviewSimple({
 
   const showChart = width >= PLAN_CHART_MIN_CONTENT_WIDTH;
   const legendWidth = showChart ? width - chart.width - PLAN_CHART_GAP : width;
-  const barWidth = Math.max(10, Math.min(LEGEND_BAR_MAX_WIDTH, legendWidth - PERCENT_COLUMN));
+  const barWidth = legendBarWidth(legendWidth);
 
-  const worstId = derived.worstId;
-  const bestId = derived.bestId;
+  const worstId = derived.unfilteredRanked[0] ?? null;
+  const bestId = derived.unfilteredRanked.at(-1) ?? null;
   const worstPercent = worstId ? (snapshot.providers[worstId].scopes[state.scope].percent ?? 0) : 0;
   const bestPercent = bestId ? (snapshot.providers[bestId].scopes[state.scope].percent ?? 0) : 0;
 

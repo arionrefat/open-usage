@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import pkg from "../package.json";
 
 export const APP_NAME = "open-usage";
@@ -8,7 +8,7 @@ export const APP_VERSION = pkg.version;
 /** Every file the app owns lives here. Honors $XDG_CONFIG_HOME. */
 export function configDir(): string {
   const xdg = process.env.XDG_CONFIG_HOME?.trim();
-  const base = xdg ? xdg : join(homedir(), ".config");
+  const base = xdg && isAbsolute(xdg) ? xdg : join(homedir(), ".config");
   return join(base, APP_NAME);
 }
 

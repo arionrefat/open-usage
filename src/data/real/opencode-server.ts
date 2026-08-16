@@ -264,6 +264,8 @@ export interface GoServerLimits {
   monthlyResetAtMs: number | null;
   fetchedAtMs: number;
   useBalance?: boolean | null;
+  /** Reused by the polling source so later reads can skip workspace discovery. */
+  workspaceId?: string;
 }
 
 /**
@@ -326,5 +328,6 @@ export async function fetchGoServerLimits(
     monthlyResetAtMs,
     fetchedAtMs: nowMs,
     useBalance: subscription.useBalance ?? null,
+    workspaceId,
   };
 }

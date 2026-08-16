@@ -61,7 +61,7 @@ export function readPreferences(path: string): AppPreferences {
   }
 }
 
-function writePreferencesFile(path: string, preferences: AppPreferences): void {
+function writePreferencesFile(path: string, preferences: unknown): void {
   const temporary = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
   try {
     writeFileSync(temporary, `${JSON.stringify(preferences, null, 2)}\n`, {
@@ -86,8 +86,15 @@ export function updatePreferences(
 ): AppPreferences {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   return withFileLock(path, () => {
+    let existing: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+      if (isRecord(parsed)) existing = parsed;
+    } catch {
+      // Missing or malformed preferences are repaired from defaults below.
+    }
     const preferences = { ...readPreferences(path), ...patch };
-    writePreferencesFile(path, preferences);
+    writePreferencesFile(path, { ...existing, ...preferences });
     return preferences;
   });
 }

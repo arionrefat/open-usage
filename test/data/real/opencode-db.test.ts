@@ -3,7 +3,11 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readOpencodeUsage, usageFromRows } from "../../../src/data/real/opencode-db";
+import {
+  aggregateRowsFromDatabase,
+  readOpencodeUsage,
+  usageFromRows,
+} from "../../../src/data/real/opencode-db";
 
 describe("usageFromRows", () => {
   test("groups hour rows by provider", () => {
@@ -63,6 +67,35 @@ describe("usageFromRows", () => {
 });
 
 describe("readOpencodeUsage", () => {
+  test("executes every aggregate query inside one read transaction", () => {
+    let inTransaction = false;
+    let queries = 0;
+    const fake = {
+      transaction<T>(callback: () => T) {
+        return () => {
+          inTransaction = true;
+          try {
+            return callback();
+          } finally {
+            inTransaction = false;
+          }
+        };
+      },
+      query() {
+        return {
+          all() {
+            expect(inTransaction).toBe(true);
+            queries += 1;
+            return [];
+          },
+        };
+      },
+    };
+
+    expect(aggregateRowsFromDatabase(fake as unknown as Database, 0)).toHaveLength(5);
+    expect(queries).toBe(5);
+  });
+
   test("reads model tokens, token split, and cost details from message rows", () => {
     const path = join(mkdtempSync(join(tmpdir(), "opencode-db-")), "opencode.db");
     const db = new Database(path);

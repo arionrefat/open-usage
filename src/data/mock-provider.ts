@@ -1,4 +1,5 @@
 import { COLORS } from "../theme";
+import { dailyDateKeys } from "./real/aggregate";
 import type {
   ProviderConnection,
   ProviderId,
@@ -55,15 +56,13 @@ const HOURLY: Record<ProviderId, number[]> = {
   go: [0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 4, 3, 1, 2, 5, 6, 4, 3, 2, 0, 0, 0, 0, 0],
 };
 
-const DAILY_DATES = Array.from({ length: 30 }, (_, index) => {
-  const date = new Date(Date.UTC(2026, 5, 28 + index));
-  return date.toISOString().slice(0, 10);
-});
+const MOCK_FETCHED_AT = Date.now();
+const DAILY_DATES = dailyDateKeys(new Date(MOCK_FETCHED_AT));
 
 const SNAPSHOT: UsageSnapshot = {
   dailyDates: DAILY_DATES,
   hourlyAxis: ["00:00", "12:00", "23:00"],
-  fetchedAt: Date.now(),
+  fetchedAt: MOCK_FETCHED_AT,
   windowNote: "opencode go monthly cap 91% · 6d 5h left",
   providers: {
     cl: {
@@ -281,16 +280,28 @@ const SNAPSHOT: UsageSnapshot = {
 
 const REFRESH_LATENCY_MS = 1600;
 
+function snapshotAt(fetchedAt: number): UsageSnapshot {
+  return {
+    ...SNAPSHOT,
+    dailyDates: dailyDateKeys(new Date(fetchedAt)),
+    fetchedAt,
+  };
+}
+
 /** Serves the design's sample figures; swap for a polling adapter to go live. */
 export const mockUsageProvider: UsageProvider = {
   scopeTitles: { session: "current session", weekly: "weekly limit" },
   listMeta: () => META,
   initialConnections: () => structuredClone(INITIAL_CONNECTIONS),
-  readSnapshot: () => SNAPSHOT,
+  readSnapshot: () => snapshotAt(Date.now()),
   refresh: ({ signal }) =>
     new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason ?? new DOMException("Refresh aborted", "AbortError"));
+        return;
+      }
       const timer = setTimeout(
-        () => resolve({ ...SNAPSHOT, fetchedAt: Date.now() }),
+        () => resolve(snapshotAt(Date.now())),
         REFRESH_LATENCY_MS,
       );
       signal?.addEventListener(

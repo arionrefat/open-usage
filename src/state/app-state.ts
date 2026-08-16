@@ -76,13 +76,14 @@ function picksFromConnections(
 }
 
 export function createInitialState(options: AppStateOptions): AppState {
+  const selection = PROVIDER_IDS.findIndex((id) => options.connections[id].isEnabled);
   return {
     screen: options.screen ?? "app",
     view: options.view ?? "overview",
     mode: options.mode ?? "detailed",
     scope: "weekly",
     range: "30d",
-    selection: 0,
+    selection: selection < 0 ? 0 : selection,
     settingsCursor: 0,
     isRefreshing: false,
     refreshError: null,
@@ -122,7 +123,7 @@ export type AppAction =
   | { type: "filter-cancel" }
   | { type: "paste-input"; text: string }
   | { type: "refresh-start" }
-  | { type: "refresh-success" }
+  | { type: "refresh-success"; connections: Record<ProviderId, ProviderConnection> }
   | { type: "refresh-failure"; message: string }
   | { type: "open-onboarding" }
   | { type: "onboarding-move"; delta: number }
@@ -174,11 +175,42 @@ function withConnection(
   state: AppState,
   id: ProviderId,
   patch: Partial<ProviderConnection>,
+  meta: Record<ProviderId, ProviderMeta>,
 ): AppState {
-  return {
-    ...state,
-    connections: { ...state.connections, [id]: { ...state.connections[id], ...patch } },
-  };
+  return normalizeSelection(
+    {
+      ...state,
+      connections: { ...state.connections, [id]: { ...state.connections[id], ...patch } },
+    },
+    meta,
+  );
+}
+
+function normalizeSelection(
+  state: AppState,
+  meta: Record<ProviderId, ProviderMeta>,
+): AppState {
+  const ids = selectableProviders(state, meta);
+  const currentId = PROVIDER_IDS[state.selection];
+  if (!ids[0] || (currentId && ids.includes(currentId))) return state;
+  return { ...state, selection: PROVIDER_IDS.indexOf(ids[0]) };
+}
+
+function reconcileConnections(
+  state: AppState,
+  refreshed: Record<ProviderId, ProviderConnection>,
+  meta: Record<ProviderId, ProviderMeta>,
+): AppState {
+  const connections = Object.fromEntries(
+    PROVIDER_IDS.map((id) => [
+      id,
+      { ...refreshed[id], isEnabled: state.connections[id].isEnabled },
+    ]),
+  ) as Record<ProviderId, ProviderConnection>;
+  return normalizeSelection(
+    { ...state, isRefreshing: false, refreshError: null, connections },
+    meta,
+  );
 }
 
 function moveSelection(
@@ -214,7 +246,10 @@ function pasteInput(state: AppState, text: string): AppState {
   return state;
 }
 
-function beginOnboardingAuth(state: AppState): AppState {
+function beginOnboardingAuth(
+  state: AppState,
+  meta: Record<ProviderId, ProviderMeta>,
+): AppState {
   const queue = pickedProviders(state.onboarding.picks);
   if (queue.length === 0) return state;
 
@@ -223,14 +258,17 @@ function beginOnboardingAuth(state: AppState): AppState {
     cx: { ...state.connections.cx, isEnabled: state.onboarding.picks.cx },
     go: { ...state.connections.go, isEnabled: state.onboarding.picks.go },
   };
-  return {
-    ...state,
-    connections,
-    onboarding: {
-      ...state.onboarding,
-      step: 1,
+  return normalizeSelection(
+    {
+      ...state,
+      connections,
+      onboarding: {
+        ...state.onboarding,
+        step: 1,
+      },
     },
-  };
+    meta,
+  );
 }
 
 export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
@@ -264,9 +302,10 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
         return { ...state, selection: index, settingsCursor: index };
       }
       case "open-selected": {
-        const id = PROVIDER_IDS[state.selection];
-        if (!id || !selectableProviders(state, meta).includes(id)) return state;
-        return { ...state, view: PROVIDER_VIEWS[id] };
+        const normalized = normalizeSelection(state, meta);
+        const id = PROVIDER_IDS[normalized.selection];
+        if (!id || !selectableProviders(normalized, meta).includes(id)) return normalized;
+        return { ...normalized, view: PROVIDER_VIEWS[id] };
       }
       // Help and provider filtering.
       case "toggle-help":
@@ -290,7 +329,7 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
       case "refresh-start":
         return { ...state, isRefreshing: true, refreshError: null };
       case "refresh-success":
-        return { ...state, isRefreshing: false, refreshError: null };
+        return reconcileConnections(state, action.connections, meta);
       case "refresh-failure":
         return { ...state, isRefreshing: false, refreshError: action.message };
       // Onboarding wizard.
@@ -337,7 +376,7 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
       case "onboarding-select-all":
         return { ...state, onboarding: { ...state.onboarding, picks: { cl: true, cx: true, go: true } } };
       case "onboarding-begin-auth": {
-        return beginOnboardingAuth(state);
+        return beginOnboardingAuth(state, meta);
       }
       case "onboarding-finish":
         return { ...state, screen: "app", view: "overview" };
@@ -351,7 +390,12 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
         };
       case "settings-toggle-enabled": {
         const id = action.id ?? PROVIDER_IDS[state.settingsCursor]!;
-        return withConnection(state, id, { isEnabled: !state.connections[id].isEnabled });
+        return withConnection(
+          state,
+          id,
+          { isEnabled: !state.connections[id].isEnabled },
+          meta,
+        );
       }
       case "cycle-poll-interval":
         return {

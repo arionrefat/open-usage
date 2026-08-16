@@ -86,6 +86,7 @@ The order matters.
 
 `optionalDependencies` are deliberately **not** committed to `package.json`.
 They are injected during the publish step by `scripts/build-npm-packages.ts`, because a committed pin would reference unpublished versions and break `bun install --frozen-lockfile` for contributors.
+A `prepublishOnly` guard refuses to publish the root package until that step has pinned the complete platform set, preventing a clean checkout from shipping the launcher alone.
 
 ## Verifying a release
 

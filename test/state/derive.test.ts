@@ -30,6 +30,17 @@ describe("derived state", () => {
     expect(session.alertColor).toBe(COLORS.danger);
   });
 
+  test("shows the disconnected warning when every enabled provider is offline", () => {
+    const state = initialState();
+    for (const connection of Object.values(state.connections)) connection.status = "none";
+
+    const derived = deriveState(state, mockUsageProvider.readSnapshot());
+    expect(derived.liveIds).toEqual([]);
+    expect(derived.disconnectedIds).toEqual(["cl", "cx", "go"]);
+    expect(derived.alertText).toBe("▲ warning");
+    expect(derived.alertColor).toBe(COLORS.danger);
+  });
+
   test("splits the last 14 days into two comparable 7-day halves", () => {
     const snapshot = mockUsageProvider.readSnapshot();
     const daily = snapshot.providers.cl.series.daily;
@@ -46,7 +57,7 @@ describe("derived state", () => {
       deriveState({ ...initialState(), range }, snapshot).weekOverWeek.cl;
 
     expect(at("7d")).toEqual(at("30d"));
-    expect(at("today")).toEqual(at("all"));
+    expect(at("today")).toEqual(at("7d"));
     expect(at("month")).toEqual(at("30d"));
   });
 
@@ -61,12 +72,12 @@ describe("derived state", () => {
     });
   });
 
-  test("names the all range 'all time'", () => {
+  test("labels the latest calendar month honestly and compactly", () => {
     const snapshot = mockUsageProvider.readSnapshot();
+    const derived = deriveState({ ...initialState(), range: "month" }, snapshot);
 
-    expect(deriveState({ ...initialState(), range: "all" }, snapshot).rangeName).toBe(
-      "all time",
-    );
+    expect(derived.rangeName).toBe("calendar month");
+    expect(derived.rangeLabel).toBe("cal month");
   });
 
   test.each(FILTER_CASES)("filter query %s selects the matching provider", (filterQuery, visibleIds) => {
@@ -75,6 +86,14 @@ describe("derived state", () => {
     expect(deriveState(state, mockUsageProvider.readSnapshot()).visibleIds).toEqual(
       visibleIds,
     );
+  });
+
+  test("keeps an unfiltered ranking for simplified mode's all-provider legend", () => {
+    const state = { ...initialState(), mode: "simple" as const, filterQuery: "go" };
+    const derived = deriveState(state, mockUsageProvider.readSnapshot());
+
+    expect(derived.ranked).toEqual(["go"]);
+    expect(derived.unfilteredRanked).toEqual(["cl", "go"]);
   });
 
   test("lists disconnected providers with their status labels", () => {

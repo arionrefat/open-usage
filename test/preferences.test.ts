@@ -68,4 +68,20 @@ describe("preferences", () => {
       pollIntervalMinutes: 4,
     });
   });
+
+  test("preserves fields written by newer versions while updating known preferences", () => {
+    const path = preferencesPath();
+    writeFileSync(path, JSON.stringify({
+      ...DEFAULT_PREFERENCES,
+      futureSetting: { mode: "turbo" },
+    }));
+
+    updatePreferences(path, { warnThreshold: 90 });
+
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
+      ...DEFAULT_PREFERENCES,
+      warnThreshold: 90,
+      futureSetting: { mode: "turbo" },
+    });
+  });
 });

@@ -324,7 +324,7 @@ function buildSnapshot(
   const fetchedAt = latestSourceTimestamp(nowMs, [
     claudeLimits.read()?.fetchedAtMs ?? 0,
     codexLimits.read()?.fetchedAtMs ?? 0,
-    goLimits.read()?.fetchedAtMs ?? 0,
+    goLimits.read(now)?.fetchedAtMs ?? 0,
     opencode?.latestMs ?? 0,
     transcripts.latestMs,
     history.latestMs,

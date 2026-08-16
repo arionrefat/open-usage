@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { stubCodexLimitsSource } from "../../src/data/real/codex-limits";
 import { dormantGoLimitsSource } from "../../src/data/real/go-limits-source";
 import { dormantClaudeLimitsSource } from "../../src/data/real/claude-usage";
+import { dormantClaudeAuthSource } from "../../src/data/real/claude-auth";
 import {
   createRealUsageProvider,
   hasOpencodeCookie,
@@ -16,6 +17,7 @@ const COOKIE = "auth=Fe26.2**abc*def*ghi*jkl*mno*1900000000000*pqr*stu";
 const NO_ENV: Record<string, string | undefined> = {};
 
 const OFFLINE = {
+  claudeAuth: dormantClaudeAuthSource,
   claudeLimits: dormantClaudeLimitsSource,
   codexLimits: stubCodexLimitsSource,
   goLimits: dormantGoLimitsSource,

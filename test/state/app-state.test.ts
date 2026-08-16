@@ -13,6 +13,13 @@ function initialState() {
 }
 
 describe("app reducer", () => {
+  test("initial selection starts on the first enabled provider", () => {
+    const connections = mockUsageProvider.initialConnections();
+    connections.cl.isEnabled = false;
+
+    expect(createInitialState({ connections }).selection).toBe(1);
+  });
+
   test("applies onboarding provider choices", () => {
     let state = reducer(initialState(), { type: "onboarding-pick", index: 0 });
     state = reducer(state, { type: "onboarding-begin-auth" });
@@ -62,6 +69,18 @@ describe("app reducer", () => {
     expect(state.warnThreshold).toBe(80);
   });
 
+  test("cycles only distinct activity ranges", () => {
+    let state = initialState();
+    const ranges: AppState["range"][] = [];
+
+    for (let index = 0; index < 4; index += 1) {
+      state = reducer(state, { type: "cycle-range" });
+      ranges.push(state.range);
+    }
+
+    expect(ranges).toEqual(["month", "today", "7d", "30d"]);
+  });
+
   test("selects exact poll interval and warning threshold options", () => {
     let state = initialState();
     state = reducer(state, { type: "set-poll-interval", minutes: 4 });
@@ -85,5 +104,43 @@ describe("app reducer", () => {
     state = reducer(state, { type: "open-selected" });
 
     expect(state.view).toBe("codex");
+  });
+
+  test("disabling the selected provider moves selection to the first visible card", () => {
+    let state = reducer(initialState(), { type: "select-provider", id: "cx" });
+    state = reducer(state, { type: "settings-toggle-enabled", id: "cx" });
+
+    expect(state.selection).toBe(0);
+    expect(reducer(state, { type: "open-selected" }).view).toBe("claude");
+  });
+
+  test("onboarding choices normalize a selection that becomes hidden", () => {
+    let state = reducer(initialState(), { type: "select-provider", id: "cl" });
+    state = reducer(state, { type: "open-onboarding" });
+    state = reducer(state, { type: "onboarding-pick", index: 0 });
+    state = reducer(state, { type: "onboarding-begin-auth" });
+
+    expect(state.selection).toBe(1);
+  });
+
+  test("refresh reconciles credential state without overriding visibility settings", () => {
+    let state = reducer(initialState(), { type: "settings-toggle-enabled", id: "go" });
+    const connections = mockUsageProvider.initialConnections();
+    connections.cx = {
+      ...connections.cx,
+      status: "active",
+      credential: "oauth · codex cli",
+      note: "live account data",
+    };
+    connections.go.isEnabled = true;
+
+    state = reducer(state, { type: "refresh-success", connections });
+
+    expect(state.connections.cx).toMatchObject({
+      status: "active",
+      credential: "oauth · codex cli",
+      note: "live account data",
+    });
+    expect(state.connections.go.isEnabled).toBe(false);
   });
 });

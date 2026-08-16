@@ -8,6 +8,7 @@ import { DAY_MS, HOUR_MS } from "../../src/data/real/aggregate";
 import { createCodexLimitsSource, stubCodexLimitsSource } from "../../src/data/real/codex-limits";
 import { createGoLimitsSource, dormantGoLimitsSource } from "../../src/data/real/go-limits-source";
 import { createClaudeLimitsSource, dormantClaudeLimitsSource } from "../../src/data/real/claude-usage";
+import { dormantClaudeAuthSource } from "../../src/data/real/claude-auth";
 import { PROVIDER_IDS } from "../../src/data/types";
 import {
   createRealUsageProvider,
@@ -35,6 +36,7 @@ const NO_ENV: Record<string, string | undefined> = {};
 
 /** Keeps the suite off the network and away from a real codex process. */
 const OFFLINE = {
+  claudeAuth: dormantClaudeAuthSource,
   claudeLimits: dormantClaudeLimitsSource,
   codexLimits: stubCodexLimitsSource,
   goLimits: dormantGoLimitsSource,
@@ -111,6 +113,7 @@ describe("createRealUsageProvider with no sources", () => {
     const calls = { cl: 0, cx: 0, go: 0 };
     const provider = createRealUsageProvider({
       paths: MISSING_PATHS,
+      claudeAuth: dormantClaudeAuthSource,
       claudeLimits: {
         read: () => null,
         note: () => null,
@@ -149,7 +152,9 @@ describe("persisted limit cache", () => {
   test("hydrates previous provider values before the first refresh", () => {
     const dir = mkdtempSync(join(tmpdir(), "open-usage-cache-"));
     const cachePath = join(dir, "usage-cache.json");
+    const configPath = join(dir, "config.json");
     const fetchedAtMs = Date.now() - 20 * 60_000;
+    writeFileSync(configPath, JSON.stringify({ opencodeCookie: "auth=tok" }));
     writeUsageCache(cachePath, {
       claude: {
         session: { percent: 24, reset: "resets in 2h" },
@@ -181,7 +186,8 @@ describe("persisted limit cache", () => {
     try {
       expect(readUsageCache(cachePath).claude?.session.percent).toBe(24);
       const provider = createRealUsageProvider({
-        paths: { ...MISSING_PATHS, usageCache: cachePath },
+        paths: { ...MISSING_PATHS, usageCache: cachePath, configFile: configPath },
+        claudeAuth: dormantClaudeAuthSource,
       });
       const snapshot = provider.readSnapshot();
       expect(snapshot.providers.cl.limits[0]?.percent).toBe(24);
@@ -191,7 +197,7 @@ describe("persisted limit cache", () => {
         reset: "resets in 4d",
       });
       expect(snapshot.providers.cx.limits[0]?.percent).toBe(38);
-      expect(snapshot.providers.go.limits[0]?.percent).toBe(17);
+      expect(snapshot.providers.go.limits[0]?.percent).toBeNull();
       expect(snapshot.providers.cl.notice?.segments[0]?.text).toContain("cached live limits stale");
       expect(snapshot.providers.cx.notice?.segments[0]?.text).toContain("cached limits stale");
       expect(snapshot.providers.go.notice?.segments[0]?.text).toContain("cached limits stale");
@@ -211,6 +217,7 @@ describe("refresh pressure on the upstream providers", () => {
 
     const provider = createRealUsageProvider({
       paths: { ...MISSING_PATHS, usageCache: cachePath },
+      claudeAuth: dormantClaudeAuthSource,
       claudeLimits: createClaudeLimitsSource((now) => {
         calls.cl += 1;
         return Promise.resolve({
@@ -503,8 +510,8 @@ describe("opencode go server limits", () => {
     const notes = [
       "opencode session expired - paste a fresh cookie",
       "no auth cookie found - re-copy the opencode.ai cookie header",
-      "opencode dashboard changed - showing local estimate",
-      "opencode unreachable - showing local estimate",
+      "opencode dashboard changed",
+      "opencode unreachable",
     ];
     for (const note of notes) {
       const provider = createRealUsageProvider({
@@ -544,13 +551,13 @@ describe("opencode go server limits", () => {
       ...OFFLINE,
       goLimits: {
         read: () => null,
-        note: () => "opencode unreachable - showing local estimate",
+        note: () => "opencode unreachable",
         cookieExpiresAtMs: () => Date.now() - DAY_MS,
         poll: () => Promise.resolve(),
       },
     });
     expect(provider.readSnapshot().providers.go.notice?.segments[0]?.text).toBe(
-      "opencode unreachable - showing local estimate",
+      "opencode unreachable",
     );
   });
 

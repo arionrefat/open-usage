@@ -168,4 +168,23 @@ describe("buildGoProvider cookie notices", () => {
     const result = build({ expiresAtMs: NOW_MS + 8 * 24 * HOUR_MS });
     expect(result.provider.notice).toBeUndefined();
   });
+
+  test("describes the source that is actually displayed after a server failure", () => {
+    const spend = goSpendFrom([{ atMs: NOW_MS - HOUR_MS, usd: 3 }], NOW);
+    const local = build({ spend, note: "opencode unreachable" });
+    expect(local.provider.scopes.session.window).toContain("spend estimate");
+    expect(local.provider.notice?.segments[0]?.text).toBe(
+      "opencode unreachable - showing local estimate",
+    );
+
+    const cachedServer = build({
+      server: SERVER,
+      spend,
+      note: "opencode unreachable - showing local estimate",
+    });
+    expect(cachedServer.provider.scopes.session.window).toContain("opencode");
+    expect(cachedServer.provider.notice?.segments[0]?.text).toBe(
+      "opencode unreachable - showing cached server limits",
+    );
+  });
 });

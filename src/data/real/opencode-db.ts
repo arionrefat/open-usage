@@ -188,17 +188,24 @@ export function usageFromRows(
 }
 
 /** Readonly aggregate read; null when the DB is missing or unreadable. */
+export function aggregateRowsFromDatabase(db: Database, sinceMs: number): unknown[][] {
+  return db.transaction(() => [
+    db.query(HOUR_ROWS_SQL).all(sinceMs),
+    db.query(SESSION_ROWS_SQL).all(sinceMs),
+    db.query(MODEL_ROWS_SQL).all(sinceMs),
+    db.query(DETAIL_ROWS_SQL).all(sinceMs),
+    db.query(DAILY_COST_ROWS_SQL).all(sinceMs),
+  ])();
+}
+
 export function readOpencodeUsage(dbPath: string, now: Date): OpencodeUsage | null {
   if (!existsSync(dbPath)) return null;
   let db: Database | null = null;
   try {
     db = new Database(dbPath, { readonly: true });
     const sinceMs = now.getTime() - USAGE_WINDOW_DAYS * DAY_MS;
-    const hourRows: unknown[] = db.query(HOUR_ROWS_SQL).all(sinceMs);
-    const sessionRows: unknown[] = db.query(SESSION_ROWS_SQL).all(sinceMs);
-    const modelRows: unknown[] = db.query(MODEL_ROWS_SQL).all(sinceMs);
-    const detailRows: unknown[] = db.query(DETAIL_ROWS_SQL).all(sinceMs);
-    const dailyCostRows: unknown[] = db.query(DAILY_COST_ROWS_SQL).all(sinceMs);
+    const [hourRows = [], sessionRows = [], modelRows = [], detailRows = [], dailyCostRows = []] =
+      aggregateRowsFromDatabase(db, sinceMs);
     return usageFromRows(hourRows, sessionRows, modelRows, detailRows, dailyCostRows);
   } catch {
     // A locked or migrated DB is an expected local condition, not a crash.

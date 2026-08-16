@@ -101,11 +101,21 @@ test("aligns detail bars when values have different widths", async () => {
 test("frames the token chart with peak and dates on its borders", async () => {
   const frame = await renderDetails(undefined);
   const rows = frame.split("\n");
+  const dates = mockUsageProvider.readSnapshot().dailyDates;
+  const axisLabel = (date: string | undefined) =>
+    new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
+  const first = axisLabel(dates[0]);
+  const last = axisLabel(dates.at(-1));
   const top = rows.find((row) => row.includes("tokens last 30 days"));
-  const bottom = rows.find((row) => row.includes("Jun 28"));
+  const bottom = rows.find((row) => row.includes(first));
 
   expect(top?.trim()).toMatch(/^┌─ tokens last 30 days .* peak \d+[MKB]? ─┐$/);
-  expect(bottom?.trim()).toMatch(/^└─ Jun 28 .* Jul 27 ─┘$/);
+  expect(bottom?.trim()).toStartWith(`└─ ${first} `);
+  expect(bottom?.trim()).toEndWith(` ${last} ─┘`);
   const topIndex = rows.findIndex((row) => row.includes("tokens last 30 days"));
   expect(rows.slice(topIndex + 1, topIndex + 9).every((row) => row.trim().startsWith("│"))).toBe(true);
   expect(rows.slice(topIndex + 1, topIndex + 9).every((row) => row.trimEnd().endsWith("│"))).toBe(true);

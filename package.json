@@ -41,6 +41,7 @@
     "shot": "bun scripts/shot.tsx",
     "build": "bun build --compile --minify src/index.tsx --outfile dist/open-usage",
     "build:npm": "bun scripts/build-npm-packages.ts",
+    "prepublishOnly": "bun scripts/check-prepublish.ts",
     "version:set": "bun scripts/set-version.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"

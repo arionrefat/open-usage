@@ -163,6 +163,18 @@ function goNoticeText(
   return `opencode cookie expires in ${formatCountdown(timeLeftMs)} - paste a fresh one`;
 }
 
+function displayedSourceNote(
+  note: string | null,
+  server: GoServerLimits | null,
+  spend: GoSpend | null,
+): string | null {
+  if (!note) return null;
+  const base = note.replace(/ - showing (?:local estimate|previous values|cached server limits)$/, "");
+  if (server) return `${base} - showing cached server limits`;
+  if (spend) return `${base} - showing local estimate`;
+  return base;
+}
+
 function goLimits(
   server: GoServerLimits | null,
   spend: GoSpend | null,
@@ -261,8 +273,8 @@ function goMetaFor(meta: ProviderMeta, server: GoServerLimits | null, usesEstima
 export function buildGoProvider(input: GoProviderInput): GoProviderResult {
   const { meta, buckets, stats, spend, limitsSource, dates, now } = input;
   const nowMs = now.getTime();
-  const server = limitsSource.read();
-  const note = limitsSource.note();
+  const server = limitsSource.read(now);
+  const note = displayedSourceNote(limitsSource.note(now), server, spend);
   const noticeText = goNoticeText(note, limitsSource.cookieExpiresAtMs(), nowMs);
   const usesEstimate =
     !server || (spend !== null && (server.weeklyPercent === null || server.monthlyPercent === null));

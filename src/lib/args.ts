@@ -1,22 +1,51 @@
 import { type AppStateOptions, type OverviewMode, type Screen, type ViewKey } from "../state/app-state";
 import type { AppPreferences } from "../preferences";
 
+const VALUE_FLAGS = new Set([
+  "binaries",
+  "clicks",
+  "height",
+  "keys",
+  "mode",
+  "out",
+  "screen",
+  "view",
+  "width",
+]);
+
 export function readFlags(argv: string[]): Map<string, string> {
   const flags = new Map<string, string>();
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
+    if (arg === "--") break;
     if (!arg?.startsWith("--")) continue;
 
-    const [name, inlineValue] = arg.slice(2).split("=", 2);
+    const body = arg.slice(2);
+    const equals = body.indexOf("=");
+    const name = equals === -1 ? body : body.slice(0, equals);
+    const inlineValue = equals === -1 ? undefined : body.slice(equals + 1);
     if (!name) continue;
     const next = argv[index + 1];
-    if (inlineValue !== undefined) flags.set(name, inlineValue);
+    if (inlineValue !== undefined) {
+      if (inlineValue || !VALUE_FLAGS.has(name)) flags.set(name, inlineValue);
+    }
     else if (next && !next.startsWith("--")) {
       flags.set(name, next);
       index += 1;
-    } else flags.set(name, "");
+    } else if (!VALUE_FLAGS.has(name)) flags.set(name, "");
   }
   return flags;
+}
+
+export function positiveIntegerFlag(
+  flags: Map<string, string>,
+  name: "width" | "height",
+  fallback: number,
+): number | null {
+  const raw = flags.get(name);
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && Number.isInteger(value) && value > 0 ? value : null;
 }
 
 export function isFlagEnabled(flags: Map<string, string>, name: string): boolean {

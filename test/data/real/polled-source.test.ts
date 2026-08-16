@@ -351,6 +351,33 @@ describe("createPolledSource", () => {
     expect(source.note()).toBe("stale 20m");
   });
 
+  test("treats a reading timestamped after a backward clock correction as stale", async () => {
+    const now = new Date(1_000_000);
+    const source = createPolledSource(
+      config({
+        initial: { value: 7, fetchedAtMs: now.getTime() + 60_000 },
+        staleAfterMs: 15 * 60_000,
+        staleNote: () => "stale",
+      }),
+    );
+
+    expect(source.isStale(now)).toBe(true);
+    expect(source.note(now)).toBe("stale");
+  });
+
+  test("a backward clock correction expires the previous polling floor", async () => {
+    let calls = 0;
+    const source = createPolledSource(
+      config({
+        fetch: (_now) => Promise.resolve({ value: ++calls, fetchedAtMs: 0 }),
+      }),
+    );
+
+    await source.poll(new Date(1_000_000));
+    await source.poll(new Date(900_000));
+    expect(calls).toBe(2);
+  });
+
   test("a failure keeps the previous reading on screen", async () => {
     let shouldFail = false;
     const source = createPolledSource(

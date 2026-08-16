@@ -17,7 +17,7 @@ const KEYMAP: Array<[string, string]> = [
   ["w", "window · session / weekly (simplified only)"],
   ["j / k", "move between providers"],
   ["↵", "open selected provider"],
-  ["t", "cycle range · today / 7d / 30d / month / all"],
+  ["t", "cycle range · today / 7d / 30d / cal month"],
   ["r", "refresh all providers"],
   ["/", "filter providers by name"],
   ["?", "this help"],

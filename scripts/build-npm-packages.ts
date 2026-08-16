@@ -8,6 +8,7 @@
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import pkg from "../package.json";
+import { writeJsonAtomically } from "./release-utils";
 
 interface PlatformTarget {
   /** npm package name suffix, also the artifact suffix produced by CI. */
@@ -16,7 +17,7 @@ interface PlatformTarget {
   cpu: string;
 }
 
-const TARGETS: PlatformTarget[] = [
+export const TARGETS: PlatformTarget[] = [
   { slug: "darwin-arm64", os: "darwin", cpu: "arm64" },
   { slug: "linux-arm64", os: "linux", cpu: "arm64" },
   { slug: "linux-x64", os: "linux", cpu: "x64" },
@@ -29,10 +30,11 @@ function flagValue(name: string, fallback: string): string {
   return index === -1 ? fallback : (process.argv[index + 1] ?? fallback);
 }
 
-const binariesDir = resolve(flagValue("binaries", "dist"));
-const outDir = resolve(flagValue("out", "dist/npm"));
+export const REPO_ROOT = resolve(import.meta.dir, "..");
+export const REPO_MANIFEST_PATH = join(REPO_ROOT, "package.json");
+export const REPO_LICENSE_PATH = join(REPO_ROOT, "LICENSE");
 
-function buildPackage(target: PlatformTarget): string {
+function buildPackage(target: PlatformTarget, binariesDir: string, outDir: string): string {
   const isWindows = target.os === "win32";
   const executable = isWindows ? "open-usage.exe" : "open-usage";
   const artifact = join(binariesDir, `open-usage-${target.slug}${isWindows ? ".exe" : ""}`);
@@ -65,7 +67,7 @@ function buildPackage(target: PlatformTarget): string {
     publishConfig: { access: "public" },
   };
 
-  writeFileSync(join(packageDir, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  writeJsonAtomically(join(packageDir, "package.json"), manifest);
   writeFileSync(
     join(packageDir, "README.md"),
     `# @open-usage/${target.slug}\n\n` +
@@ -73,7 +75,7 @@ function buildPackage(target: PlatformTarget): string {
       `Installed automatically as an optional dependency of \`open-usage\`.\n` +
       `You do not need to depend on this package directly.\n`,
   );
-  copyFileSync(resolve("LICENSE"), join(packageDir, "LICENSE"));
+  copyFileSync(REPO_LICENSE_PATH, join(packageDir, "LICENSE"));
 
   return packageDir;
 }
@@ -84,8 +86,7 @@ function buildPackage(target: PlatformTarget): string {
  * publishes them - a committed pin would break `install --frozen-lockfile`.
  */
 function pinPlatformPackagesIntoRoot(): void {
-  const manifestPath = resolve("package.json");
-  const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const manifest: unknown = JSON.parse(readFileSync(REPO_MANIFEST_PATH, "utf8"));
   if (typeof manifest !== "object" || manifest === null) {
     throw new Error("package.json is not an object");
   }
@@ -95,12 +96,18 @@ function pinPlatformPackagesIntoRoot(): void {
     TARGETS.map((target) => [`@open-usage/${target.slug}`, pkg.version]),
   );
 
-  writeFileSync(manifestPath, `${JSON.stringify(draft, null, 2)}\n`);
+  writeJsonAtomically(REPO_MANIFEST_PATH, draft);
 }
 
-const built = TARGETS.map(buildPackage);
-pinPlatformPackagesIntoRoot();
+export function buildNpmPackages(): void {
+  const binariesDir = resolve(flagValue("binaries", "dist"));
+  const outDir = resolve(flagValue("out", "dist/npm"));
+  const built = TARGETS.map((target) => buildPackage(target, binariesDir, outDir));
+  pinPlatformPackagesIntoRoot();
 
-console.log(`built ${built.length} platform packages at v${pkg.version}:`);
-for (const dir of built) console.log(`  ${dir}`);
-console.log(`pinned @open-usage/* ${pkg.version} into package.json`);
+  console.log(`built ${built.length} platform packages at v${pkg.version}:`);
+  for (const dir of built) console.log(`  ${dir}`);
+  console.log(`pinned @open-usage/* ${pkg.version} into package.json`);
+}
+
+if (import.meta.main) buildNpmPackages();

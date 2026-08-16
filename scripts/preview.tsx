@@ -9,7 +9,12 @@
 import { testRender } from "@opentui/react/test-utils";
 import { App } from "../src/app";
 import { selectUsageProvider } from "../src/data/real-provider";
-import { providerModeFromFlags, readFlags, startupFromFlags } from "../src/lib/args";
+import {
+  positiveIntegerFlag,
+  providerModeFromFlags,
+  readFlags,
+  startupFromFlags,
+} from "../src/lib/args";
 
 const DEFAULT_WIDTH = 140;
 const DEFAULT_HEIGHT = 46;
@@ -22,7 +27,15 @@ console.error = (...args: unknown[]) => {
   reportError(...args);
 };
 
-const flags = readFlags(process.argv.slice(2));
+const argv = process.argv.slice(2);
+const flags = readFlags(argv);
+const width = positiveIntegerFlag(flags, "width", DEFAULT_WIDTH);
+const height = positiveIntegerFlag(flags, "height", DEFAULT_HEIGHT);
+const hasFlag = (name: string) => argv.some((arg) => arg === `--${name}` || arg.startsWith(`--${name}=`));
+if (width === null || height === null || (hasFlag("width") && !flags.has("width")) || (hasFlag("height") && !flags.has("height"))) {
+  console.error("usage: bun scripts/preview.tsx [--width <positive-integer>] [--height <positive-integer>] [options]");
+  process.exit(1);
+}
 
 // Previews stay deterministic on the mock; pass --real to read local sources.
 const provider = selectUsageProvider(providerModeFromFlags(flags, "mock"));
@@ -33,8 +46,8 @@ const setup = await testRender(
     startup={startupFromFlags(flags)}
   />,
   {
-    width: Number(flags.get("width") ?? DEFAULT_WIDTH),
-    height: Number(flags.get("height") ?? DEFAULT_HEIGHT),
+    width,
+    height,
   },
 );
 

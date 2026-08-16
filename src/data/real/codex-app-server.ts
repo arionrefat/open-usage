@@ -1,5 +1,6 @@
 import { APP_NAME, APP_VERSION } from "../../config";
 import { isRecord } from "./json";
+import { subprocessEnvironment } from "./subprocess";
 
 /**
  * Rate limits via the sandboxed `codex app-server` stdio JSON-RPC server.
@@ -245,6 +246,7 @@ function spawnAppServer() {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "ignore",
+    env: subprocessEnvironment(),
   });
 }
 

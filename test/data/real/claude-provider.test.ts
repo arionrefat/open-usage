@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { HOUR_MS } from "../../../src/data/real/aggregate";
 import { buildClaudeProvider, createClaudeMeta } from "../../../src/data/real/claude-provider";
 import type { SnapshotFile, WeeklyTrend } from "../../../src/data/real/statusline-snapshot";
-import { dormantClaudeLimitsSource } from "../../../src/data/real/claude-usage";
+import {
+  dormantClaudeLimitsSource,
+  type ClaudeCliUsage,
+} from "../../../src/data/real/claude-usage";
 
 const NOW = new Date(2026, 0, 15, 12);
 const NOW_MS = NOW.getTime();
@@ -43,6 +46,7 @@ function build(options: {
   trendRate?: number | null;
   sessions?: number;
   historyAvailable?: boolean;
+  live?: ClaudeCliUsage | null;
 } = {}) {
   return buildClaudeProvider({
     meta: createClaudeMeta(),
@@ -62,7 +66,14 @@ function build(options: {
       latestMs: 0,
     },
     snapshotFile: options.snapshotFile ?? null,
-    limitsSource: dormantClaudeLimitsSource,
+    limitsSource:
+      options.live === undefined
+        ? dormantClaudeLimitsSource
+        : {
+            read: () => options.live ?? null,
+            note: () => null,
+            poll: () => Promise.resolve(),
+          },
     hasStatusline: options.hasStatusline ?? true,
     trend: trend(options.trendRate ?? null),
     dates: ["2026-01-15"],
@@ -141,6 +152,28 @@ describe("buildClaudeProvider", () => {
       reset: "resets Aug 5 at 6am (Asia/Dhaka)",
     });
     expect(provider.notice).toBeUndefined();
+  });
+
+  test("when both limit sources are stale, uses the fresher timestamp", () => {
+    const live = (ageMinutes: number): ClaudeCliUsage => ({
+      session: { percent: 10, reset: "resets later" },
+      weekly: { percent: 95, reset: "resets later" },
+      fetchedAtMs: NOW_MS - ageMinutes * 60_000,
+    });
+
+    const fresherSnapshot = build({
+      snapshotFile: snapshot(12 * 60_000, 40),
+      live: live(20),
+    });
+    expect(fresherSnapshot.scopes.weekly.percent).toBe(40);
+    expect(fresherSnapshot.limits[1]?.footnote).toContain("snapshot stale");
+
+    const fresherCli = build({
+      snapshotFile: snapshot(20 * 60_000, 40),
+      live: live(12),
+    });
+    expect(fresherCli.scopes.weekly.percent).toBe(95);
+    expect(fresherCli.limits[1]?.footnote).toContain("cached live limits stale");
   });
 
   test("keeps stale Fable usage when a fresh statusline replaces the shared windows", () => {
@@ -227,6 +260,12 @@ describe("buildClaudeProvider", () => {
 
     expect(safe.limits[1]?.alert).toBeUndefined();
     expect(over.limits[1]?.alert?.text).toContain("projected 110% before reset");
+  });
+
+  test("reports a clamped 100 percent reading as already capped", () => {
+    expect(
+      build({ snapshotFile: snapshot(60_000, 100), trendRate: null }).burn.capsOutAt,
+    ).toBe("already capped");
   });
 
   test("adds session, model, and token detail sections for fresh data", () => {

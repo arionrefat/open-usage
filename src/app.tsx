@@ -11,7 +11,6 @@ import {
   type UsageProvider,
   type UsageSnapshot,
 } from "./data/types";
-import { useBlink } from "./hooks/use-blink";
 import {
   VIEW_KEYS,
   PROVIDER_VIEWS,
@@ -135,7 +134,7 @@ export function App({
       .then((nextSnapshot) => {
         if (controller.signal.aborted) return;
         setSnapshot(nextSnapshot);
-        dispatch({ type: "refresh-success" });
+        dispatch({ type: "refresh-success", connections: provider.initialConnections() });
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -437,7 +436,6 @@ export function App({
     ),
   );
 
-  const isCursorVisible = useBlink(state.isFiltering);
   const contentWidth = Math.max(1, width - HORIZONTAL_PADDING * 2 - SCROLLBAR_WIDTH);
   const detailChartHeight = Math.max(
     DETAIL_CHART_MIN_HEIGHT,
@@ -530,7 +528,6 @@ export function App({
             width={contentWidth}
             query={state.filterQuery}
             matchCount={derived.visibleIds.length}
-            isCursorVisible={isCursorVisible}
           />
         </box>
       ) : null}

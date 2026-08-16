@@ -28,6 +28,12 @@ describe("configDir", () => {
 
     expect(configDir()).toBe(join(homedir(), ".config", APP_NAME));
   });
+
+  test("ignores a relative XDG_CONFIG_HOME", () => {
+    process.env.XDG_CONFIG_HOME = "relative/config";
+
+    expect(configDir()).toBe(join(homedir(), ".config", APP_NAME));
+  });
 });
 
 test("configPath joins onto the config directory", () => {

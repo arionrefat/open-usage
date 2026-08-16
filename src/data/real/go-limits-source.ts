@@ -17,9 +17,9 @@ import type { PollOptions } from "../types";
  * to the local spend estimate.
  */
 export interface GoLimitsSource {
-  read(): GoServerLimits | null;
+  read(now?: Date): GoServerLimits | null;
   /** Why server limits are missing, or null when they are present. */
-  note(): string | null;
+  note(now?: Date): string | null;
   cookieExpiresAtMs(): number | null;
   poll(now: Date, options?: PollOptions): Promise<void>;
 }
@@ -75,12 +75,12 @@ export const dormantGoLimitsSource: GoLimitsSource = {
 type GoLimitsFetcher = typeof fetchGoServerLimits;
 
 function describeGoFailure(error: unknown): string {
-  if (!(error instanceof OpencodeServerError)) return "opencode unreachable - showing local estimate";
+  if (!(error instanceof OpencodeServerError)) return "opencode unreachable";
   if (error.kind === "credentials") return "opencode session expired - paste a fresh cookie";
   // A redeploy rotates the server function ids; the estimate carries on.
-  if (error.kind === "parse") return "opencode dashboard changed - showing local estimate";
+  if (error.kind === "parse") return "opencode dashboard changed";
   if (error.kind === "rate-limited") return "opencode is rate limiting - backing off";
-  return "opencode unreachable - showing local estimate";
+  return "opencode unreachable";
 }
 
 export function createGoLimitsSource(
@@ -110,7 +110,11 @@ export function createGoLimitsSource(
       }
       return null;
     },
-    fetch: (now, signal) => fetcher(cookieForAttempt ?? "", now, { workspaceId, signal }),
+    fetch: async (now, signal) => {
+      const value = await fetcher(cookieForAttempt ?? "", now, { workspaceId, signal });
+      workspaceId = value.workspaceId ?? workspaceId;
+      return value;
+    },
     fetchedAtMs: (value) => value.fetchedAtMs,
     describeFailure: describeGoFailure,
     onFailure: (error) => {
@@ -122,8 +126,7 @@ export function createGoLimitsSource(
     retryDelayMs: (error) =>
       error instanceof OpencodeRateLimitError ? error.retryAfterMs : null,
     staleAfterMs: GO_LIMITS_STALE_MS,
-    staleNote: (ageMs) =>
-      `cached limits stale (${formatAge(ageMs)} old) - showing previous values`,
+    staleNote: (ageMs) => `cached limits stale (${formatAge(ageMs)} old)`,
     minPollMs: MIN_POLL_MS,
     minForcedPollMs: MIN_FORCED_POLL_MS,
     backoffMs: BACKOFF_MS,
@@ -133,9 +136,17 @@ export function createGoLimitsSource(
   });
 
   return {
-    // Stale values stay available so the provider can render them with a notice.
-    read: source.read,
-    note: source.note,
+    read: (now) => {
+      const cookie = readCookie(configPath, env);
+      if (!cookie || filterCookieHeader(cookie) === null || source.isStale(now)) return null;
+      return source.read();
+    },
+    note: (now) => {
+      // Removing the cookie is an intentional return to local-only mode, so an
+      // old request failure must not linger after the source is disabled.
+      if (!readCookie(configPath, env)) return null;
+      return source.note(now);
+    },
     poll: source.poll,
     cookieExpiresAtMs: () => {
       const cookie = readCookie(configPath, env);

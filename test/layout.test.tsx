@@ -11,6 +11,8 @@ import {
   type ViewKey,
 } from "../src/state/app-state";
 import { COLORS } from "../src/theme";
+import { legendBarWidth } from "../src/screens/overview-simple";
+import { dailySplitBarWidth } from "../src/screens/overview-detailed";
 
 test("toggle pills have only a plain gap and share the accent background", () => {
   const options = [
@@ -129,6 +131,13 @@ test("simple overview keeps all three providers in the legend", async () => {
   expect(rowContaining(rows, "▎codex")).not.toBe("");
   expect(rowContaining(rows, "▎codex")).not.toContain("share");
   expect(rows.join("\n")).toContain("subscription ended");
+});
+
+test("narrow meters and daily bars give their fixed prefixes first claim on width", () => {
+  expect(7 + legendBarWidth(12)).toBe(12);
+  expect(legendBarWidth(5)).toBe(0);
+  expect(9 + 1 + 4 + dailySplitBarWidth(18, 4)).toBe(18);
+  expect(dailySplitBarWidth(10, 4)).toBe(0);
 });
 
 /** Half-height block: full blocks would fuse the rows into one wedge. */

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useBlink } from "../hooks/use-blink";
 import { useSecondsSince } from "../hooks/use-seconds-since";
 import { columnWidth } from "../lib/text";
 import { COLORS, SPINNER_FRAMES } from "../theme";
@@ -181,10 +182,11 @@ interface FilterBarProps {
   width: number;
   query: string;
   matchCount: number;
-  isCursorVisible: boolean;
 }
 
-export function FilterBar({ width, query, matchCount, isCursorVisible }: FilterBarProps) {
+/** Owns its blink timer so a cursor tick never commits the App tree. */
+export function FilterBar({ width, query, matchCount }: FilterBarProps) {
+  const isCursorVisible = useBlink(true);
   const queryBudget = Math.max(1, Math.floor(width * 0.6) - 4);
   const visibleQuery = visibleQueryText(query, queryBudget);
   return (

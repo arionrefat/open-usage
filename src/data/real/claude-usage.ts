@@ -1,5 +1,6 @@
 import { isRecord } from "./json";
 import { createPolledSource } from "./polled-source";
+import { createSubprocessGuard, subprocessEnvironment } from "./subprocess";
 import type { PollOptions } from "../types";
 
 export interface ClaudeUsageWindow {
@@ -93,7 +94,7 @@ function spawnClaudeUsage() {
       "json",
       "--no-session-persistence",
     ],
-    { stdout: "pipe", stderr: "ignore" },
+    { stdout: "pipe", stderr: "ignore", env: subprocessEnvironment() },
   );
 }
 
@@ -109,21 +110,18 @@ export async function readClaudeUsage(
     throw new ClaudeUsageError("not-installed", "claude cli not found", { cause: error });
   }
 
-  let timedOut = false;
-  const abort = () => proc.kill();
-  options.signal?.addEventListener("abort", abort, { once: true });
-  if (options.signal?.aborted) abort();
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    proc.kill();
-  }, options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+  const guard = createSubprocessGuard(proc, {
+    timeoutMs: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
+    signal: options.signal,
+    timeoutError: () => new ClaudeUsageError("timeout", "claude usage did not respond"),
+  });
   try {
-    const output = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-    if (options.signal?.aborted) {
-      throw options.signal.reason ?? new DOMException("Refresh aborted", "AbortError");
-    }
-    if (timedOut) throw new ClaudeUsageError("timeout", "claude usage did not respond");
+    const { output, exitCode } = await guard.waitFor(
+      (async () => ({
+        output: await new Response(proc.stdout).text(),
+        exitCode: await proc.exited,
+      }))(),
+    );
     if (exitCode !== 0) {
       throw new ClaudeUsageError("not-logged-in", "claude usage requires a signed-in cli");
     }
@@ -138,9 +136,7 @@ export async function readClaudeUsage(
     if (!usage) throw new ClaudeUsageError("protocol", "claude usage returned no plan limits");
     return usage;
   } finally {
-    clearTimeout(timeout);
-    options.signal?.removeEventListener("abort", abort);
-    proc.kill();
+    guard.dispose();
   }
 }
 

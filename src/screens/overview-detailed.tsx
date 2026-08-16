@@ -26,6 +26,10 @@ const NO_VALUE = "-";
 const NO_HISTORY_NOTE = "no history";
 const DELTA_ARROWS: Record<"up" | "down", string> = { up: "▲", down: "▼" };
 
+export function dailySplitBarWidth(width: number, totalWidth: number): number {
+  return Math.max(0, width - DAY_LABEL_WIDTH - 1 - totalWidth);
+}
+
 function shareFill(share: number, width: number): number {
   if (share <= 0) return 0;
   return Math.min(width, Math.max(1, Math.round((share / 100) * width)));
@@ -490,7 +494,7 @@ function DailySplit({ derived, snapshot, width }: OverviewDetailedProps) {
     .reverse();
   // The design left-aligns totals one column after the bar.
   const totalWidth = Math.max(0, ...days.map((day) => columnWidth(day.total)));
-  const barWidth = Math.max(10, width - DAY_LABEL_WIDTH - 1 - totalWidth);
+  const barWidth = dailySplitBarWidth(width, totalWidth);
 
   return (
     <box flexDirection="column" flexShrink={0}>
