@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +8,18 @@ import {
   readOpencodeUsage,
   usageFromRows,
 } from "../../../src/data/real/opencode-db";
+
+const tempRoots: string[] = [];
+
+afterAll(() => {
+  for (const root of tempRoots) rmSync(root, { recursive: true, force: true });
+});
+
+function tempDatabase(name: string): string {
+  const root = mkdtempSync(join(tmpdir(), name));
+  tempRoots.push(root);
+  return join(root, "opencode.db");
+}
 
 describe("usageFromRows", () => {
   test("groups hour rows by provider", () => {
@@ -97,7 +109,7 @@ describe("readOpencodeUsage", () => {
   });
 
   test("reads model tokens, token split, and cost details from message rows", () => {
-    const path = join(mkdtempSync(join(tmpdir(), "opencode-db-")), "opencode.db");
+    const path = tempDatabase("opencode-db-");
     const db = new Database(path);
     db.run("CREATE TABLE message (session_id TEXT, time_created INTEGER, data TEXT)");
     const insert = db.prepare("INSERT INTO message VALUES (?1, ?2, ?3)");
@@ -129,5 +141,11 @@ describe("readOpencodeUsage", () => {
 
   test("returns null when the db file does not exist", () => {
     expect(readOpencodeUsage("/nonexistent/path/opencode.db", new Date())).toBeNull();
+  });
+
+  test("throws when an existing database is unreadable", () => {
+    const path = tempDatabase("opencode-corrupt-");
+    writeFileSync(path, "not sqlite");
+    expect(() => readOpencodeUsage(path, new Date())).toThrow();
   });
 });

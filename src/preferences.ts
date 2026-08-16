@@ -1,4 +1,14 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname } from "node:path";
 import {
   configPath,
@@ -63,14 +73,30 @@ export function readPreferences(path: string): AppPreferences {
 
 function writePreferencesFile(path: string, preferences: unknown): void {
   const temporary = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  let temporaryFd: number | null = null;
   try {
-    writeFileSync(temporary, `${JSON.stringify(preferences, null, 2)}\n`, {
-      encoding: "utf8",
-      flag: "wx",
-      mode: 0o600,
-    });
+    temporaryFd = openSync(
+      temporary,
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+      0o600,
+    );
+    writeFileSync(temporaryFd, `${JSON.stringify(preferences, null, 2)}\n`, "utf8");
+    fsyncSync(temporaryFd);
+    closeSync(temporaryFd);
+    temporaryFd = null;
     renameSync(temporary, path);
+    // The file sync protects its contents; the directory sync protects the rename.
+    let directoryFd: number | null = null;
+    try {
+      directoryFd = openSync(dirname(path), constants.O_RDONLY);
+      fsyncSync(directoryFd);
+    } catch {
+      // Some filesystems do not support syncing directories.
+    } finally {
+      if (directoryFd !== null) closeSync(directoryFd);
+    }
   } finally {
+    if (temporaryFd !== null) closeSync(temporaryFd);
     rmSync(temporary, { force: true });
   }
 }

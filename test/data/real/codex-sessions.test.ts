@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DAY_MS, HOUR_MS } from "../../../src/data/real/aggregate";
@@ -39,6 +39,40 @@ function withTempHome(run: (home: string) => void): void {
 }
 
 describe("readCodexSessions", () => {
+  test("throws when a rollout path exists but is not a directory", () => {
+    withTempHome((home) => {
+      writeFileSync(join(home, "sessions"), "not a directory");
+      expect(() => readCodexSessions(home, NOW)).toThrow();
+    });
+  });
+
+  test("prunes cached files when the rollout tree disappears", () => {
+    withTempHome((home) => {
+      const path = join(home, "sessions", "rollout.jsonl");
+      const fixedTime = new Date("2026-08-15T10:00:00Z");
+      mkdirSync(join(home, "sessions"));
+      writeFileSync(path, tokenCount(NOW_MS - HOUR_MS, 100));
+      utimesSync(path, fixedTime, fixedTime);
+      expect(readCodexSessions(home, NOW)?.tokens).toBe(100);
+
+      rmSync(join(home, "sessions"), { recursive: true });
+      expect(readCodexSessions(home, NOW)).toBeNull();
+      mkdirSync(join(home, "sessions"));
+      writeFileSync(path, tokenCount(NOW_MS - HOUR_MS, 900));
+      utimesSync(path, fixedTime, fixedTime);
+      expect(readCodexSessions(home, NOW)?.tokens).toBe(900);
+
+      rmSync(join(home, "sessions"), { recursive: true });
+      writeFileSync(join(home, "sessions"), "not a directory");
+      expect(() => readCodexSessions(home, NOW)).toThrow();
+      rmSync(join(home, "sessions"));
+      mkdirSync(join(home, "sessions"));
+      writeFileSync(path, tokenCount(NOW_MS - HOUR_MS, 800));
+      utimesSync(path, fixedTime, fixedTime);
+      expect(readCodexSessions(home, NOW)?.tokens).toBe(800);
+    });
+  });
+
   test("returns null when no rollout directories exist", () => {
     withTempHome((home) => {
       expect(readCodexSessions(home, NOW)).toBeNull();

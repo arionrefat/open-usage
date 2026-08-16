@@ -5,7 +5,7 @@ import {
 } from "./codex-app-server";
 import { formatAge } from "./aggregate";
 import { createPolledSource } from "./polled-source";
-import type { PollOptions } from "../types";
+import type { ConnectionStatus, PollOptions } from "../types";
 
 /**
  * Codex limits are polled out-of-band because the UI reads snapshots
@@ -16,6 +16,7 @@ export interface CodexLimitsSource {
   read(): CodexAccountLimits | null;
   /** Shown wherever a percent would have been, or null when limits are present. */
   note(): string | null;
+  status?(): ConnectionStatus;
   poll(now: Date, options?: PollOptions): Promise<void>;
 }
 
@@ -43,6 +44,7 @@ const NOTES: Record<string, string> = {
 export const stubCodexLimitsSource: CodexLimitsSource = {
   read: () => null,
   note: () => "codex limits not connected",
+  status: () => "none",
   poll: () => Promise.resolve(),
 };
 

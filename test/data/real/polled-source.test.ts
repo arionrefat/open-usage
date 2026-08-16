@@ -62,6 +62,27 @@ function config(overrides: Partial<PolledSourceConfig<Reading>> = {}): PolledSou
 }
 
 describe("createPolledSource", () => {
+  test("reports cache, live success, and a later failure distinctly", async () => {
+    let shouldFail = false;
+    const source = createPolledSource(
+      config({
+        initial: { value: 1, fetchedAtMs: 0 },
+        fetch: () =>
+          shouldFail
+            ? Promise.reject(new Error("signed out"))
+            : Promise.resolve({ value: 2, fetchedAtMs: 1_000 }),
+      }),
+    );
+
+    expect(source.status()).toBe("cached");
+    await source.poll(new Date(1_000_000));
+    expect(source.status()).toBe("active");
+    shouldFail = true;
+    await source.poll(new Date(1_100_000), { force: true });
+    expect(source.status()).toBe("expired");
+    expect(source.read()?.value).toBe(2);
+  });
+
   test("a second caller joins the request already in flight", async () => {
     const { fetch, harness } = deferredFetch();
     const source = createPolledSource(config({ fetch }));

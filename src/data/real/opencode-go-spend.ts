@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
+import { statSync } from "node:fs";
 import { DAY_MS, HOUR_MS } from "./aggregate";
 import { isRecord } from "./json";
 
@@ -126,17 +126,22 @@ const SPEND_SQL =
   " AND json_type(data,'$.cost') IN ('integer','real')" +
   " AND CAST(COALESCE(json_extract(data,'$.time.created'), time_created) AS INTEGER) >= ?1";
 
-/** null when the DB is missing or unreadable. */
+/** null only when the DB is absent. */
 export function readGoSpend(dbPath: string, now: Date, caps: GoPlanCaps = GO_PLAN_CAPS): GoSpend | null {
-  if (!existsSync(dbPath)) return null;
+  try {
+    statSync(dbPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") return null;
+    throw error;
+  }
   let db: Database | null = null;
   try {
     db = new Database(dbPath, { readonly: true });
     const rows: unknown[] = db.query(SPEND_SQL).all(now.getTime() - QUERY_WINDOW_MS);
     return goSpendFrom(spendFromRows(rows), now, caps);
-  } catch {
-    // A locked or migrated DB is an expected local condition, not a crash.
-    return null;
+  } catch (error) {
+    // The provider catches this boundary and marks the source unreadable.
+    throw error;
   } finally {
     db?.close();
   }

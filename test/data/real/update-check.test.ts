@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -16,9 +16,16 @@ import {
 const NOW = new Date("2026-08-10T12:00:00.000Z");
 const NOW_MS = NOW.getTime();
 const DAY_MS = 24 * 60 * 60 * 1000;
+const tempRoots: string[] = [];
+
+afterAll(() => {
+  for (const root of tempRoots) rmSync(root, { recursive: true, force: true });
+});
 
 function cachePath(): string {
-  return join(mkdtempSync(join(tmpdir(), "open-usage-update-")), "update-check.json");
+  const root = mkdtempSync(join(tmpdir(), "open-usage-update-"));
+  tempRoots.push(root);
+  return join(root, "update-check.json");
 }
 
 function respondWith(body: unknown, ok = true): FetchLike {
@@ -190,5 +197,6 @@ describe("checkForUpdate", () => {
     const path = cachePath();
     writeUpdateCache(path, { latestVersion: "0.3.0", checkedAtMs: NOW_MS });
     expect(readFileSync(path, "utf8")).toContain("0.3.0");
+    expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 });

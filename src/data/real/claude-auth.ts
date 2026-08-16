@@ -18,21 +18,34 @@ function parseAuthStatus(value: unknown, fetchedAtMs: number): ClaudeAuthInfo | 
 
 const REQUEST_TIMEOUT_MS = 5_000;
 
-function spawnAuth() {
-  return Bun.spawn(["claude", "auth", "status", "--json"], {
+interface ClaudeAuthReadOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  /** Test seam; production discovers `claude` through PATH. */
+  executable?: string;
+  /** Test seam; production inherits the scrubbed process environment. */
+  env?: Record<string, string | undefined>;
+  killGraceMs?: number;
+}
+
+function spawnAuth(options: ClaudeAuthReadOptions) {
+  return Bun.spawn([options.executable ?? "claude", "auth", "status", "--json"], {
     stdout: "pipe",
     stderr: "ignore",
-    env: subprocessEnvironment(),
+    env: subprocessEnvironment(options.env),
   });
 }
 
 export async function readClaudeAuth(
   now: Date,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  options: ClaudeAuthReadOptions = {},
 ): Promise<ClaudeAuthInfo> {
+  if (options.signal?.aborted) {
+    throw options.signal.reason ?? new DOMException("Refresh aborted", "AbortError");
+  }
   let proc: ReturnType<typeof spawnAuth>;
   try {
-    proc = spawnAuth();
+    proc = spawnAuth(options);
   } catch (error) {
     throw new Error(`claude cli not found: ${String(error)}`);
   }
@@ -41,9 +54,16 @@ export async function readClaudeAuth(
     timeoutMs: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
     signal: options.signal,
     timeoutError: () => new Error("timeout"),
+    killGraceMs: options.killGraceMs,
   });
   try {
-    const output = await guard.waitFor(new Response(proc.stdout).text());
+    const { output, exitCode } = await guard.waitFor(
+      (async () => ({
+        output: await new Response(proc.stdout).text(),
+        exitCode: await proc.exited,
+      }))(),
+    );
+    if (exitCode !== 0) throw new Error(`claude auth exited with code ${exitCode}`);
     const parsed: unknown = JSON.parse(output);
     return parseAuthStatus(parsed, now.getTime()) ?? { loggedIn: false, subscriptionType: null, fetchedAtMs: now.getTime() };
   } finally {

@@ -52,6 +52,8 @@ describe("series from hour buckets", () => {
 
   test("zero-fills when there is no data", () => {
     const series = seriesFromBuckets(new Map(), dailyDateKeys(NOW), NOW);
+    expect(series.daily).toHaveLength(30);
+    expect(series.hourly).toHaveLength(24);
     expect(series.daily.every((value) => value === 0)).toBe(true);
     expect(series.hourly.every((value) => value === 0)).toBe(true);
   });

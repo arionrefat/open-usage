@@ -1,4 +1,4 @@
-import type { PollOptions } from "../types";
+import type { ConnectionStatus, PollOptions } from "../types";
 
 /**
  * Scheduling core shared by every remote-backed limits source. Each provider
@@ -53,12 +53,14 @@ export interface PolledSource<T> {
   read(): T | null;
   note(now?: Date): string | null;
   isStale(now?: Date): boolean;
+  status(): ConnectionStatus;
   poll(now: Date, options?: PollOptions): Promise<void>;
 }
 
 export function createPolledSource<T>(config: PolledSourceConfig<T>): PolledSource<T> {
   let cached: T | null = config.initial ?? null;
   let note: string | null = null;
+  let status: ConnectionStatus = cached ? "cached" : "none";
   /** Set only by a failure or a throttled precheck; `r` may override it. */
   let retryNotBeforeMs = 0;
   /** Server-dictated silence (a 429's Retry-After). `r` must not override this. */
@@ -94,6 +96,7 @@ export function createPolledSource<T>(config: PolledSourceConfig<T>): PolledSour
       retryNotBeforeMs = 0;
       blockedUntilMs = 0;
       note = null;
+      status = "active";
       config.onUpdate?.(value);
     } catch (error) {
       // A cancelled refresh is not a provider failure: it must not widen the
@@ -109,6 +112,7 @@ export function createPolledSource<T>(config: PolledSourceConfig<T>): PolledSour
       retryNotBeforeMs = nowMs + Math.max(backoffMsFor(consecutiveFailures), requestedDelayMs);
       config.onFailure?.(error);
       note = config.describeFailure(error);
+      status = "expired";
     }
   }
 
@@ -123,6 +127,7 @@ export function createPolledSource<T>(config: PolledSourceConfig<T>): PolledSour
         : null;
     },
     isStale,
+    status: () => status,
     poll(now, options = {}) {
       // One request at a time: a second caller joins the one already running
       // instead of opening a duplicate connection or spawning a second CLI. This
@@ -145,6 +150,7 @@ export function createPolledSource<T>(config: PolledSourceConfig<T>): PolledSour
       const skip = config.precheck?.();
       if (skip) {
         note = skip.note;
+        status = skip.note ? "expired" : "none";
         if (skip.isThrottled) {
           lastAttemptAtMs = nowMs;
           retryNotBeforeMs = nowMs + minPollMs();

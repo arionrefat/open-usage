@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DAY_MS, addToBucket, type HourBuckets } from "./aggregate";
 import { isRecord } from "./json";
@@ -32,6 +32,15 @@ const TURN_CONTEXT_MARKER = '"type":"turn_context"';
 const STATS_WINDOW_MS = 30 * DAY_MS;
 
 const fileCache = new Map<string, FileCacheEntry>();
+
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
+}
+
+function clearDirectoryCache(directory: string): void {
+  const prefix = `${directory}/`;
+  for (const path of fileCache.keys()) if (path.startsWith(prefix)) fileCache.delete(path);
+}
 
 function parseRolloutLines(lines: Iterable<string>): { events: RolloutEvent[]; latestMs: number } {
   const events: RolloutEvent[] = [];
@@ -74,13 +83,29 @@ function parseRolloutLines(lines: Iterable<string>): { events: RolloutEvent[]; l
 
 function collectRolloutPaths(root: string): string[] {
   const paths: string[] = [];
-  for (const dir of [join(root, "sessions"), join(root, "archived_sessions")]) {
-    if (!existsSync(dir)) continue;
+  const directories = [join(root, "sessions"), join(root, "archived_sessions")];
+  try {
+    if (!statSync(root).isDirectory()) throw new Error("codex home is not a directory");
+  } catch (error) {
+    for (const dir of directories) clearDirectoryCache(dir);
+    if (isMissing(error)) return paths;
+    throw error;
+  }
+  for (const dir of directories) {
+    try {
+      statSync(dir);
+    } catch (error) {
+      clearDirectoryCache(dir);
+      if (isMissing(error)) continue;
+      throw error;
+    }
     let entries: string[];
     try {
       entries = readdirSync(dir, { recursive: true, encoding: "utf8" });
-    } catch {
-      continue;
+    } catch (error) {
+      clearDirectoryCache(dir);
+      if (isMissing(error)) continue;
+      throw error;
     }
     for (const relative of entries) {
       if (relative.endsWith(".jsonl")) paths.push(join(dir, relative));
@@ -102,6 +127,7 @@ export function readCodexSessions(codexHome: string, now: Date = new Date()): Co
   let tokens30d = 0;
   let latestMs = 0;
 
+  let unreadable: unknown;
   for (const path of paths) {
     seen.add(path);
     try {
@@ -128,11 +154,14 @@ export function readCodexSessions(codexHome: string, now: Date = new Date()): Co
       }
       if (sessionActiveInWindow) sessions += 1;
       latestMs = Math.max(latestMs, entry.latestMs);
-    } catch {
+    } catch (error) {
+      fileCache.delete(path);
       // A rollout can be rotated between readdir and stat; skip the gap.
+      if (!isMissing(error)) unreadable ??= error;
     }
   }
   for (const path of fileCache.keys()) if (!seen.has(path)) fileCache.delete(path);
+  if (unreadable) throw unreadable;
 
   let topModel: string | null = null;
   let topTokens = 0;

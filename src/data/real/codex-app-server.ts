@@ -1,6 +1,6 @@
 import { APP_NAME, APP_VERSION } from "../../config";
 import { isRecord } from "./json";
-import { subprocessEnvironment } from "./subprocess";
+import { createSubprocessGuard, subprocessEnvironment } from "./subprocess";
 
 /**
  * Rate limits via the sandboxed `codex app-server` stdio JSON-RPC server.
@@ -227,12 +227,12 @@ export function parseAccount(result: unknown): CodexAccountInfo {
   };
 }
 
-interface RpcOutcome {
+export interface RpcOutcome {
   results: Map<number, unknown>;
   errors: Map<number, unknown>;
 }
 
-interface RpcRequest {
+export interface RpcRequest {
   id: number;
   method: string;
 }
@@ -240,13 +240,23 @@ interface RpcRequest {
 const REQUEST_TIMEOUT_MS = 15_000;
 
 /** Runs one short-lived, sandboxed app-server child. Always killed. */
-function spawnAppServer() {
+export interface RunRequestsOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  /** Test seam; production discovers `codex` through PATH. */
+  executable?: string;
+  /** Test seam; production inherits the scrubbed process environment. */
+  env?: Record<string, string | undefined>;
+  killGraceMs?: number;
+}
+
+function spawnAppServer(options: RunRequestsOptions) {
   // Sandboxed read-only and untrusted: this only ever reads account state.
-  return Bun.spawn(["codex", "-s", "read-only", "-a", "untrusted", "app-server"], {
+  return Bun.spawn([options.executable ?? "codex", "-s", "read-only", "-a", "untrusted", "app-server"], {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "ignore",
-    env: subprocessEnvironment(),
+    env: subprocessEnvironment(options.env),
   });
 }
 
@@ -289,16 +299,16 @@ function collectRpcLine(
   return message.id;
 }
 
-async function runRequests(
+export async function runRequests(
   requests: RpcRequest[],
-  timeoutMs: number,
-  signal?: AbortSignal,
+  options: RunRequestsOptions = {},
 ): Promise<RpcOutcome> {
+  if (options.signal?.aborted) {
+    throw options.signal.reason ?? new DOMException("Refresh aborted", "AbortError");
+  }
   let proc: ReturnType<typeof spawnAppServer>;
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  let abort: (() => void) | undefined;
   try {
-    proc = spawnAppServer();
+    proc = spawnAppServer(options);
   } catch (error) {
     throw new CodexProbeError("not-installed", "codex cli not found", { cause: error });
   }
@@ -306,6 +316,12 @@ async function runRequests(
   const results = new Map<number, unknown>();
   const errors = new Map<number, unknown>();
   const wanted = new Set([0, ...requests.map((request) => request.id)]);
+  const guard = createSubprocessGuard(proc, {
+    timeoutMs: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
+    signal: options.signal,
+    timeoutError: () => new CodexProbeError("timeout", "codex app-server did not answer in time"),
+    killGraceMs: options.killGraceMs,
+  });
 
   try {
     // The protocol handshake is initialize -> initialized -> requests; sending
@@ -343,25 +359,9 @@ async function runRequests(
         if (wanted.size === 0) return;
       }
     })();
-    const deadline = new Promise<never>((_, reject) => {
-      timeout = setTimeout(() => {
-        proc.kill();
-        reject(new CodexProbeError("timeout", "codex app-server did not answer in time"));
-      }, timeoutMs);
-    });
-    const cancelled = new Promise<never>((_, reject) => {
-      abort = () => {
-        proc.kill();
-        reject(signal?.reason ?? new DOMException("Refresh aborted", "AbortError"));
-      };
-      signal?.addEventListener("abort", abort, { once: true });
-      if (signal?.aborted) abort();
-    });
-    await Promise.race([responses, deadline, cancelled]);
+    await guard.waitFor(responses);
   } finally {
-    if (timeout) clearTimeout(timeout);
-    if (abort) signal?.removeEventListener("abort", abort);
-    proc.kill();
+    guard.dispose();
   }
 
   if (wanted.size > 0 && results.size === 0 && errors.size === 0) {
@@ -383,7 +383,7 @@ function isLoggedOut(error: unknown): boolean {
 /** Reads plan limits from the local Codex CLI. Throws `CodexProbeError`. */
 export async function readCodexLimits(
   now: Date,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  options: RunRequestsOptions = {},
 ): Promise<CodexAccountLimits> {
   const { results, errors } = await runRequests(
     [
@@ -391,8 +391,7 @@ export async function readCodexLimits(
       { id: ACCOUNT_ID, method: "account/read" },
       { id: USAGE_ID, method: "account/usage/read" },
     ],
-    options.timeoutMs ?? REQUEST_TIMEOUT_MS,
-    options.signal,
+    options,
   );
 
   const account = parseAccount(results.get(ACCOUNT_ID));

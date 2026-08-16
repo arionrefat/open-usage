@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -39,6 +39,18 @@ const CACHE_ONLY_LINE = JSON.stringify({
     },
   },
 });
+
+const tempRoots: string[] = [];
+
+afterAll(() => {
+  for (const root of tempRoots) rmSync(root, { recursive: true, force: true });
+});
+
+function tempRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
 
 describe("parseTranscriptLine", () => {
   test("blends input, output and cache writes, holding cache reads out", () => {
@@ -181,6 +193,44 @@ describe("aggregateTranscriptLines", () => {
 });
 
 describe("readClaudeTranscripts", () => {
+  test("throws when the projects path exists but cannot be read as a directory", () => {
+    const path = join(tempRoot("open-usage-transcript-error-"), "projects");
+    writeFileSync(path, "not a directory");
+    expect(() => readClaudeTranscripts(path)).toThrow();
+  });
+
+  test("prunes cached files when the projects tree disappears", () => {
+    const root = tempRoot("open-usage-transcript-cache-");
+    const projects = join(root, "projects");
+    const path = join(projects, "session.jsonl");
+    const fixedTime = new Date("2026-08-15T10:00:00Z");
+    const line = (tokens: number) => JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-08-15T10:00:00Z",
+      message: { id: "m", model: "opus", usage: { output_tokens: tokens } },
+    });
+    mkdirSync(projects);
+    writeFileSync(path, line(111));
+    utimesSync(path, fixedTime, fixedTime);
+    expect(readClaudeTranscripts(projects, new Date("2026-08-15T12:00:00Z")).tokenSplit.output).toBe(111);
+
+    rmSync(projects, { recursive: true });
+    expect(readClaudeTranscripts(projects).latestMs).toBe(0);
+    mkdirSync(projects);
+    writeFileSync(path, line(222));
+    utimesSync(path, fixedTime, fixedTime);
+    expect(readClaudeTranscripts(projects, new Date("2026-08-15T12:00:00Z")).tokenSplit.output).toBe(222);
+
+    rmSync(projects, { recursive: true });
+    writeFileSync(projects, "not a directory");
+    expect(() => readClaudeTranscripts(projects)).toThrow();
+    rmSync(projects);
+    mkdirSync(projects);
+    writeFileSync(path, line(333));
+    utimesSync(path, fixedTime, fixedTime);
+    expect(readClaudeTranscripts(projects, new Date("2026-08-15T12:00:00Z")).tokenSplit.output).toBe(333);
+  });
+
   test("per-model totals sum to the headline total", () => {
     // These once disagreed by the whole cache-read volume - the overview read
     // 68M while the detail screen's own bars summed to 2.7B off the same events.
@@ -191,7 +241,7 @@ describe("readClaudeTranscripts", () => {
         timestamp: "2026-07-30T10:15:00.000Z",
         message: { id: `msg_${model}_${usage.output_tokens}`, model, usage },
       });
-    const dir = mkdtempSync(join(tmpdir(), "open-usage-transcripts-"));
+    const dir = tempRoot("open-usage-transcripts-");
     writeFileSync(
       join(dir, "a.jsonl"),
       [

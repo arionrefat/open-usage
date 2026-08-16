@@ -6,14 +6,21 @@ export const APP_NAME = "open-usage";
 export const APP_VERSION = pkg.version;
 
 /** Every file the app owns lives here. Honors $XDG_CONFIG_HOME. */
-export function configDir(): string {
-  const xdg = process.env.XDG_CONFIG_HOME?.trim();
-  const base = xdg && isAbsolute(xdg) ? xdg : join(homedir(), ".config");
+export function configDir(
+  env: Record<string, string | undefined> = process.env,
+  home: string = homedir(),
+): string {
+  const xdg = env.XDG_CONFIG_HOME?.trim();
+  const base = xdg && isAbsolute(xdg) ? xdg : join(home, ".config");
   return join(base, APP_NAME);
 }
 
-export function configPath(file: string): string {
-  return join(configDir(), file);
+export function configPath(
+  file: string,
+  env: Record<string, string | undefined> = process.env,
+  home: string = homedir(),
+): string {
+  return join(configDir(env, home), file);
 }
 
 /** Shortens $HOME to `~` so paths stay readable in the narrow right-hand readouts. */

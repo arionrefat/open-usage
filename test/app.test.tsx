@@ -3,7 +3,7 @@ import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 import { App, pollIntervalMilliseconds, providerIdsForRefresh } from "../src/app";
 import { mockUsageProvider } from "../src/data/mock-provider";
-import type { RefreshRequest, UsageProvider } from "../src/data/types";
+import type { RefreshRequest, UsageProvider, UsageSnapshot } from "../src/data/types";
 
 function pendingProvider(onRefresh?: (request: RefreshRequest) => void): UsageProvider {
   const connections = mockUsageProvider.initialConnections();
@@ -18,6 +18,50 @@ function pendingProvider(onRefresh?: (request: RefreshRequest) => void): UsagePr
       });
     },
   };
+}
+
+interface ControlledRefresh {
+  request: RefreshRequest;
+  resolve(snapshot: UsageSnapshot): void;
+  reject(error: unknown): void;
+}
+
+function snapshotWithReset(reset: string): UsageSnapshot {
+  const snapshot = structuredClone(mockUsageProvider.readSnapshot());
+  snapshot.providers.cl.limits[1] = {
+    ...snapshot.providers.cl.limits[1]!,
+    reset,
+    resetLong: reset,
+  };
+  snapshot.providers.cl.scopes.weekly = {
+    ...snapshot.providers.cl.scopes.weekly,
+    reset,
+  };
+  return snapshot;
+}
+
+function controlledProvider(initial: UsageSnapshot) {
+  const refreshes: ControlledRefresh[] = [];
+  let connectionReads = 0;
+  const provider: UsageProvider = {
+    ...mockUsageProvider,
+    initialConnections: () => {
+      connectionReads += 1;
+      return mockUsageProvider.initialConnections();
+    },
+    readSnapshot: () => initial,
+    refresh: (request) => new Promise((resolve, reject) => {
+      refreshes.push({ request, resolve, reject });
+    }),
+  };
+  return { provider, refreshes, connectionReads: () => connectionReads };
+}
+
+async function letRefreshAdvance(setup: Awaited<ReturnType<typeof testRender>>): Promise<void> {
+  await act(async () => {
+    await Bun.sleep(20);
+  });
+  await setup.flush();
 }
 
 describe("App interactions", () => {
@@ -39,19 +83,19 @@ describe("App interactions", () => {
     ).toEqual(["cl", "cx", "go"]);
   });
 
-  test("skips unavailable Codex during automatic refresh but keeps manual probing", () => {
+  test("keeps failed and unverified providers in automatic refreshes", () => {
     const connections = {
       cl: { isEnabled: true, status: "active", credential: "", note: "" },
       cx: { isEnabled: true, status: "expired", credential: "", note: "" },
       go: { isEnabled: true, status: "active", credential: "", note: "" },
     } as const;
 
-    expect(providerIdsForRefresh(connections, "interval")).toEqual(["cl", "go"]);
-    expect(providerIdsForRefresh(connections, "startup")).toEqual(["cl", "go"]);
+    expect(providerIdsForRefresh(connections, "interval")).toEqual(["cl", "cx", "go"]);
+    expect(providerIdsForRefresh(connections, "startup")).toEqual(["cl", "cx", "go"]);
     expect(providerIdsForRefresh(connections, "manual")).toEqual(["cl", "cx", "go"]);
 
     const missing = { ...connections, cx: { ...connections.cx, status: "none" as const } };
-    expect(providerIdsForRefresh(missing, "interval")).toEqual(["cl", "go"]);
+    expect(providerIdsForRefresh(missing, "interval")).toEqual(["cl", "cx", "go"]);
   });
 
   test("starts polling all enabled providers", async () => {
@@ -99,6 +143,105 @@ describe("App interactions", () => {
     }
   });
 
+  test("a successful refresh replaces the rendered snapshot", async () => {
+    const controlled = controlledProvider(snapshotWithReset("INITIAL SNAPSHOT"));
+    const setup = await testRender(
+      <App
+        provider={controlled.provider}
+        startup={{ screen: "app", view: "claude", mode: "detailed" }}
+        isPollingEnabled={false}
+      />,
+      { width: 100, height: 40 },
+    );
+    try {
+      await setup.flush();
+      expect(setup.captureCharFrame()).toContain("INITIAL SNAPSHOT");
+      act(() => setup.renderer.stdin.emit("data", Buffer.from("r")));
+      await letRefreshAdvance(setup);
+      expect(controlled.refreshes).toHaveLength(1);
+      controlled.refreshes[0]!.resolve(snapshotWithReset("REPLACED SNAPSHOT"));
+      await letRefreshAdvance(setup);
+      expect(setup.captureCharFrame()).toContain("REPLACED SNAPSHOT");
+      expect(setup.captureCharFrame()).not.toContain("INITIAL SNAPSHOT");
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
+  test("a rejected refresh renders the refresh error state", async () => {
+    const controlled = controlledProvider(snapshotWithReset("UNCHANGED SNAPSHOT"));
+    const setup = await testRender(
+      <App
+        provider={controlled.provider}
+        startup={{ screen: "app", view: "overview", mode: "detailed" }}
+        isPollingEnabled={false}
+      />,
+      { width: 100, height: 40 },
+    );
+    try {
+      act(() => setup.renderer.stdin.emit("data", Buffer.from("r")));
+      await letRefreshAdvance(setup);
+      controlled.refreshes[0]!.reject(new Error("provider exploded"));
+      await letRefreshAdvance(setup);
+      expect(setup.captureCharFrame()).toContain("▲ refresh failed");
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
+  test("queues one manual refresh and completes it after the active refresh", async () => {
+    const controlled = controlledProvider(snapshotWithReset("INITIAL SNAPSHOT"));
+    const setup = await testRender(
+      <App
+        provider={controlled.provider}
+        startup={{ screen: "app", view: "claude", mode: "detailed" }}
+        isPollingEnabled={false}
+      />,
+      { width: 100, height: 40 },
+    );
+    try {
+      act(() => {
+        setup.renderer.stdin.emit("data", Buffer.from("r"));
+        setup.renderer.stdin.emit("data", Buffer.from("r"));
+      });
+      await letRefreshAdvance(setup);
+      expect(controlled.refreshes).toHaveLength(1);
+
+      controlled.refreshes[0]!.resolve(snapshotWithReset("FIRST REFRESH"));
+      await letRefreshAdvance(setup);
+      expect(controlled.refreshes).toHaveLength(2);
+      expect(controlled.refreshes[1]?.request.reason).toBe("manual");
+
+      controlled.refreshes[1]!.resolve(snapshotWithReset("QUEUED REFRESH"));
+      await letRefreshAdvance(setup);
+      expect(setup.captureCharFrame()).toContain("QUEUED REFRESH");
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
+  test("aborts on unmount and ignores a late provider resolution", async () => {
+    const controlled = controlledProvider(snapshotWithReset("INITIAL SNAPSHOT"));
+    const setup = await testRender(
+      <App
+        provider={controlled.provider}
+        startup={{ screen: "app", view: "claude", mode: "detailed" }}
+        isPollingEnabled={false}
+      />,
+      { width: 100, height: 40 },
+    );
+    act(() => setup.renderer.stdin.emit("data", Buffer.from("r")));
+    await letRefreshAdvance(setup);
+    expect(controlled.refreshes).toHaveLength(1);
+    expect(controlled.connectionReads()).toBe(1);
+
+    act(() => setup.renderer.destroy());
+    expect(controlled.refreshes[0]?.request.signal?.aborted).toBe(true);
+    controlled.refreshes[0]!.resolve(snapshotWithReset("MUST NOT LAND"));
+    await Bun.sleep(20);
+    expect(controlled.connectionReads()).toBe(1);
+  });
+
   test("reconciles a provider signed in after startup when refresh succeeds", async () => {
     let isSignedIn = false;
     const provider: UsageProvider = {
@@ -143,6 +286,35 @@ describe("App interactions", () => {
     }
   });
 
+  test("settings renders live, cache, and local connection states truthfully", async () => {
+    const connections = mockUsageProvider.initialConnections();
+    connections.cl.status = "cached";
+    connections.cx.status = "none";
+    connections.go.status = "local";
+    const provider: UsageProvider = {
+      ...mockUsageProvider,
+      initialConnections: () => structuredClone(connections),
+    };
+    const setup = await testRender(
+      <App
+        provider={provider}
+        startup={{ screen: "app", view: "settings", mode: "detailed" }}
+        isPollingEnabled={false}
+      />,
+      { width: 100, height: 40 },
+    );
+
+    try {
+      await setup.flush();
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("cached");
+      expect(frame).toContain("not connected");
+      expect(frame).toContain("local");
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
   test("persists the final settings after batched shortcuts", async () => {
     const patches: Array<Record<string, unknown>> = [];
     const setup = await testRender(
@@ -182,6 +354,54 @@ describe("App interactions", () => {
         { warnThreshold: 90 },
         { defaultOverviewMode: "simple" },
       ]);
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
+  test("shows and clears a preference save failure in the status bar", async () => {
+    let succeeds = false;
+    const setup = await testRender(
+      <App
+        provider={pendingProvider()}
+        startup={{ screen: "app", view: "settings", mode: "detailed" }}
+        isPollingEnabled={false}
+        onPreferencesChange={() => succeeds}
+      />,
+      { width: 100, height: 40 },
+    );
+
+    try {
+      act(() => setup.renderer.stdin.emit("data", Buffer.from("p")));
+      await setup.flush();
+      expect(setup.captureCharFrame()).toContain("▲ save failed");
+
+      succeeds = true;
+      act(() => setup.renderer.stdin.emit("data", Buffer.from("p")));
+      await setup.flush();
+      expect(setup.captureCharFrame()).not.toContain("▲ save failed");
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
+  test("turns a thrown preference save error into the same status", async () => {
+    const setup = await testRender(
+      <App
+        provider={pendingProvider()}
+        startup={{ screen: "app", view: "settings", mode: "detailed" }}
+        isPollingEnabled={false}
+        onPreferencesChange={() => {
+          throw new Error("lock timeout");
+        }}
+      />,
+      { width: 100, height: 40 },
+    );
+
+    try {
+      act(() => setup.renderer.stdin.emit("data", Buffer.from("p")));
+      await setup.flush();
+      expect(setup.captureCharFrame()).toContain("▲ save failed");
     } finally {
       act(() => setup.renderer.destroy());
     }

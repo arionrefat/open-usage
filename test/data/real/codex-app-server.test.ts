@@ -1,5 +1,15 @@
-import { describe, expect, test } from "bun:test";
-import { parseAccount, parseRateLimits, parseUsageHistory } from "../../../src/data/real/codex-app-server";
+import { afterAll, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  CodexProbeError,
+  parseAccount,
+  parseRateLimits,
+  parseUsageHistory,
+  readCodexLimits,
+  runRequests,
+} from "../../../src/data/real/codex-app-server";
+import { createStubExecutable, stubEnvironment } from "./stub-executable";
 
 /** Shape generated from `codex app-server generate-json-schema` on codex-cli 0.146.0. */
 const LIVE_RESPONSE = {
@@ -35,6 +45,168 @@ const LIVE_RESPONSE = {
 };
 
 const NOW_MS = 1_786_000_000_000;
+
+const cleanups: Array<() => void> = [];
+afterAll(() => {
+  for (const cleanup of cleanups.splice(0)) cleanup();
+});
+
+function appServerStub() {
+  const rateLimits = JSON.stringify(LIVE_RESPONSE);
+  const account = JSON.stringify({ account: { type: "chatgpt", planType: "plus" } });
+  const usage = JSON.stringify({
+    summary: {
+      lifetimeTokens: 100,
+      peakDailyTokens: 80,
+      longestRunningTurnSec: 9,
+      currentStreakDays: 2,
+      longestStreakDays: 4,
+    },
+    dailyUsageBuckets: [{ startDate: "2026-08-16", tokens: 100 }],
+  });
+  const stub = createStubExecutable(`
+if [ "$STUB_MODE" = timeout ] || [ "$STUB_MODE" = abort ]; then
+  trap '' TERM
+  while :; do sleep 1; done
+fi
+IFS= read -r initialize
+if [ -n "$STUB_LOG" ]; then printf '%s\\n' "$initialize" >> "$STUB_LOG"; fi
+if [ "$STUB_MODE" = invalid ]; then printf 'noise\\n'; exit 0; fi
+printf '{"jsonrpc":"2.0","id":'
+sleep 0.01
+printf '0,"result":{}}\\n'
+IFS= read -r initialized
+IFS= read -r request1
+if [ -n "$STUB_LOG" ]; then printf '%s\\n%s\\n' "$initialized" "$request1" >> "$STUB_LOG"; fi
+case "$STUB_MODE" in
+  logged-out|unsupported)
+    printf '{"jsonrpc":"2.0","id":1,"error":{"message":"authentication login required"}}\\n'
+    ;;
+  rpc-error)
+    printf '{"jsonrpc":"2.0","id":1,"error":{"message":"unexpected server failure"}}\\n'
+    ;;
+  env)
+    if /usr/bin/env | /usr/bin/grep '^OPEN_USAGE_' >/dev/null; then state=leaked; else state=clean; fi
+    printf '{"jsonrpc":"2.0","id":1,"result":{"rateLimits":{"primary":{"usedPercent":12,"windowDurationMins":10080},"planType":"%s"}}}\\n' "$state"
+    ;;
+  *) printf '%s\\n' '${rateLimits}' | /usr/bin/sed 's/^/{"jsonrpc":"2.0","id":1,"result":/; s/$/}/' ;;
+esac
+IFS= read -r request2
+if [ -n "$STUB_LOG" ]; then printf '%s\\n' "$request2" >> "$STUB_LOG"; fi
+if [ "$STUB_MODE" = unsupported ]; then
+  printf '{"jsonrpc":"2.0","id":2,"result":{"account":{"type":"apiKey","planType":null}}}\\n'
+else
+  printf '%s\\n' '${account}' | /usr/bin/sed 's/^/{"jsonrpc":"2.0","id":2,"result":/; s/$/}/'
+fi
+IFS= read -r request3
+if [ -n "$STUB_LOG" ]; then printf '%s\\n' "$request3" >> "$STUB_LOG"; fi
+printf '%s\\n' '${usage}' | /usr/bin/sed 's/^/{"jsonrpc":"2.0","id":3,"result":/; s/$/}/'`);
+  cleanups.push(stub.cleanup);
+  return stub;
+}
+
+describe("Codex app-server transport", () => {
+  test("performs initialize/initialized ordering and parses streamed frames", async () => {
+    const { executable, root } = appServerStub();
+    const log = join(root, "requests.jsonl");
+    const outcome = await runRequests(
+      [
+        { id: 1, method: "account/rateLimits/read" },
+        { id: 2, method: "account/read" },
+        { id: 3, method: "account/usage/read" },
+      ],
+      { executable, env: stubEnvironment({ STUB_LOG: log }) },
+    );
+
+    expect(outcome.errors.size).toBe(0);
+    expect(outcome.results.has(1)).toBe(true);
+    expect(outcome.results.has(2)).toBe(true);
+    expect(outcome.results.has(3)).toBe(true);
+    const sent = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(sent.map((message) => message.method)).toEqual([
+      "initialize",
+      "initialized",
+      "account/rateLimits/read",
+      "account/read",
+      "account/usage/read",
+    ]);
+  });
+
+  test("readCodexLimits assembles limits, account, and usage replies", async () => {
+    const { executable } = appServerStub();
+    const limits = await readCodexLimits(new Date(NOW_MS), {
+      executable,
+      env: stubEnvironment(),
+    });
+    expect(limits.planType).toBe("plus");
+    expect(limits.weekly?.usedPercent).toBe(0);
+    expect(limits.additionalRateLimits[0]?.name).toBe("codex mini");
+    expect(limits.usage?.dailyTokens.get("2026-08-16")).toBe(100);
+  });
+
+  test("times out a silent server and settles even when it ignores SIGTERM", async () => {
+    const { executable } = appServerStub();
+    const started = Date.now();
+    await expect(readCodexLimits(new Date(NOW_MS), {
+      executable,
+      timeoutMs: 1_000,
+      killGraceMs: 20,
+      env: stubEnvironment({ STUB_MODE: "timeout" }),
+    })).rejects.toMatchObject({ kind: "timeout" });
+    expect(Date.now() - started).toBeLessThan(1_800);
+  });
+
+  test("propagates abort reasons from an active request", async () => {
+    const { executable } = appServerStub();
+    const controller = new AbortController();
+    const reason = new Error("refresh superseded");
+    const pending = readCodexLimits(new Date(NOW_MS), {
+      executable,
+      signal: controller.signal,
+      env: stubEnvironment({ STUB_MODE: "abort" }),
+    });
+    setTimeout(() => controller.abort(reason), 50);
+    await expect(pending).rejects.toBe(reason);
+  });
+
+  test("classifies missing executables, unusable frames, and RPC errors", async () => {
+    await expect(readCodexLimits(new Date(NOW_MS), {
+      executable: "/definitely/not/a/codex",
+      env: stubEnvironment(),
+    })).rejects.toMatchObject({ kind: "not-installed" });
+
+    const invalid = appServerStub();
+    await expect(readCodexLimits(new Date(NOW_MS), {
+      executable: invalid.executable,
+      env: stubEnvironment({ STUB_MODE: "invalid" }),
+    })).rejects.toMatchObject({ kind: "protocol" });
+
+    for (const [mode, kind] of [
+      ["logged-out", "not-logged-in"],
+      ["unsupported", "unsupported-auth"],
+      ["rpc-error", "protocol"],
+    ] as const) {
+      const stub = appServerStub();
+      await expect(readCodexLimits(new Date(NOW_MS), {
+        executable: stub.executable,
+        env: stubEnvironment({ STUB_MODE: mode }),
+      })).rejects.toMatchObject({ kind });
+    }
+  });
+
+  test("scrubs OPEN_USAGE variables from the app-server environment", async () => {
+    const { executable } = appServerStub();
+    const limits = await readCodexLimits(new Date(NOW_MS), {
+      executable,
+      env: stubEnvironment({
+        STUB_MODE: "env",
+        OPEN_USAGE_SECRET: "nope",
+        OPEN_USAGE_FUTURE_TOKEN: "also-nope",
+      }),
+    });
+    expect(limits.planType).toBe("clean");
+  });
+});
 
 describe("parseRateLimits", () => {
   test("classifies a lone weekly primary window by its duration", () => {

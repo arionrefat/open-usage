@@ -1,11 +1,113 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   ClaudeUsageError,
   createClaudeLimitsSource,
   parseClaudeUsage,
+  readClaudeUsage,
 } from "../../../src/data/real/claude-usage";
+import {
+  createStubExecutable,
+  stubEnvironment,
+} from "./stub-executable";
+
+const cleanups: Array<() => void> = [];
+afterAll(() => {
+  for (const cleanup of cleanups.splice(0)) cleanup();
+});
 
 const NOW_MS = Date.now();
+
+function usageStub() {
+  const stub = createStubExecutable(`
+if [ -n "$STUB_STARTED_FILE" ]; then printf started > "$STUB_STARTED_FILE"; fi
+case "$STUB_MODE" in
+  invalid) printf 'not-json' ;;
+  nonzero) exit 19 ;;
+  hang)
+    trap '' TERM
+    printf '%s' "$$" > "$STUB_PID_FILE"
+    while :; do sleep 1; done
+    ;;
+  env)
+    if /usr/bin/env | /usr/bin/grep '^OPEN_USAGE_' >/dev/null; then state=leaked; else state=clean; fi
+    printf '{"result":"Current session: 12%% used · resets %s\\\\nCurrent week (all models): 34%% used · resets tomorrow"}' "$state"
+    ;;
+  *) printf '{"result":"Current session: 12%% used · resets soon\\\\nCurrent week (all models): 34%% used · resets tomorrow"}' ;;
+esac`);
+  cleanups.push(stub.cleanup);
+  return stub;
+}
+
+describe("readClaudeUsage subprocess adapter", () => {
+  test("parses a successful real child response", async () => {
+    const { executable } = usageStub();
+    await expect(readClaudeUsage(new Date(NOW_MS), {
+      executable,
+      env: stubEnvironment(),
+    })).resolves.toEqual({
+      session: { percent: 12, reset: "resets soon" },
+      weekly: { percent: 34, reset: "resets tomorrow" },
+      fetchedAtMs: NOW_MS,
+    });
+  });
+
+  test("classifies invalid JSON and a non-zero exit", async () => {
+    const { executable } = usageStub();
+    await expect(readClaudeUsage(new Date(NOW_MS), {
+      executable,
+      env: stubEnvironment({ STUB_MODE: "invalid" }),
+    })).rejects.toMatchObject({ kind: "protocol" });
+    await expect(readClaudeUsage(new Date(NOW_MS), {
+      executable,
+      env: stubEnvironment({ STUB_MODE: "nonzero" }),
+    })).rejects.toMatchObject({ kind: "not-logged-in" });
+  });
+
+  test("settles on timeout and SIGKILLs a TERM-ignoring child", async () => {
+    const { executable, root } = usageStub();
+    const pidFile = join(root, "pid");
+    const started = Date.now();
+    await expect(readClaudeUsage(new Date(NOW_MS), {
+      executable,
+      timeoutMs: 1_000,
+      killGraceMs: 20,
+      env: stubEnvironment({ STUB_MODE: "hang", STUB_PID_FILE: pidFile }),
+    })).rejects.toMatchObject({ kind: "timeout" });
+    expect(Date.now() - started).toBeLessThan(1_800);
+    await Bun.sleep(80);
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(() => process.kill(pid, 0)).toThrow();
+  });
+
+  test("honors a pre-aborted signal without starting the executable", async () => {
+    const { executable, root } = usageStub();
+    const marker = join(root, "started");
+    const reason = new Error("already cancelled");
+    const controller = new AbortController();
+    controller.abort(reason);
+    await expect(readClaudeUsage(new Date(NOW_MS), {
+      executable,
+      signal: controller.signal,
+      env: stubEnvironment({ STUB_STARTED_FILE: marker }),
+    })).rejects.toBe(reason);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  test("scrubs every OPEN_USAGE variable from the child environment", async () => {
+    const { executable } = usageStub();
+    const usage = await readClaudeUsage(new Date(NOW_MS), {
+      executable,
+      env: stubEnvironment({
+        STUB_MODE: "env",
+        OPEN_USAGE_SECRET: "nope",
+        OPEN_USAGE_FUTURE_TOKEN: "also-nope",
+      }),
+    });
+    expect(usage.session.reset).toBe("resets clean");
+  });
+});
 
 function result(session = 10, weekly = 95): unknown {
   return {

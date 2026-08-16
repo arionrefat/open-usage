@@ -4,8 +4,8 @@ export type ProviderId = "cl" | "cx" | "go";
 
 export const PROVIDER_IDS: readonly ProviderId[] = ["cl", "cx", "go"] as const;
 
-/** Whether a stored credential can currently be used to read limits. */
-export type ConnectionStatus = "active" | "expired" | "none";
+/** Result of the provider's most recent limits read, or its startup cache state. */
+export type ConnectionStatus = "active" | "cached" | "local" | "expired" | "none";
 
 export type ScopeKey = "session" | "weekly";
 
@@ -187,6 +187,8 @@ export const STATUS_PRESENTATION: Record<
   { label: string; color: string; dot: string }
 > = {
   active: { label: "active", color: COLORS.ok, dot: "●" },
-  expired: { label: "subscription ended", color: COLORS.warn, dot: "◍" },
+  cached: { label: "cached", color: COLORS.info, dot: "◐" },
+  local: { label: "local", color: COLORS.info, dot: "◐" },
+  expired: { label: "failed", color: COLORS.warn, dot: "◍" },
   none: { label: "not connected", color: COLORS.textFaint, dot: "○" },
 };

@@ -63,7 +63,11 @@ describe("derived state", () => {
 
   test("reports no week-over-week comparison without 14 days of history", () => {
     const snapshot = mockUsageProvider.readSnapshot();
-    const short = { ...snapshot, dailyDates: snapshot.dailyDates.slice(-13) };
+    const short = structuredClone(snapshot);
+    short.dailyDates = short.dailyDates.slice(-13);
+    for (const provider of Object.values(short.providers)) {
+      provider.series.daily = provider.series.daily.slice(-13);
+    }
 
     expect(deriveState(initialState(), short).weekOverWeek).toEqual({
       cl: null,
@@ -102,7 +106,7 @@ describe("derived state", () => {
     const derived = deriveState(state, mockUsageProvider.readSnapshot());
 
     expect(derived.disconnectedIds).toEqual(["cx", "go"]);
-    expect(derived.windowNote).toContain("codex - subscription ended");
+    expect(derived.windowNote).toContain("codex - failed");
     expect(derived.windowNote).toContain("opencode go - not connected");
   });
 

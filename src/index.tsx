@@ -34,8 +34,10 @@ const startup = startupFromFlagsAndPreferences(flags, preferences);
 const persistPreferences = (patch: Partial<typeof preferences>) => {
   try {
     preferences = updatePreferences(preferencesPath, patch);
+    return true;
   } catch {
     // A read-only home directory must not prevent the dashboard from running.
+    return false;
   }
 };
 const provider = selectUsageProvider(providerModeFromFlags(flags, "real"));

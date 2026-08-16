@@ -173,9 +173,6 @@ const QUADS = {
 const LINES = {"\\u2500":"h","\\u2502":"v","\\u250c":"tl","\\u2510":"tr","\\u2514":"bl","\\u2518":"br"};
 function drawCell(g, cell, x, y) {
   const px = x * CW, py = y * CH;
-  g.fillStyle = cell.bg;
-  g.fillRect(px, py, CW, CH);
-
   const rect = RECTS[cell.ch];
   if (rect) {
     g.fillStyle = cell.fg;
@@ -212,6 +209,10 @@ function drawCell(g, cell, x, y) {
   g.font = (cell.bold ? "bold " : "") + "14px 'JetBrains Mono', Menlo, monospace";
   g.fillText(cell.ch, px, py + CH - 5);
 }
+function drawCellBackground(g, cell, x, y) {
+  g.fillStyle = cell.bg;
+  g.fillRect(x * CW, y * CH, CW, CH);
+}
 for (const shot of SHOTS) {
   const heading = document.createElement("h2");
   heading.textContent = shot.label + ' ';
@@ -224,6 +225,9 @@ for (const shot of SHOTS) {
   const g = canvas.getContext("2d");
   g.fillStyle = "${COLORS.bg}";
   g.fillRect(0, 0, canvas.width, canvas.height);
+  // Paint every cell background first. A wide glyph reaches into its continuation
+  // cell, so painting that cell afterward would clip the glyph's second column.
+  shot.cells.forEach((row, y) => row.forEach((cell, x) => drawCellBackground(g, cell, x, y)));
   shot.cells.forEach((row, y) => row.forEach((cell, x) => drawCell(g, cell, x, y)));
   document.getElementById("out").append(heading, canvas);
 }

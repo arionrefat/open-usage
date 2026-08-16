@@ -9,7 +9,7 @@ import {
 import { isRecord } from "./json";
 import { formatAge } from "./aggregate";
 import { createPolledSource } from "./polled-source";
-import type { PollOptions } from "../types";
+import type { ConnectionStatus, PollOptions } from "../types";
 
 /**
  * Server-truth go limits, polled out-of-band because the UI reads snapshots
@@ -20,6 +20,7 @@ export interface GoLimitsSource {
   read(now?: Date): GoServerLimits | null;
   /** Why server limits are missing, or null when they are present. */
   note(now?: Date): string | null;
+  status?(): ConnectionStatus;
   cookieExpiresAtMs(): number | null;
   poll(now: Date, options?: PollOptions): Promise<void>;
 }
@@ -67,6 +68,7 @@ export function cookieExpiryMs(cookieHeader: string): number | null {
 export const dormantGoLimitsSource: GoLimitsSource = {
   read: () => null,
   note: () => null,
+  status: () => "none",
   cookieExpiresAtMs: () => null,
   poll: () => Promise.resolve(),
 };
@@ -146,6 +148,12 @@ export function createGoLimitsSource(
       // old request failure must not linger after the source is disabled.
       if (!readCookie(configPath, env)) return null;
       return source.note(now);
+    },
+    status: () => {
+      const cookie = readCookie(configPath, env);
+      if (!cookie) return "none";
+      if (filterCookieHeader(cookie) === null) return "expired";
+      return source.status();
     },
     poll: source.poll,
     cookieExpiresAtMs: () => {

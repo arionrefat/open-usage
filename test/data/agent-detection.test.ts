@@ -45,6 +45,10 @@ describe("coding agent detection", () => {
       writeFileSync(paths.opencodeDb, "");
 
       expect(detectAgentInstallations(paths)).toEqual({ cl: true, cx: true, go: true });
+      const connections = createRealUsageProvider({ paths, env: {} }).initialConnections();
+      expect(connections.cl.status).toBe("none");
+      expect(connections.cx.status).toBe("none");
+      expect(connections.go.status).toBe("none");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -59,7 +63,12 @@ describe("coding agent detection", () => {
     const connections = createRealUsageProvider({ paths, env: {} }).initialConnections();
 
     expect(connections.cl).toMatchObject({ isEnabled: false, isAgentInstalled: false });
-    expect(connections.cx).toMatchObject({ isEnabled: true, isAgentInstalled: true });
+    expect(connections.cx).toMatchObject({
+      isEnabled: true,
+      isAgentInstalled: true,
+      status: "none",
+      note: "codex found; sign in with its CLI",
+    });
     expect(connections.go).toMatchObject({ isEnabled: false, isAgentInstalled: false });
   });
 });

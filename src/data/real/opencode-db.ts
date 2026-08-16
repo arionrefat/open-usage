@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
+import { statSync } from "node:fs";
 import { DAY_MS, type HourBuckets } from "./aggregate";
 import { isRecord } from "./json";
 
@@ -187,7 +187,7 @@ export function usageFromRows(
   return { buckets, stats, latestMs };
 }
 
-/** Readonly aggregate read; null when the DB is missing or unreadable. */
+/** Readonly aggregate read; null only when the DB is absent. */
 export function aggregateRowsFromDatabase(db: Database, sinceMs: number): unknown[][] {
   return db.transaction(() => [
     db.query(HOUR_ROWS_SQL).all(sinceMs),
@@ -199,7 +199,12 @@ export function aggregateRowsFromDatabase(db: Database, sinceMs: number): unknow
 }
 
 export function readOpencodeUsage(dbPath: string, now: Date): OpencodeUsage | null {
-  if (!existsSync(dbPath)) return null;
+  try {
+    statSync(dbPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") return null;
+    throw error;
+  }
   let db: Database | null = null;
   try {
     db = new Database(dbPath, { readonly: true });
@@ -207,9 +212,9 @@ export function readOpencodeUsage(dbPath: string, now: Date): OpencodeUsage | nu
     const [hourRows = [], sessionRows = [], modelRows = [], detailRows = [], dailyCostRows = []] =
       aggregateRowsFromDatabase(db, sinceMs);
     return usageFromRows(hourRows, sessionRows, modelRows, detailRows, dailyCostRows);
-  } catch {
-    // A locked or migrated DB is an expected local condition, not a crash.
-    return null;
+  } catch (error) {
+    // The provider catches this boundary and marks the source unreadable.
+    throw error;
   } finally {
     db?.close();
   }

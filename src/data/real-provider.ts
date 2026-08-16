@@ -29,9 +29,11 @@ import {
   type WeeklyTrend,
 } from "./real/statusline-snapshot";
 import type {
+  ConnectionStatus,
   ProviderConnection,
   ProviderId,
   ProviderMeta,
+  ProviderUsage,
   RefreshRequest,
   UsageProvider,
   UsageSnapshot,
@@ -53,13 +55,24 @@ export interface RealProviderPaths {
   opencodeExecutable?: string | null;
 }
 
-export function defaultRealProviderPaths(): RealProviderPaths {
-  const home = homedir();
+export interface DefaultRealProviderPathOptions {
+  env?: Record<string, string | undefined>;
+  homeDir?: string;
+  which?: (command: string, path: string | undefined) => string | null;
+}
+
+export function defaultRealProviderPaths(
+  options: DefaultRealProviderPathOptions = {},
+): RealProviderPaths {
+  const env = options.env ?? process.env;
+  const home = options.homeDir ?? homedir();
+  const which = options.which ?? ((command: string, path: string | undefined) =>
+    Bun.which(command, { PATH: path }));
   const opencodeData = join(home, ".local", "share", "opencode");
   // Both CLIs document these overrides; relative OPENCODE_DB names resolve
   // under the opencode data directory.
-  const opencodeDbEnv = process.env.OPENCODE_DB?.trim();
-  const codexHomeEnv = process.env.CODEX_HOME?.trim();
+  const opencodeDbEnv = env.OPENCODE_DB?.trim();
+  const codexHomeEnv = env.CODEX_HOME?.trim();
   return {
     opencodeDb: opencodeDbEnv
       ? opencodeDbEnv.startsWith("/")
@@ -67,16 +80,16 @@ export function defaultRealProviderPaths(): RealProviderPaths {
         : join(opencodeData, opencodeDbEnv)
       : join(opencodeData, "opencode.db"),
     opencodeAuth: join(opencodeData, "auth.json"),
-    configFile: configPath("config.json"),
+    configFile: configPath("config.json", env, home),
     claudeProjects: join(home, ".claude", "projects"),
     claudeHistory: join(home, ".claude", "history.jsonl"),
     claudeSettings: join(home, ".claude", "settings.json"),
     usageSnapshot: join(home, ".claude", "usage-snapshot.json"),
-    usageCache: configPath("usage-cache.json"),
+    usageCache: configPath("usage-cache.json", env, home),
     codexHome: codexHomeEnv || join(home, ".codex"),
-    claudeExecutable: Bun.which("claude"),
-    codexExecutable: Bun.which("codex"),
-    opencodeExecutable: Bun.which("opencode"),
+    claudeExecutable: which("claude", env.PATH),
+    codexExecutable: which("codex", env.PATH),
+    opencodeExecutable: which("opencode", env.PATH),
   };
 }
 
@@ -156,15 +169,27 @@ function goCredential(auth: OpencodeAuth, hasCookie: boolean, hasLocalData: bool
   return auth.opencodeGo?.maskedKey ?? (hasLocalData ? "local · opencode.db" : "");
 }
 
-function goNote(hasCookie: boolean, hasLocalData: boolean): string {
+function goNote(
+  hasCookie: boolean,
+  hasLocalData: boolean,
+  status: ConnectionStatus,
+): string {
   if (hasCookie) {
-    return hasLocalData
-      ? "exact limits via dashboard cookie"
-      : "exact limits via cookie; no local history";
+    if (status === "active") return "live limits";
+    if (status === "cached") return "cached limits";
+    return hasLocalData ? "cookie ready; local history" : "cookie ready";
   }
   return hasLocalData
     ? "local estimate; dashboard cookie is optional"
     : "opencode found; use Go once to create local usage data";
+}
+
+function limitsStatus(
+  source: { status?(): ConnectionStatus; read(): unknown; note(): string | null },
+): ConnectionStatus {
+  if (source.status) return source.status();
+  if (source.note()) return "expired";
+  return source.read() ? "cached" : "none";
 }
 
 /** Visible when opencode is installed or a cookie is configured; either alone is enough. */
@@ -173,6 +198,8 @@ function goConnection(
   auth: OpencodeAuth,
   isAgentInstalled: boolean,
   hasCookie: boolean,
+  limits: GoLimitsSource,
+  hasLocalLimits: boolean,
 ): ProviderConnection {
   if (!isAgentInstalled && !hasCookie) {
     return {
@@ -184,12 +211,19 @@ function goConnection(
     };
   }
   const hasLocalData = existsSync(paths.opencodeDb);
+  const remoteStatus = limitsStatus(limits);
+  const status = remoteStatus === "none" && hasLocalLimits ? "local" : remoteStatus;
   return {
     isEnabled: true,
     isAgentInstalled,
-    status: hasCookie || hasLocalData || auth.opencodeGo ? "active" : "none",
+    status,
     credential: goCredential(auth, hasCookie, hasLocalData),
-    note: goNote(hasCookie, hasLocalData),
+    note:
+      status === "expired"
+        ? (limits.note() ?? "limits unavailable")
+        : status === "local"
+          ? "local estimate"
+          : goNote(hasCookie, hasLocalData && hasLocalLimits, status),
   };
 }
 
@@ -198,21 +232,34 @@ function buildConnections(
   auth: OpencodeAuth,
   snapshotFile: SnapshotFile | null,
   hasCookie: boolean,
+  claudeLimits: ClaudeLimitsSource,
+  codexLimits: CodexLimitsSource,
+  goLimits: GoLimitsSource,
+  claudeAuth: ClaudeAuthSource,
+  hasGoLocalLimits: boolean,
 ): Record<ProviderId, ProviderConnection> {
   const installations = detectAgentInstallations(paths);
-  const hasClaudeData = existsSync(paths.claudeProjects) || existsSync(paths.claudeHistory);
-  const hasCodexData = existsSync(paths.codexHome);
+  const claudeAuthInfo = claudeAuth.read();
+  const claudeStatus = claudeAuthInfo?.loggedIn === false ? "expired" : limitsStatus(claudeLimits);
+  const codexStatus = limitsStatus(codexLimits);
+  const hasClaude = installations.cl || claudeStatus !== "none";
+  const hasCodex = installations.cx || codexStatus !== "none";
 
   return {
-    cl: installations.cl
+    cl: hasClaude
       ? {
           isEnabled: true,
-          isAgentInstalled: true,
-          status: hasClaudeData ? "active" : "none",
-          credential: hasClaudeData ? "oauth · claude code" : "",
-          note: hasClaudeData
-            ? claudeConnectionNote(snapshotFile, hasStatuslineConfigured(paths.claudeSettings))
-            : "claude code found; sign in with its CLI",
+          isAgentInstalled: installations.cl,
+          status: claudeStatus,
+          credential: claudeStatus === "none" ? "" : "oauth · claude code",
+          note:
+            claudeStatus === "active"
+              ? claudeConnectionNote(snapshotFile, hasStatuslineConfigured(paths.claudeSettings))
+              : claudeStatus === "cached"
+                ? "cached limits"
+                : claudeStatus === "expired"
+                  ? (claudeLimits.note() ?? "claude not signed in")
+                  : "claude code found; sign in with its CLI",
         }
       : {
           isEnabled: false,
@@ -221,15 +268,20 @@ function buildConnections(
           credential: "",
           note: "claude code not found",
         },
-    cx: installations.cx
+    cx: hasCodex
       ? {
           isEnabled: true,
-          isAgentInstalled: true,
-          status: hasCodexData ? "active" : "none",
-          credential: hasCodexData ? "oauth · codex cli" : "",
-          note: hasCodexData
-            ? "live account data refreshes with the app poll"
-            : "codex found; sign in with its CLI",
+          isAgentInstalled: installations.cx,
+          status: codexStatus,
+          credential: codexStatus === "none" ? "" : "oauth · codex cli",
+          note:
+            codexStatus === "active"
+              ? "live account limits"
+              : codexStatus === "cached"
+                ? "cached limits"
+                : codexStatus === "expired"
+                  ? (codexLimits.note() ?? "codex limits unavailable")
+                  : "codex found; sign in with its CLI",
         }
       : {
           isEnabled: false,
@@ -238,7 +290,7 @@ function buildConnections(
           credential: "",
           note: "codex not found",
         },
-    go: goConnection(paths, auth, installations.go, hasCookie),
+    go: goConnection(paths, auth, installations.go, hasCookie, goLimits, hasGoLocalLimits),
   };
 }
 
@@ -264,6 +316,32 @@ function latestSourceTimestamp(nowMs: number, timestamps: number[]): number {
   return Math.min(nowMs, latestTimestamp);
 }
 
+const UNREADABLE_NOTICE = "usage source unreadable";
+
+function withUnreadableNotice(provider: ProviderUsage): ProviderUsage {
+  return {
+    ...provider,
+    hasHistory: false,
+    notice: provider.notice
+      ? {
+          ...provider.notice,
+          icon: "▲",
+          iconColor: COLORS.warn,
+          segments: [...provider.notice.segments, { text: ` · ${UNREADABLE_NOTICE}` }],
+        }
+      : {
+          icon: "▲",
+          iconColor: COLORS.warn,
+          segments: [{ text: UNREADABLE_NOTICE }],
+        },
+  };
+}
+
+interface BuiltSnapshot {
+  snapshot: UsageSnapshot;
+  hasGoLocalLimits: boolean;
+}
+
 function buildSnapshot(
   paths: RealProviderPaths,
   meta: Record<ProviderId, ProviderMeta>,
@@ -272,12 +350,30 @@ function buildSnapshot(
   goLimits: GoLimitsSource,
   trend: WeeklyTrend,
   claudeAuth: ClaudeAuthSource,
-): UsageSnapshot {
+): BuiltSnapshot {
   const now = new Date();
   const nowMs = now.getTime();
   const dates = dailyDateKeys(now);
-  const opencode = readOpencodeUsage(paths.opencodeDb, now);
-  const transcripts = readClaudeTranscripts(paths.claudeProjects);
+  const unreadable = new Set<ProviderId>();
+  let opencode: ReturnType<typeof readOpencodeUsage> = null;
+  try {
+    opencode = readOpencodeUsage(paths.opencodeDb, now);
+  } catch {
+    unreadable.add("cx");
+    unreadable.add("go");
+  }
+  let transcripts: ReturnType<typeof readClaudeTranscripts>;
+  try {
+    transcripts = readClaudeTranscripts(paths.claudeProjects);
+  } catch {
+    unreadable.add("cl");
+    transcripts = {
+      buckets: new Map(),
+      latestMs: 0,
+      modelTokens: new Map(),
+      tokenSplit: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+  }
   const history = readHistoryStats(paths.claudeHistory, nowMs - STATS_WINDOW_DAYS * DAY_MS);
   const snapshotFile = readUsageSnapshot(paths.usageSnapshot, now);
   const cl = buildClaudeProvider({
@@ -295,7 +391,12 @@ function buildSnapshot(
   // Native rollout files see every codex session on this device; opencode.db
   // only sees what opencode itself sent to an "openai" provider, so it is
   // merely a fallback.
-  const codexLocal = readCodexSessions(paths.codexHome, now);
+  let codexLocal: ReturnType<typeof readCodexSessions> = null;
+  try {
+    codexLocal = readCodexSessions(paths.codexHome, now);
+  } catch {
+    unreadable.add("cx");
+  }
   const cx = buildCodexProvider({
     meta: meta.cx,
     buckets: codexLocal?.buckets ?? providerBuckets(opencode, "openai"),
@@ -311,7 +412,12 @@ function buildSnapshot(
     dates,
     now,
   });
-  const goSpend = readGoSpend(paths.opencodeDb, now);
+  let goSpend: ReturnType<typeof readGoSpend> = null;
+  try {
+    goSpend = readGoSpend(paths.opencodeDb, now);
+  } catch {
+    unreadable.add("go");
+  }
   const goResult = buildGoProvider({
     meta: meta.go,
     buckets: providerBuckets(opencode, "opencode-go"),
@@ -332,17 +438,24 @@ function buildSnapshot(
   ]);
 
   return {
-    providers: { cl, cx, go: goResult.provider },
-    dailyDates: dates,
-    hourlyAxis: ["00:00", "12:00", "23:00"],
-    fetchedAt,
-    // Only caveats that still apply; a connected provider says nothing.
-    windowNote: [
-      codexWindowNote(codexLimits),
-      goResult.usesEstimate && goSpend ? "opencode go is a local spend estimate" : null,
-    ]
-      .filter((part): part is string => part !== null)
-      .join(" · "),
+    hasGoLocalLimits: goSpend !== null,
+    snapshot: {
+      providers: {
+        cl: unreadable.has("cl") ? withUnreadableNotice(cl) : cl,
+        cx: unreadable.has("cx") ? withUnreadableNotice(cx) : cx,
+        go: unreadable.has("go") ? withUnreadableNotice(goResult.provider) : goResult.provider,
+      },
+      dailyDates: dates,
+      hourlyAxis: ["00:00", "12:00", "23:00"],
+      fetchedAt,
+      // Only caveats that still apply; a connected provider says nothing.
+      windowNote: [
+        codexWindowNote(codexLimits),
+        goResult.usesEstimate && goSpend ? "opencode go is a local spend estimate" : null,
+      ]
+        .filter((part): part is string => part !== null)
+        .join(" · "),
+    },
   };
 }
 
@@ -376,7 +489,7 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
   const claudeAuth = options.claudeAuth ?? createClaudeAuthSource();
   const trend = createWeeklyTrend();
   const meta = buildMeta();
-  let snapshot = buildSnapshot(paths, meta, claudeLimits, codexLimits, goLimits, trend, claudeAuth);
+  let built = buildSnapshot(paths, meta, claudeLimits, codexLimits, goLimits, trend, claudeAuth);
 
   return {
     scopeTitles: { session: "current session", weekly: "weekly limit" },
@@ -387,8 +500,13 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
         readOpencodeAuth(paths.opencodeAuth),
         readUsageSnapshot(paths.usageSnapshot, new Date()),
         hasOpencodeCookie(paths, env),
+        claudeLimits,
+        codexLimits,
+        goLimits,
+        claudeAuth,
+        built.hasGoLocalLimits,
       ),
-    readSnapshot: () => snapshot,
+    readSnapshot: () => built.snapshot,
     refresh: async (request: RefreshRequest) => {
       const signal = request.signal;
       if (signal?.aborted) {
@@ -414,8 +532,8 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
           ? signal.reason
           : new DOMException("Refresh aborted", "AbortError");
       }
-      snapshot = buildSnapshot(paths, meta, claudeLimits, codexLimits, goLimits, trend, claudeAuth);
-      return snapshot;
+      built = buildSnapshot(paths, meta, claudeLimits, codexLimits, goLimits, trend, claudeAuth);
+      return built.snapshot;
     },
   };
 }

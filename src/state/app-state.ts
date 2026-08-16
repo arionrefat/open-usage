@@ -43,6 +43,7 @@ export interface AppState {
   settingsCursor: number;
   isRefreshing: boolean;
   refreshError: string | null;
+  preferenceSaveFailed: boolean;
   isHelpOpen: boolean;
   isFiltering: boolean;
   filterQuery: string;
@@ -87,6 +88,7 @@ export function createInitialState(options: AppStateOptions): AppState {
     settingsCursor: 0,
     isRefreshing: false,
     refreshError: null,
+    preferenceSaveFailed: false,
     isHelpOpen: false,
     isFiltering: false,
     filterQuery: "",
@@ -125,6 +127,8 @@ export type AppAction =
   | { type: "refresh-start" }
   | { type: "refresh-success"; connections: Record<ProviderId, ProviderConnection> }
   | { type: "refresh-failure"; message: string }
+  | { type: "preference-save-failure" }
+  | { type: "preference-save-success" }
   | { type: "open-onboarding" }
   | { type: "onboarding-move"; delta: number }
   | { type: "onboarding-toggle" }
@@ -332,6 +336,10 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
         return reconcileConnections(state, action.connections, meta);
       case "refresh-failure":
         return { ...state, isRefreshing: false, refreshError: action.message };
+      case "preference-save-failure":
+        return { ...state, preferenceSaveFailed: true };
+      case "preference-save-success":
+        return state.preferenceSaveFailed ? { ...state, preferenceSaveFailed: false } : state;
       // Onboarding wizard.
       case "open-onboarding":
         return {
@@ -417,7 +425,11 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
   };
 }
 
-/** True when the provider is both shown and has a usable credential. */
+/** True when limits can be shown from a live read, startup cache, or local estimate. */
 export function isProviderLive(connection: ProviderConnection): boolean {
-  return connection.isEnabled && connection.status === "active";
+  return connection.isEnabled && (
+    connection.status === "active" ||
+    connection.status === "cached" ||
+    connection.status === "local"
+  );
 }

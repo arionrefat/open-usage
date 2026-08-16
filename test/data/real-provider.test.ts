@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COLORS } from "../../src/theme";
@@ -12,6 +12,7 @@ import { dormantClaudeAuthSource } from "../../src/data/real/claude-auth";
 import { PROVIDER_IDS } from "../../src/data/types";
 import {
   createRealUsageProvider,
+  defaultRealProviderPaths,
   hasRealSources,
   selectUsageProvider,
   type RealProviderPaths,
@@ -95,7 +96,8 @@ describe("createRealUsageProvider with no sources", () => {
     expect(next.dailyDates).toHaveLength(30);
 
     const controller = new AbortController();
-    controller.abort();
+    const reason = new Error("cancelled before refresh");
+    controller.abort(reason);
     let rejection: unknown;
     try {
       await provider.refresh({
@@ -106,7 +108,7 @@ describe("createRealUsageProvider with no sources", () => {
     } catch (error) {
       rejection = error;
     }
-    expect(rejection).toBeDefined();
+    expect(rejection).toBe(reason);
   });
 
   test("refresh polls only requested providers", async () => {
@@ -145,6 +147,67 @@ describe("createRealUsageProvider with no sources", () => {
     expect(calls).toEqual({ cl: 1, cx: 0, go: 1 });
     await provider.refresh({ reason: "manual", providerIds: ["cx"] });
     expect(calls).toEqual({ cl: 1, cx: 1, go: 1 });
+  });
+});
+
+describe("defaultRealProviderPaths", () => {
+  test("derives home-directory defaults without consulting the real home", () => {
+    const paths = defaultRealProviderPaths({
+      env: {},
+      homeDir: "/sandbox/home",
+      which: () => null,
+    });
+    expect(paths).toMatchObject({
+      opencodeDb: "/sandbox/home/.local/share/opencode/opencode.db",
+      opencodeAuth: "/sandbox/home/.local/share/opencode/auth.json",
+      configFile: "/sandbox/home/.config/open-usage/config.json",
+      claudeProjects: "/sandbox/home/.claude/projects",
+      claudeHistory: "/sandbox/home/.claude/history.jsonl",
+      usageSnapshot: "/sandbox/home/.claude/usage-snapshot.json",
+      usageCache: "/sandbox/home/.config/open-usage/usage-cache.json",
+      codexHome: "/sandbox/home/.codex",
+      claudeExecutable: null,
+      codexExecutable: null,
+      opencodeExecutable: null,
+    });
+  });
+
+  test("honors relative OPENCODE_DB, CODEX_HOME, XDG config, and injected PATH discovery", () => {
+    const discoveries: Array<[string, string | undefined]> = [];
+    const paths = defaultRealProviderPaths({
+      env: {
+        PATH: "/fixture/bin",
+        OPENCODE_DB: "databases/test.db",
+        CODEX_HOME: "/fixture/codex-home",
+        XDG_CONFIG_HOME: "/fixture/config",
+      },
+      homeDir: "/fixture/home",
+      which: (command, path) => {
+        discoveries.push([command, path]);
+        return `/fixture/bin/${command}`;
+      },
+    });
+
+    expect(paths.opencodeDb).toBe("/fixture/home/.local/share/opencode/databases/test.db");
+    expect(paths.codexHome).toBe("/fixture/codex-home");
+    expect(paths.configFile).toBe("/fixture/config/open-usage/config.json");
+    expect(paths.usageCache).toBe("/fixture/config/open-usage/usage-cache.json");
+    expect(paths.claudeExecutable).toBe("/fixture/bin/claude");
+    expect(paths.codexExecutable).toBe("/fixture/bin/codex");
+    expect(paths.opencodeExecutable).toBe("/fixture/bin/opencode");
+    expect(discoveries).toEqual([
+      ["claude", "/fixture/bin"],
+      ["codex", "/fixture/bin"],
+      ["opencode", "/fixture/bin"],
+    ]);
+  });
+
+  test("keeps an absolute OPENCODE_DB override absolute", () => {
+    expect(defaultRealProviderPaths({
+      env: { OPENCODE_DB: "/fixture/custom.db" },
+      homeDir: "/fixture/home",
+      which: () => null,
+    }).opencodeDb).toBe("/fixture/custom.db");
   });
 });
 
@@ -201,8 +264,92 @@ describe("persisted limit cache", () => {
       expect(snapshot.providers.cl.notice?.segments[0]?.text).toContain("cached live limits stale");
       expect(snapshot.providers.cx.notice?.segments[0]?.text).toContain("cached limits stale");
       expect(snapshot.providers.go.notice?.segments[0]?.text).toContain("cached limits stale");
+      expect(provider.initialConnections().cl.status).toBe("cached");
+      expect(provider.initialConnections().cx.status).toBe("cached");
+      expect(provider.initialConnections().go.status).toBe("cached");
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a failed live limits read demotes cached status", async () => {
+    const initial = {
+      session: null,
+      weekly: { usedPercent: 38, resetsAtMs: Date.now() + DAY_MS, windowMinutes: 10080 },
+      planType: "plus",
+      resetCredits: 0,
+      additionalRateLimits: [],
+      credits: null,
+      usage: null,
+      fetchedAtMs: Date.now(),
+    };
+    const codexLimits = createCodexLimitsSource(
+      () => Promise.reject(new Error("signed out")),
+      { initial },
+    );
+    const provider = createRealUsageProvider({
+      paths: { ...MISSING_PATHS, codexExecutable: "/usr/local/bin/codex" },
+      ...OFFLINE,
+      codexLimits,
+    });
+
+    expect(provider.initialConnections().cx.status).toBe("cached");
+    await provider.refresh({ reason: "manual", providerIds: ["cx"] });
+    expect(provider.initialConnections().cx.status).toBe("expired");
+  });
+
+  test("only a successful live limits read marks a provider active", async () => {
+    const codexLimits = createCodexLimitsSource((now) => Promise.resolve({
+      session: null,
+      weekly: { usedPercent: 38, resetsAtMs: now.getTime() + DAY_MS, windowMinutes: 10080 },
+      planType: "plus",
+      resetCredits: 0,
+      additionalRateLimits: [],
+      credits: null,
+      usage: null,
+      fetchedAtMs: now.getTime(),
+    }));
+    const provider = createRealUsageProvider({
+      paths: { ...MISSING_PATHS, codexExecutable: "/usr/local/bin/codex" },
+      ...OFFLINE,
+      codexLimits,
+    });
+
+    expect(provider.initialConnections().cx.status).toBe("none");
+    await provider.refresh({ reason: "startup", providerIds: ["cx"] });
+    expect(provider.initialConnections().cx.status).toBe("active");
+  });
+});
+
+describe("unreadable local sources", () => {
+  test("warns per provider while genuinely absent sources stay quiet", () => {
+    const root = mkdtempSync(join(tmpdir(), "open-usage-unreadable-"));
+    const paths = {
+      ...MISSING_PATHS,
+      opencodeDb: join(root, "opencode.db"),
+      claudeProjects: join(root, "projects"),
+      codexHome: join(root, "codex"),
+    };
+    try {
+      writeFileSync(paths.opencodeDb, "not sqlite");
+      writeFileSync(paths.claudeProjects, "not a directory");
+      mkdirSync(paths.codexHome);
+      writeFileSync(join(paths.codexHome, "sessions"), "not a directory");
+
+      const snapshot = createRealUsageProvider({ paths, ...OFFLINE }).readSnapshot();
+      for (const id of PROVIDER_IDS) {
+        expect(snapshot.providers[id].notice?.segments.map((part) => part.text).join(""))
+          .toContain("usage source unreadable");
+        expect(snapshot.providers[id].hasHistory).toBe(false);
+      }
+
+      const absent = createRealUsageProvider({ paths: MISSING_PATHS, ...OFFLINE }).readSnapshot();
+      for (const id of PROVIDER_IDS) {
+        expect(absent.providers[id].notice?.segments.map((part) => part.text).join("") ?? "")
+          .not.toContain("usage source unreadable");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });
@@ -397,6 +544,7 @@ describe("opencode go spend limits", () => {
         ...OFFLINE,
       });
       const go = provider.readSnapshot().providers.go;
+      expect(provider.initialConnections().go.status).toBe("local");
 
       // $3 of the $12 rolling-5h cap, $9 of the $30 weekly cap.
       expect(go.scopes.session.percent).toBe(25);

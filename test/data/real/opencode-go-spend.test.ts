@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { HOUR_MS, DAY_MS } from "../../../src/data/real/aggregate";
 import {
   GO_SESSION_MS,
@@ -106,5 +109,11 @@ describe("goQuotaWeight", () => {
 describe("readGoSpend", () => {
   test("returns null when the db file does not exist", () => {
     expect(readGoSpend("/nonexistent/path/opencode.db", NOW)).toBeNull();
+  });
+
+  test("throws when an existing database is unreadable", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "opencode-spend-corrupt-")), "opencode.db");
+    writeFileSync(path, "not sqlite");
+    expect(() => readGoSpend(path, NOW)).toThrow();
   });
 });

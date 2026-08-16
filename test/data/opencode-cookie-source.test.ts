@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,6 +53,12 @@ function writeCookieConfig(paths: RealProviderPaths, cookie: string): void {
   writeFileSync(paths.configFile, JSON.stringify({ opencodeCookie: cookie }));
 }
 
+function writeEmptyUsageDb(path: string): void {
+  const db = new Database(path);
+  db.run("CREATE TABLE message (session_id TEXT, time_created INTEGER, data TEXT)");
+  db.close();
+}
+
 function goConnectionFor(paths: RealProviderPaths, env: Record<string, string | undefined>) {
   return createRealUsageProvider({ paths, env, ...OFFLINE }).initialConnections().go;
 }
@@ -93,36 +100,37 @@ describe("opencode cookie as a go source", () => {
       expect(goConnectionFor(paths, NO_ENV)).toEqual({
         isEnabled: true,
         isAgentInstalled: false,
-        status: "active",
+        status: "none",
         credential: "cookie · opencode.ai",
-        note: "exact limits via cookie; no local history",
+        note: "cookie ready",
       });
     });
   });
 
   test("keeps the local note when a cookie joins an opencode install", () => {
     withRoot((paths) => {
-      writeFileSync(paths.opencodeDb, "");
+      writeEmptyUsageDb(paths.opencodeDb);
       writeCookieConfig(paths, COOKIE);
 
       expect(goConnectionFor(paths, NO_ENV)).toMatchObject({
         isEnabled: true,
         isAgentInstalled: true,
-        status: "active",
-        note: "exact limits via dashboard cookie",
+        status: "local",
+        note: "local estimate",
       });
     });
   });
 
   test("leaves the cookie-less install untouched", () => {
     withRoot((paths) => {
-      writeFileSync(paths.opencodeDb, "");
+      writeEmptyUsageDb(paths.opencodeDb);
 
       expect(goConnectionFor(paths, NO_ENV)).toMatchObject({
         isEnabled: true,
         isAgentInstalled: true,
+        status: "local",
         credential: "local · opencode.db",
-        note: "local estimate; dashboard cookie is optional",
+        note: "local estimate",
       });
     });
   });

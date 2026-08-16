@@ -1,7 +1,28 @@
-import { describe, expect, test } from "bun:test";
-import { createWeeklyTrend, parseUsageSnapshot } from "../../../src/data/real/statusline-snapshot";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  createWeeklyTrend,
+  parseUsageSnapshot,
+  readUsageSnapshot,
+} from "../../../src/data/real/statusline-snapshot";
 
 const HOUR_MS = 3_600_000;
+const tempRoots: string[] = [];
+
+afterAll(() => {
+  for (const root of tempRoots) rmSync(root, { recursive: true, force: true });
+});
+
+function snapshotFixture(contents: unknown, mtime: Date): string {
+  const root = mkdtempSync(join(tmpdir(), "open-usage-statusline-"));
+  tempRoots.push(root);
+  const path = join(root, "usage-snapshot.json");
+  writeFileSync(path, JSON.stringify(contents));
+  utimesSync(path, mtime, mtime);
+  return path;
+}
 
 describe("parseUsageSnapshot", () => {
   test("reads the full statusline payload", () => {
@@ -107,5 +128,32 @@ describe("weekly trend", () => {
     const trend = createWeeklyTrend();
     trend.observe(0, 40);
     expect(trend.observe(HOUR_MS, 40)).toBeNull();
+  });
+});
+
+describe("readUsageSnapshot", () => {
+  test("reads a real fixture and derives age and written time from its mtime", () => {
+    const written = new Date("2026-08-16T10:15:30.000Z");
+    const now = new Date("2026-08-16T10:20:00.000Z");
+    const path = snapshotFixture(
+      { rate_limits: { five_hour: { used_percentage: 27, resets_at: 1_786_900_000 } } },
+      written,
+    );
+
+    const file = readUsageSnapshot(path, now);
+    expect(file?.reading.fiveHour?.percent).toBe(27);
+    expect(file?.writtenAtMs).toBe(written.getTime());
+    expect(file?.ageMs).toBe(4 * 60_000 + 30_000);
+  });
+
+  test("clamps a future file mtime to zero age without changing writtenAtMs", () => {
+    const now = new Date("2026-08-16T10:20:00.000Z");
+    const written = new Date("2026-08-16T10:21:00.000Z");
+    const path = snapshotFixture({ effort: { level: "high" } }, written);
+
+    expect(readUsageSnapshot(path, now)).toMatchObject({
+      ageMs: 0,
+      writtenAtMs: written.getTime(),
+    });
   });
 });

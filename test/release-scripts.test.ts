@@ -163,6 +163,16 @@ describe("release scripts", () => {
 });
 
 describe("preview dimensions", () => {
+  test("shot paints continuation-cell backgrounds before wide glyphs", () => {
+    const source = readFileSync(resolve(import.meta.dir, "../scripts/shot.tsx"), "utf8");
+    const backgrounds = source.indexOf(
+      "row.forEach((cell, x) => drawCellBackground(g, cell, x, y))",
+    );
+    const glyphs = source.indexOf("row.forEach((cell, x) => drawCell(g, cell, x, y))");
+    expect(backgrounds).toBeGreaterThan(-1);
+    expect(glyphs).toBeGreaterThan(backgrounds);
+  });
+
   test.each([
     ["preview", ["scripts/preview.tsx", "--width=0"]],
     ["preview", ["scripts/preview.tsx", "--height", "NaN"]],

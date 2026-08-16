@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { addToBucket, mergeBuckets, type HourBuckets } from "./aggregate";
 import { isRecord } from "./json";
@@ -117,6 +117,15 @@ interface FileCacheEntry extends PerFileEvents {
 // so a 60s poll over tens of MB of transcripts stays effectively free.
 const fileCache = new Map<string, FileCacheEntry>();
 
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
+}
+
+function clearProjectCache(projectsDir: string): void {
+  const prefix = `${projectsDir}/`;
+  for (const path of fileCache.keys()) if (path.startsWith(prefix)) fileCache.delete(path);
+}
+
 /** Sums assistant token usage across every transcript under `projectsDir`.
  *  The 30-day cutoff is applied at merge time so cached per-file events do not
  *  permanently retain data that has aged past the stats window. */
@@ -129,16 +138,25 @@ export function readClaudeTranscripts(
   const tokenSplit: TranscriptTokenSplit = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const cutoffMs = now.getTime() - THIRTY_DAYS_MS;
   let latestMs = 0;
-  if (!existsSync(projectsDir)) return { buckets: combined, latestMs, modelTokens, tokenSplit };
+  try {
+    statSync(projectsDir);
+  } catch (error) {
+    clearProjectCache(projectsDir);
+    if (isMissing(error)) return { buckets: combined, latestMs, modelTokens, tokenSplit };
+    throw error;
+  }
 
   let entries: string[];
   try {
     entries = readdirSync(projectsDir, { recursive: true, encoding: "utf8" });
-  } catch {
-    return { buckets: combined, latestMs, modelTokens, tokenSplit };
+  } catch (error) {
+    clearProjectCache(projectsDir);
+    if (isMissing(error)) return { buckets: combined, latestMs, modelTokens, tokenSplit };
+    throw error;
   }
 
   const seen = new Set<string>();
+  let unreadable: unknown;
   for (const relative of entries) {
     if (!relative.endsWith(".jsonl")) continue;
     const path = join(projectsDir, relative);
@@ -171,10 +189,13 @@ export function readClaudeTranscripts(
         tokenSplit.cacheWrite += event.cacheWriteTokens;
       }
       latestMs = Math.max(latestMs, entry.latestMs);
-    } catch {
+    } catch (error) {
+      fileCache.delete(path);
       // The cleanup job prunes transcripts between readdir and stat; skip the gap.
+      if (!isMissing(error)) unreadable ??= error;
     }
   }
   for (const path of fileCache.keys()) if (!seen.has(path)) fileCache.delete(path);
+  if (unreadable) throw unreadable;
   return { buckets: combined, latestMs, modelTokens, tokenSplit };
 }

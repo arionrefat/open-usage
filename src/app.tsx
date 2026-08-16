@@ -66,19 +66,15 @@ export interface AppProps {
    * never reach the registry. Absent means the check does not run at all.
    */
   checkUpdate?: () => Promise<string | null>;
-  onOnboardingFinish?: () => void;
-  onPreferencesChange?: (patch: AppPreferencePatch) => void;
+  onOnboardingFinish?: () => unknown;
+  onPreferencesChange?: (patch: AppPreferencePatch) => unknown;
 }
 
 export function providerIdsForRefresh(
   connections: AppStateOptions["connections"],
-  reason: RefreshReason,
+  _reason: RefreshReason,
 ): ProviderId[] {
-  return PROVIDER_IDS.filter((id) => {
-    if (!connections[id].isEnabled) return false;
-    // Automatic refreshes skip unavailable Codex; `r` remains an explicit probe.
-    return id !== "cx" || reason === "manual" || connections[id].status === "active";
-  });
+  return PROVIDER_IDS.filter((id) => connections[id].isEnabled);
 }
 
 export function App({
@@ -196,10 +192,25 @@ export function App({
     warnThreshold: state.warnThreshold,
   });
   const modeRef = useRef(state.mode);
+  const preferenceSaveFailedRef = useRef(false);
+  const reportPreferenceSave = useCallback((result: unknown) => {
+    if (result === false) {
+      if (preferenceSaveFailedRef.current) return;
+      preferenceSaveFailedRef.current = true;
+      dispatch({ type: "preference-save-failure" });
+    } else if (preferenceSaveFailedRef.current) {
+      preferenceSaveFailedRef.current = false;
+      dispatch({ type: "preference-save-success" });
+    }
+  }, []);
   const persistPreferences = useCallback((patch: AppPreferencePatch) => {
     persistedPreferencesRef.current = { ...persistedPreferencesRef.current, ...patch };
-    onPreferencesChange?.(patch);
-  }, [onPreferencesChange]);
+    try {
+      reportPreferenceSave(onPreferencesChange?.(patch));
+    } catch {
+      reportPreferenceSave(false);
+    }
+  }, [onPreferencesChange, reportPreferenceSave]);
 
   const quit = useCallback(
     (exitCode = 0) => {
@@ -263,7 +274,11 @@ export function App({
       onboardingContinue: () => dispatch({ type: "onboarding-begin-auth" }),
       onboardingFinish: () => {
         dispatch({ type: "onboarding-finish" });
-        onOnboardingFinish?.();
+        try {
+          reportPreferenceSave(onOnboardingFinish?.());
+        } catch {
+          reportPreferenceSave(false);
+        }
         if (isPollingEnabled) refresh("startup");
       },
       settingsToggle: (id?: ProviderId) => dispatch({ type: "settings-toggle-enabled", id }),
@@ -291,7 +306,7 @@ export function App({
       },
       quit: () => quit(),
     }),
-    [isPollingEnabled, onOnboardingFinish, persistPreferences, quit, refresh],
+    [isPollingEnabled, onOnboardingFinish, persistPreferences, quit, refresh, reportPreferenceSave],
   );
 
   const handleOnboardingKey = useCallback(
@@ -538,7 +553,12 @@ export function App({
         paddingRight={HORIZONTAL_PADDING}
         backgroundColor={COLORS.bgChrome}
       >
-        <StatusBar width={contentWidth} view={state.view} actions={actions} />
+        <StatusBar
+          width={contentWidth}
+          view={state.view}
+          actions={actions}
+          message={state.preferenceSaveFailed ? "▲ save failed" : undefined}
+        />
       </box>
 
       {state.isHelpOpen ? (

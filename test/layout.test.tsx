@@ -130,7 +130,7 @@ test("simple overview keeps all three providers in the legend", async () => {
   // codex ships expired in the mock, so its off-state legend must still render.
   expect(rowContaining(rows, "▎codex")).not.toBe("");
   expect(rowContaining(rows, "▎codex")).not.toContain("share");
-  expect(rows.join("\n")).toContain("subscription ended");
+  expect(rows.join("\n")).toContain("failed");
 });
 
 test("narrow meters and daily bars give their fixed prefixes first claim on width", () => {
@@ -175,7 +175,10 @@ test("usage share ranks the heaviest provider first", async () => {
     ...snapshot,
     providers: {
       ...snapshot.providers,
-      cl: { ...snapshot.providers.cl, series: { ...snapshot.providers.cl.series, daily: [1] } },
+      cl: {
+        ...snapshot.providers.cl,
+        series: { ...snapshot.providers.cl.series, daily: [...Array(29).fill(0), 1] },
+      },
     },
   });
   const rows = await renderRows(140, "overview", "detailed", patch);

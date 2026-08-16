@@ -1,7 +1,7 @@
 import { isRecord } from "./json";
 import { createPolledSource } from "./polled-source";
 import { createSubprocessGuard, subprocessEnvironment } from "./subprocess";
-import type { PollOptions } from "../types";
+import type { ConnectionStatus, PollOptions } from "../types";
 
 export interface ClaudeUsageWindow {
   percent: number;
@@ -83,10 +83,20 @@ export function parseClaudeUsage(value: unknown, fetchedAtMs: number): ClaudeCli
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
-function spawnClaudeUsage() {
+interface ClaudeUsageReadOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  /** Test seam; production discovers `claude` through PATH. */
+  executable?: string;
+  /** Test seam; production inherits the scrubbed process environment. */
+  env?: Record<string, string | undefined>;
+  killGraceMs?: number;
+}
+
+function spawnClaudeUsage(options: ClaudeUsageReadOptions) {
   return Bun.spawn(
     [
-      "claude",
+      options.executable ?? "claude",
       "--safe-mode",
       "-p",
       "/usage",
@@ -94,18 +104,21 @@ function spawnClaudeUsage() {
       "json",
       "--no-session-persistence",
     ],
-    { stdout: "pipe", stderr: "ignore", env: subprocessEnvironment() },
+    { stdout: "pipe", stderr: "ignore", env: subprocessEnvironment(options.env) },
   );
 }
 
 /** Reads live subscription limits through Claude Code without touching its credentials. */
 export async function readClaudeUsage(
   now: Date,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  options: ClaudeUsageReadOptions = {},
 ): Promise<ClaudeCliUsage> {
+  if (options.signal?.aborted) {
+    throw options.signal.reason ?? new DOMException("Refresh aborted", "AbortError");
+  }
   let proc: ReturnType<typeof spawnClaudeUsage>;
   try {
-    proc = spawnClaudeUsage();
+    proc = spawnClaudeUsage(options);
   } catch (error) {
     throw new ClaudeUsageError("not-installed", "claude cli not found", { cause: error });
   }
@@ -114,6 +127,7 @@ export async function readClaudeUsage(
     timeoutMs: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
     signal: options.signal,
     timeoutError: () => new ClaudeUsageError("timeout", "claude usage did not respond"),
+    killGraceMs: options.killGraceMs,
   });
   try {
     const { output, exitCode } = await guard.waitFor(
@@ -143,6 +157,7 @@ export async function readClaudeUsage(
 export interface ClaudeLimitsSource {
   read(): ClaudeCliUsage | null;
   note(): string | null;
+  status?(): ConnectionStatus;
   poll(now: Date, options?: PollOptions): Promise<void>;
 }
 
@@ -187,6 +202,7 @@ const NOTES: Record<ClaudeUsageFailure, string> = {
 export const dormantClaudeLimitsSource: ClaudeLimitsSource = {
   read: () => null,
   note: () => null,
+  status: () => "none",
   poll: () => Promise.resolve(),
 };
 

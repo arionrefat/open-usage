@@ -213,7 +213,17 @@ export function FilterBar({ width, query, matchCount }: FilterBarProps) {
 
 const SEPARATOR_WIDTH = 3;
 
-export function StatusBar({ width, view, actions }: { width: number; view: ViewKey; actions: AppActions }) {
+export function StatusBar({
+  width,
+  view,
+  actions,
+  message,
+}: {
+  width: number;
+  view: ViewKey;
+  actions: AppActions;
+  message?: string;
+}) {
   const hints: Array<[string, string, (() => void)?]> = view === "settings"
     ? [
         ["j/k", "move"],
@@ -245,9 +255,9 @@ export function StatusBar({ width, view, actions }: { width: number; view: ViewK
 
   // Hints are dropped from the right rather than allowed to wrap the footer.
   const budget = width - segmentsWidth(right) - SEPARATOR_WIDTH;
-  const left: Segment[] = [];
+  const left: Segment[] = message ? [{ text: message, color: COLORS.danger }] : [];
   let used = 0;
-  for (const [key, description, onClick] of hints) {
+  for (const [key, description, onClick] of message ? [] : hints) {
     const labelWidth = columnWidth(key) + 1 + columnWidth(description);
     const separatorWidth = left.length > 0 ? SEPARATOR_WIDTH : 0;
     const cost = labelWidth + separatorWidth;

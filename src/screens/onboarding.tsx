@@ -35,10 +35,9 @@ function pickedProviders(state: AppState): ProviderId[] {
 
 function PickStep({ state, width, actions }: OnboardingProps) {
   const picked = pickedProviders(state);
-  // A provider with a usable credential counts as found even when its agent is
-  // absent, which is how a cookie-only opencode go shows up here.
-  const installed = PROVIDER_IDS.filter(
-    (id) => state.connections[id].isAgentInstalled || state.connections[id].status !== "none",
+  const installed = PROVIDER_IDS.filter((id) => state.connections[id].isAgentInstalled);
+  const detected = PROVIDER_IDS.filter(
+    (id) => state.connections[id].isAgentInstalled || state.connections[id].credential,
   );
   const heading = installed.length > 0
     ? `we found ${installed.length} coding agent${installed.length === 1 ? "" : "s"} on this device`
@@ -65,8 +64,8 @@ function PickStep({ state, width, actions }: OnboardingProps) {
       {PROVIDER_IDS.map((id, index) => {
         const isSelected = state.onboarding.cursor === index;
         const isPicked = state.onboarding.picks[id];
-        const isInstalled =
-          state.connections[id].isAgentInstalled || state.connections[id].status !== "none";
+        const isInstalled = state.connections[id].isAgentInstalled === true;
+        const isConfigured = !isInstalled && state.connections[id].credential.length > 0;
         const background = isSelected ? COLORS.bgRowActive : undefined;
         const pick = () => actions.onboardingPick(index);
         return (
@@ -91,8 +90,12 @@ function PickStep({ state, width, actions }: OnboardingProps) {
                 onClick: pick,
               },
               {
-                text: isInstalled ? `installed · ${AGENT_SETUP[id]}` : "not found",
-                color: isInstalled ? COLORS.textFaint : COLORS.textDisabled,
+                text: isInstalled
+                  ? `installed · ${AGENT_SETUP[id]}`
+                  : isConfigured
+                    ? "configured"
+                    : "not found",
+                color: isInstalled || isConfigured ? COLORS.textFaint : COLORS.textDisabled,
                 background,
                 onClick: pick,
               },
@@ -104,7 +107,7 @@ function PickStep({ state, width, actions }: OnboardingProps) {
       <Line
         segments={[
           {
-            text: `${picked.length} selected · ${installed.length} detected`,
+            text: `${picked.length} selected · ${detected.length} detected`,
             color: COLORS.textDim,
           },
         ]}
