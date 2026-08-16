@@ -22,6 +22,29 @@ function footerSegments(footer: string): Segment[] {
   }));
 }
 
+function chartFooter(axis: readonly [string, string, string], width: number): Segment[] | null {
+  const left = `└─ ${axis[0]} `;
+  const center = ` ${axis[1]} `;
+  const right = ` ${axis[2]} ─┘`;
+  const centerStart = Math.floor((width - columnWidth(center)) / 2);
+  const rightStart = width - columnWidth(right);
+  if (columnWidth(left) + 1 > centerStart || centerStart + columnWidth(center) + 1 > rightStart) {
+    return null;
+  }
+  return [
+    { text: "└─ ", color: COLORS.borderPanel },
+    { text: `${axis[0]} `, color: COLORS.textGhost },
+    { text: "─".repeat(centerStart - columnWidth(left)), color: COLORS.borderPanel },
+    { text: center, color: COLORS.textGhost },
+    {
+      text: "─".repeat(rightStart - centerStart - columnWidth(center)),
+      color: COLORS.borderPanel,
+    },
+    { text: ` ${axis[2]} `, color: COLORS.textGhost },
+    { text: "─┘", color: COLORS.borderPanel },
+  ];
+}
+
 interface ProviderDetailProps {
   id: ProviderId;
   state: AppState;
@@ -192,13 +215,14 @@ export function ProviderDetail({
       { text: "│", color: COLORS.borderPanel },
     ],
   }));
-  const chartLabels = barLabels(series, chartWidth, formatTokens, COLORS.text).map((label) => ({
+  const chartLabels = barLabels(series, chartWidth, chartHeight, formatTokens, COLORS.text).map((label) => ({
     ...label,
     offset: label.offset + 1,
   }));
   const activeDays = series.filter((value) => value > 0).length;
   const totalTokens = sum(series);
   const chartTokenLabel = provider.activityScope === "account" ? "account tokens" : "tokens";
+  const chartFooterSegments = chartFooter(derived.axis, width);
 
   return (
     <box flexDirection="column" flexShrink={0}>
@@ -267,10 +291,7 @@ export function ProviderDetail({
                 isBold: true,
               },
             ]}
-            right={[
-              { text: ` peak ${formatTokens(Math.max(0, ...series))} `, color: COLORS.textGhost },
-              { text: "─┐", color: COLORS.borderPanel },
-            ]}
+            right={[{ text: "─┐", color: COLORS.borderPanel }]}
             filler="─"
             fillerColor={COLORS.borderPanel}
           />
@@ -280,19 +301,23 @@ export function ProviderDetail({
             labelWidth={width}
             labelBorderColor={COLORS.borderPanel}
           />
-          <SplitLine
-            width={width}
-            left={[
-              { text: "└─ ", color: COLORS.borderPanel },
-              { text: `${derived.axis[0]} `, color: COLORS.textGhost },
-            ]}
-            right={[
-              { text: ` ${derived.axis[2]} `, color: COLORS.textGhost },
-              { text: "─┘", color: COLORS.borderPanel },
-            ]}
-            filler="─"
-            fillerColor={COLORS.borderPanel}
-          />
+          {chartFooterSegments ? (
+            <Line width={width} segments={chartFooterSegments} />
+          ) : (
+            <SplitLine
+              width={width}
+              left={[
+                { text: "└─ ", color: COLORS.borderPanel },
+                { text: `${derived.axis[0]} `, color: COLORS.textGhost },
+              ]}
+              right={[
+                { text: ` ${derived.axis[2]} `, color: COLORS.textGhost },
+                { text: "─┘", color: COLORS.borderPanel },
+              ]}
+              filler="─"
+              fillerColor={COLORS.borderPanel}
+            />
+          )}
         </>
       )}
 

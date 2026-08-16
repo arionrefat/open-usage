@@ -229,9 +229,11 @@ interface ChartProps {
 interface LabelCell {
   char: string;
   color: string;
+  background?: string;
 }
 
 function labelSegments(
+  row: ChartRow | undefined,
   labels: ChartLabel[],
   width: number,
   borderColor?: string,
@@ -240,48 +242,67 @@ function labelSegments(
     char: " ",
     color: COLORS.bg,
   }));
+  let column = 0;
+  for (const segment of row?.segments ?? []) {
+    for (const char of [...segment.text]) {
+      if (column >= cells.length) break;
+      cells[column] = { char, color: segment.color, background: segment.background };
+      column++;
+    }
+  }
   if (borderColor && cells.length >= 2) {
     cells[0] = { char: "│", color: borderColor };
     cells[cells.length - 1] = { char: "│", color: borderColor };
   }
+  const contentStart = borderColor ? 1 : 0;
+  const contentEnd = borderColor ? cells.length - 1 : cells.length;
   for (const label of labels) {
+    const labelWidth = Bun.stringWidth(label.text);
+    for (const column of [label.offset - 1, label.offset + labelWidth]) {
+      if (column < contentStart || column >= contentEnd || cells[column]?.char !== "┄") continue;
+      cells[column] = { char: " ", color: COLORS.bg };
+    }
     for (const [index, char] of [...label.text].entries()) {
       const column = label.offset + index;
-      if (column < 0 || column >= cells.length || cells[column]?.char !== " ") continue;
+      if (column < contentStart || column >= contentEnd) continue;
       cells[column] = { char, color: label.color };
     }
   }
   const segments: ChartSegment[] = [];
   for (const cell of cells) {
     const last = segments[segments.length - 1];
-    if (last && last.color === cell.color) last.text += cell.char;
-    else segments.push({ text: cell.char, color: cell.color });
+    if (last && last.color === cell.color && last.background === cell.background) {
+      last.text += cell.char;
+    } else {
+      segments.push({ text: cell.char, color: cell.color, background: cell.background });
+    }
   }
   return segments;
 }
 
 /** Renders pre-computed chart rows; each row is already run-length merged. */
 export function Chart({ rows, labels = [], labelWidth, labelBorderColor }: ChartProps) {
+  const hasLabelGrid = labels.length > 0 && labelWidth !== undefined;
+  const renderRow = (row: ChartRow | undefined, rowIndex: number, key: string) => {
+    const rowLabels = labels.filter((label) => label.row === rowIndex);
+    const segments = hasLabelGrid && labelWidth !== undefined
+      ? labelSegments(row, rowLabels, labelWidth, labelBorderColor)
+      : row?.segments ?? [];
+    return (
+      <text key={key}>
+        {segments.map((segment, index) => (
+          <span key={`${key}-${index}`} fg={segment.color} bg={segment.background}>
+            {segment.text}
+          </span>
+        ))}
+      </text>
+    );
+  };
+
   return (
     <box flexDirection="column">
-      {labels.length > 0 && labelWidth ? (
-        <text>
-          {labelSegments(labels, labelWidth, labelBorderColor).map((segment, index) => (
-            <span key={`label-${index}`} fg={segment.color}>
-              {segment.text}
-            </span>
-          ))}
-        </text>
-      ) : null}
-      {rows.map((row, rowIndex) => (
-        <text key={`row-${rowIndex}`}>
-          {row.segments.map((segment, index) => (
-            <span key={`seg-${index}`} fg={segment.color} bg={segment.background}>
-              {segment.text}
-            </span>
-          ))}
-        </text>
-      ))}
+      {hasLabelGrid ? renderRow(undefined, 0, "label-row") : null}
+      {rows.map((row, rowIndex) => renderRow(row, rowIndex + 1, `row-${rowIndex}`))}
     </box>
   );
 }

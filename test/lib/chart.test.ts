@@ -159,32 +159,68 @@ describe("stackedBar seams", () => {
 
 describe("bars", () => {
   test("every row spans exactly the requested width", () => {
-    const rows = bars([3, 0, 7, 1, 5], 23, 8, "red");
-    expect(rows).toHaveLength(8);
-    for (const row of rows) expect(rowText(row)).toHaveLength(23);
+    for (const width of [1, 2, 3, 6, 9, 22, 23, 60, 183]) {
+      const rows = bars([3, 0, 7, 1, 5], width, 8, "red");
+      expect(rows).toHaveLength(8);
+      for (const row of rows) expect(Bun.stringWidth(rowText(row))).toBe(width);
+    }
   });
 
-  test("distributes leftover columns across integer bar widths", () => {
-    // 5 values into 23 columns: base 4 plus 3 leftover columns spread evenly.
+  test("uses uniform fills and splits leftover columns into edge padding", () => {
     const rows = bars([1, 1, 1, 1, 1], 23, 2, "red");
     const bottom = rowText(rows[1]!);
-    expect(bottom).toBe("█".repeat(23));
+    expect(bottom).toBe("  ███ ███ ███ ███ ███  ");
+    expect(bottom.match(/█+/g)?.map((fill) => fill.length)).toEqual([3, 3, 3, 3, 3]);
   });
 
-  test("scales the tallest bar to the full height and keeps blocks solid", () => {
-    const rows = bars([10, 5], 4, 4, "red");
-    const columnHeights = [0, 2].map(
-      (col) => rows.filter((row) => rowText(row)[col] === "█").length,
-    );
-    expect(columnHeights).toEqual([4, 2]);
+  test("scales the tallest bar fully and uses eighth-block caps", () => {
+    const rows = bars([8, 7], 4, 4, "red");
+    expect(rowText(rows[0]!)).toBe("██▄▄");
+    expect(rows.slice(1).map(rowText)).toEqual(["████", "████", "████"]);
     const glyphs = new Set(rows.flatMap((row) => rowText(row).split("")));
-    expect([...glyphs].every((glyph) => ["█", " ", "┄", "▁"].includes(glyph))).toBe(true);
+    expect(glyphs.has("▄")).toBe(true);
   });
 
-  test("gives tiny non-zero values one row and zero values a baseline marker", () => {
+  test("gives tiny non-zero values a minimum cap and zero values a baseline marker", () => {
     const rows = bars([100, 1, 0], 3, 8, "red");
     const bottom = rowText(rows[7]!);
-    expect(bottom).toBe("██▁");
+    expect(bottom).toBe("█▁▁");
+  });
+
+  test("cuts a surface gap from wide slots but keeps one- and two-column slots solid", () => {
+    expect(rowText(bars([1, 1, 1], 9, 1, "red")[0]!)).toBe("██ ██ ██ ");
+    expect(rowText(bars([0, 0, 0], 9, 1, "red")[0]!)).toBe("▁▁ ▁▁ ▁▁ ");
+    expect(rowText(bars([1, 1, 1], 6, 1, "red")[0]!)).toBe("██████");
+    expect(rowText(bars([1, 1, 1], 3, 1, "red")[0]!)).toBe("███");
+  });
+
+  test("prefers odd uniform fills so three-character labels center exactly", () => {
+    const values = [27, 14, 13];
+    const rows = bars(values, 22, 8, "red");
+    const bottom = rowText(rows[7]!);
+    const starts = [2, 8, 14];
+    expect(bottom.match(/█+/g)?.map((fill) => fill.length)).toEqual([5, 5, 5]);
+
+    const labels = barLabels(values, 22, 8, (value) => `${value}M`, COLORS.text);
+    for (const [index, text] of ["27M", "14M", "13M"].entries()) {
+      const label = labels.find((candidate) => candidate.text === text);
+      expect(label).toBeDefined();
+      if (!label) continue;
+      const leftAir = label.offset - (starts[index] ?? 0);
+      const rightAir = (starts[index] ?? 0) + 5 - label.offset - Bun.stringWidth(label.text);
+      expect(leftAir).toBe(1);
+      expect(rightAir).toBe(1);
+    }
+  });
+
+  test("continues guides through edge padding but leaves baseline padding blank", () => {
+    const rows = bars([1, 1, 1, 1, 1], 23, 8, "red");
+    const guide = rowText(rows[1]!);
+    const bottom = rowText(rows[7]!);
+    expect(guide.slice(0, 2)).toBe("┄┄");
+    expect(guide.slice(-2)).toBe("┄┄");
+    expect(bottom.slice(0, 2)).toBe("  ");
+    expect(bottom.slice(-2)).toBe("  ");
   });
 
   test("resamples when there are more points than columns", () => {
@@ -205,18 +241,74 @@ describe("bars", () => {
     expect(columnHeights).toEqual([0, 4]);
   });
 
-  test("labels active bars when the chart has room", () => {
-    const labels = barLabels([0, 100, 0, 50], 16, (value) => `${value}K`, "red");
-    expect(labels.map(({ offset, text }) => ({ offset, text }))).toEqual([
-      { offset: 4, text: "100K" },
-      { offset: 12, text: "50K" },
+  test("places peak and latest labels above their caps", () => {
+    const labels = barLabels([0, 100, 0, 50], 16, 4, (value) => `${value}K`, "red");
+    expect(labels.map(({ offset, row, text }) => ({ offset, row, text }))).toEqual([
+      { offset: 3, row: 0, text: "100K" },
+      { offset: 12, row: 2, text: "50K" },
     ]);
   });
 
   test("clips labels that are wider than the chart", () => {
-    const labels = barLabels([123_456], 3, String, "red");
-    expect(labels).toEqual([{ offset: 0, text: "12…", color: "red" }]);
+    const labels = barLabels([123_456], 3, 4, String, "red");
+    expect(labels).toEqual([{ offset: 0, row: 0, text: "12…", color: "red" }]);
     expect(labels[0]!.offset + Bun.stringWidth(labels[0]!.text)).toBeLessThanOrEqual(3);
+  });
+
+  test("labels at most five bars while always selecting the peak and latest", () => {
+    const values = [8, 7, 6, 5, 4, 3, 2, 1, 9, 0.5];
+    const labels = barLabels(values, 80, 8, (value) => String(value), COLORS.text);
+    expect(labels.length).toBeLessThanOrEqual(5);
+    expect(labels.map((label) => label.text)).toContain("9");
+    expect(labels.map((label) => label.text)).toContain("0.5");
+    expect(labels.every((label) => label.color === COLORS.text)).toBe(true);
+  });
+
+  test("keeps labels off bar fill and leaves a column between labels on a row", () => {
+    const values = [27, 26, 25, 24, 23, 3, 8, 0.612];
+    const width = 64;
+    const height = 8;
+    const rows = bars(values, width, height, "red");
+    const labels = barLabels(values, width, height, (value) => `${value}M`, COLORS.text);
+
+    for (const label of labels) {
+      if (label.row > 0) {
+        const underneath = rowText(rows[label.row - 1]!).slice(
+          label.offset,
+          label.offset + Bun.stringWidth(label.text),
+        );
+        expect([...underneath].every((glyph) => glyph === " " || glyph === "┄")).toBe(true);
+      }
+      const sameRow = labels.filter((other) => other !== label && other.row === label.row);
+      for (const other of sameRow) {
+        const labelEnd = label.offset + Bun.stringWidth(label.text);
+        const otherEnd = other.offset + Bun.stringWidth(other.text);
+        expect(labelEnd < other.offset || otherEnd < label.offset).toBe(true);
+      }
+    }
+  });
+
+  test("keeps a guide-row label one clear column away from neighboring fill", () => {
+    const values = [
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2.9, 1.76, 2.13, 3.6, 0, 0.24,
+      14.25, 27.15, 13.13, 4.4, 0.84, 3.32, 4.97, 8.25, 0.2, 1.37, 2.6, 0.86,
+    ];
+    const width = 183;
+    const height = 8;
+    const rows = bars(values, width, height, "red");
+    const labels = barLabels(values, width, height, formatTokens, COLORS.text);
+    const label = labels.find((candidate) => candidate.text === "13M");
+
+    expect(label?.row).toBe(4);
+    if (!label || label.row === 0) return;
+    const row = rows[label.row - 1];
+    expect(row).toBeDefined();
+    if (!row) return;
+    const start = Math.max(0, label.offset - 1);
+    const end = Math.min(width, label.offset + Bun.stringWidth(label.text) + 1);
+    const clearance = rowText(row).slice(start, end);
+    expect(clearance).toContain("┄");
+    expect([...clearance].every((glyph) => glyph === " " || glyph === "┄")).toBe(true);
   });
 });
 

@@ -15,6 +15,8 @@ export interface ChartRow {
 export interface ChartLabel {
   /** Zero-based column offset in the chart row. */
   offset: number;
+  /** Zero-based row offset, including the reserved row above the plot. */
+  row: number;
   text: string;
   color: string;
 }
@@ -62,33 +64,79 @@ function resampleIntoBuckets(values: number[], targetWidth: number): number[] {
   return buckets;
 }
 
-function filledRowCount(value: number, maximum: number, height: number): number {
+function filledEighthCount(value: number, maximum: number, height: number): number {
   if (value <= 0) return 0;
-  return Math.max(1, Math.round((value / maximum) * height));
+  return Math.max(1, Math.min(height * 8, Math.round((value / maximum) * height * 8)));
 }
 
 interface BarLayout {
   points: number[];
-  barWidths: number[];
+  fillWidth: number;
+  gap: number;
+  starts: number[];
+  leftPadding: number;
+  rightPadding: number;
   maximum: number;
 }
 
 function barLayout(values: number[], width: number): BarLayout {
-  if (width <= 0) return { points: [], barWidths: [], maximum: 1 };
+  if (width <= 0) {
+    return {
+      points: [],
+      fillWidth: 0,
+      gap: 0,
+      starts: [],
+      leftPadding: 0,
+      rightPadding: 0,
+      maximum: 1,
+    };
+  }
   const points = values.length > width ? resampleIntoBuckets(values, width) : values;
   const count = points.length;
-  if (count === 0) return { points, barWidths: [], maximum: 1 };
+  if (count === 0) {
+    return {
+      points,
+      fillWidth: 0,
+      gap: 0,
+      starts: [],
+      leftPadding: 0,
+      rightPadding: width,
+      maximum: 1,
+    };
+  }
 
-  const baseWidth = Math.max(1, Math.floor(width / count));
-  const extra = Math.max(0, width - baseWidth * count);
-  const barWidths = points.map(
-    (_, i) => baseWidth + (Math.floor(((i + 1) * extra) / count) - Math.floor((i * extra) / count)),
-  );
-  return { points, barWidths, maximum: Math.max(1, ...points) };
+  const fillWithGap = Math.floor((width - (count - 1)) / count);
+  const gap = fillWithGap >= 2 ? 1 : 0;
+  let fillWidth = gap ? fillWithGap : Math.max(1, Math.floor(width / count));
+  if (gap === 1 && fillWidth >= 6 && fillWidth % 2 === 0) fillWidth--;
+  const usedWidth = count * fillWidth + (count - 1) * gap;
+  const padding = Math.max(0, width - usedWidth);
+  const leftPadding = Math.floor(padding / 2);
+  const rightPadding = padding - leftPadding;
+  const starts = points.map((_, index) => leftPadding + index * (fillWidth + gap));
+  return {
+    points,
+    fillWidth,
+    gap,
+    starts,
+    leftPadding,
+    rightPadding,
+    maximum: Math.max(1, ...points),
+  };
 }
 
 const GUIDE_FRACTIONS = [0.25, 0.5, 0.75] as const;
 const ZERO_GLYPH = "▁";
+
+function barGlyph(value: number, maximum: number, height: number, row: number): string | null {
+  const eighths = filledEighthCount(value, maximum, height);
+  const fullRows = Math.floor(eighths / 8);
+  const partial = eighths % 8;
+  const rowFromBottom = height - 1 - row;
+  if (rowFromBottom < fullRows) return "█";
+  if (partial > 0 && rowFromBottom === fullRows) return BLOCK_RAMP[partial] ?? ZERO_GLYPH;
+  return null;
+}
 
 function guideRows(height: number): Set<number> {
   return new Set(
@@ -99,12 +147,12 @@ function guideRows(height: number): Set<number> {
 }
 
 /**
- * Solid bar chart, one bar per data point. Bar widths are distributed so the
- * chart spans exactly `width` columns; zero values get a dim baseline marker.
+ * Solid bar chart, one uniformly sized bar per data point. Edge padding absorbs
+ * leftover columns so the chart spans exactly `width`; zeroes mark the baseline.
  */
 export function bars(values: number[], width: number, height: number, color: string): ChartRow[] {
   if (width <= 0 || height <= 0) return [];
-  const { points, barWidths, maximum } = barLayout(values, width);
+  const { points, fillWidth, gap, leftPadding, rightPadding, maximum } = barLayout(values, width);
   const count = points.length;
   if (count === 0) {
     return Array.from({ length: height }, () => ({
@@ -117,73 +165,104 @@ export function bars(values: number[], width: number, height: number, color: str
 
   for (let row = 0; row < height; row++) {
     const cells: Cell[] = [];
+    const emptyCell: Cell = guides.has(row)
+      ? { char: "┄", color: COLORS.borderSoft }
+      : { char: " ", color: COLORS.bg };
+    for (let column = 0; column < leftPadding; column++) cells.push(emptyCell);
     points.forEach((value, pointIndex) => {
-      const filledRows = filledRowCount(value, maximum, height);
-      const isOn = row >= height - filledRows;
-      const cell: Cell = isOn
-        ? { char: "█", color }
+      const glyph = barGlyph(value, maximum, height, row);
+      const cell: Cell = glyph
+        ? { char: glyph, color }
         : row === height - 1 && value <= 0
           ? { char: ZERO_GLYPH, color: COLORS.textInert }
-          : guides.has(row)
-            ? { char: "┄", color: COLORS.borderSoft }
-            : { char: " ", color: COLORS.bg };
-      const barWidth = barWidths[pointIndex] ?? 0;
-      for (let column = 0; column < barWidth; column++) cells.push(cell);
+          : emptyCell;
+      for (let column = 0; column < fillWidth; column++) cells.push(cell);
+      if (pointIndex < count - 1) {
+        for (let column = 0; column < gap; column++) {
+          cells.push({ char: " ", color: COLORS.bg });
+        }
+      }
     });
+    for (let column = 0; column < rightPadding; column++) {
+      cells.push(emptyCell);
+    }
     rows.push({ segments: mergeCells(cells) });
   }
   return rows;
 }
 
 /**
- * Chooses non-overlapping value labels for the top of a bar chart.
- * Wide charts label every active point; narrow charts keep the highest points
- * and the latest active point so the label row stays readable.
+ * Places up to five value labels immediately above their bars. The first row is
+ * reserved above the plot; lower labels share the bar grid without covering it.
  */
 export function barLabels(
   values: number[],
   width: number,
+  height: number,
   formatValue: (value: number) => string,
   color: string,
 ): ChartLabel[] {
-  const { points, barWidths } = barLayout(values, width);
-  if (points.length === 0) return [];
-
-  const starts: number[] = [];
-  let offset = 0;
-  for (const barWidth of barWidths) {
-    starts.push(offset);
-    offset += barWidth;
-  }
+  const { points, fillWidth, starts, maximum } = barLayout(values, width);
+  if (points.length === 0 || height <= 0) return [];
 
   const candidates = points
     .map((value, index) => ({ value, index, text: truncate(formatValue(value), width) }))
     .filter((candidate) => candidate.value > 0);
   if (candidates.length === 0) return [];
 
-  const barWidth = barWidths[0] ?? 1;
+  const peak = candidates.reduce((highest, candidate) =>
+    candidate.value > highest.value ? candidate : highest,
+  );
   const latest = candidates.at(-1);
-  const priority = barWidth >= 4
-    ? candidates
-    : [...candidates].sort((left, right) => right.value - left.value).slice(0, 4);
-  if (latest && !priority.includes(latest)) priority.push(latest);
+  const priority = [
+    peak,
+    ...(latest && latest !== peak ? [latest] : []),
+    ...candidates
+      .filter((candidate) => candidate !== peak && candidate !== latest)
+      .sort((left, right) => right.value - left.value || right.index - left.index),
+  ];
+
+  const occupied = Array.from({ length: height + 1 }, () =>
+    new Array<boolean>(width).fill(false),
+  );
+  for (let index = 0; index < points.length; index++) {
+    const value = points[index] ?? 0;
+    const start = starts[index] ?? 0;
+    for (let row = 0; row < height; row++) {
+      if (!barGlyph(value, maximum, height, row) && !(row === height - 1 && value <= 0)) continue;
+      for (let column = start; column < start + fillWidth; column++) {
+        const plotRow = occupied[row + 1];
+        if (plotRow) plotRow[column] = true;
+      }
+    }
+  }
 
   const selected: ChartLabel[] = [];
   for (const candidate of priority) {
+    if (selected.length >= 5) break;
     const barStart = starts[candidate.index] ?? 0;
     const labelWidth = Bun.stringWidth(candidate.text);
     const labelStart = Math.max(
       0,
-      Math.min(width - labelWidth, barStart + Math.floor((barWidth - labelWidth) / 2)),
+      Math.min(width - labelWidth, barStart + Math.floor((fillWidth - labelWidth) / 2)),
     );
     const labelEnd = labelStart + labelWidth;
-    const overlaps = selected.some((label) => {
-      const otherEnd = label.offset + Bun.stringWidth(label.text);
-      return labelStart < otherEnd && labelEnd > label.offset;
-    });
-    if (!overlaps) selected.push({ offset: labelStart, text: candidate.text, color });
+    const capRow = height - Math.ceil(filledEighthCount(candidate.value, maximum, height) / 8);
+    for (let row = capRow; row >= 0; row--) {
+      const occupiedStart = Math.max(0, labelStart - 1);
+      const occupiedEnd = Math.min(width, labelEnd + 1);
+      const crossesBar = occupied[row]?.slice(occupiedStart, occupiedEnd).some(Boolean) ?? true;
+      const crowdsLabel = selected.some((label) => {
+        if (label.row !== row) return false;
+        const otherEnd = label.offset + Bun.stringWidth(label.text);
+        return labelStart <= otherEnd && label.offset <= labelEnd;
+      });
+      if (crossesBar || crowdsLabel) continue;
+      selected.push({ offset: labelStart, row, text: candidate.text, color });
+      break;
+    }
   }
-  return selected.sort((left, right) => left.offset - right.offset);
+  return selected.sort((left, right) => left.row - right.row || left.offset - right.offset);
 }
 
 export interface PlanChartItem {
