@@ -247,7 +247,7 @@ Burning a scarce credit from a background poller - or from a mis-keyed keystroke
 | --- | --- | --- | --- | --- |
 | `~/.local/share/opencode/opencode.db` | SQLite | none | `session` table: `cost` (USD), `tokens_input/output/reasoning/cache_*`, `model`, `time_created`; `message`/`part` JSON blobs | Official local store, already read by the app; 154MB and active on this machine |
 | Published Go plan caps | docs | none | $12 per 5h, $30 per week, $60 per month (Go plan, 2026 pricing; verify against the dashboard before shipping) | Documented but must be re-checked when plans change |
-| `https://opencode.ai/_server` | Internal server query | browser session cookie | rolling, weekly, and monthly usage percent and reset | Exact dashboard values; server-function ids can change on deploy |
+| `https://opencode.ai/_server` | Internal server query | browser session cookie | rolling, weekly, and monthly usage percent and reset; per-day per-model cost; per-session token and cost history | Exact dashboard values; server-function ids can change on deploy |
 | Gateway `x-ratelimit-*` headers | HTTP | API key | undocumented | Unverified; capture opportunistically if we ever proxy a request, do not depend on it |
 
 ### Key finding
@@ -293,11 +293,49 @@ That case is labelled rather than left blank - the card reads "no local history"
 This private integration is opt-in and not recommended for general distribution: OpenCode's hosted Terms prohibit programmatic extraction and reverse engineering.
 Do not request a user's cookie during support, and do not add automatic browser-cookie extraction.
 
+### Usage history
+
+Verified against a live response on 2026-08-18, and cross-checked between the two endpoints below: every fully covered day agrees to the cent.
+
+`getCosts(workspaceID, year, month, tzOffset)` backs the dashboard's Cost chart.
+`month` is zero-based and `tzOffset` is a `+HH:MM` string, which is what decides the calendar day each row lands in.
+It returns `{ usage, keys }`, where a usage row is `{ date: "YYYY-MM-DD", model, totalCost, keyId, plan }` and a key is `{ id, displayName, deleted }`.
+`plan` is `"sub"`, `"lite"`, or absent for pay-as-you-go, and the dashboard stacks the three separately.
+
+`usage.list(workspaceID, page)` backs the Usage History table, 50 rows a page.
+A row is `{ id, workspaceID, timeCreated, timeUpdated, timeDeleted, model, provider, inputTokens, outputTokens, reasoningTokens, cacheReadTokens, cacheWrite5mTokens, cacheWrite1hTokens, cost, keyID, sessionID, byok, enrichment: { plan } }`.
+Absent counts are an explicit `null`, and `timeCreated` arrives as a live `new Date("...")` constructor behind a `$R[n]=` binding rather than a number or a quoted string.
+
+**Both endpoints report money in hundred-millionths of a dollar.** The client divides by `1e8`; taking `totalCost` at face value overstates by a factor of 100 million.
+The dashboard counts cache reads and both cache writes as input: `inputTokens + cacheReadTokens + cacheWrite5mTokens + cacheWrite1hTokens`.
+
+These are parsed by `src/data/real/opencode-usage.ts`, assembled by `go-spend-summary.ts`, and polled by `go-history-source.ts` every 30 minutes for the open month plus two closed ones.
+
+Two wire details are easy to miss and both silently empty the result: a month with no traffic answers `usage:[]`, which is a valid response rather than a parse failure, and booleans are minified to `!0` / `!1` rather than `true` / `false`.
+
+**These dollars are usage value, not money charged.**
+`plan` decides which: `payg` rows are billed, while `sub` and `lite` rows are allowance consumption against a subscription that was already paid for at a flat rate.
+The dashboard keeps the three in separate chart stacks for this reason, so any summary must keep the split rather than adding them into one "spend" figure.
+Verified on a Go account whose `billing.get` reports `balance = 0`, `monthlyUsage = null` and `subscription = null` with only `lite` set: every row is `lite`, totalling $40.9177 in July, none of which was billed.
+
+The real-money surface for a go account is `billing.get`: `balance`, `reloadAmount`, `reloadTrigger`, `monthlyLimit`.
+
+Do not reconcile a calendar-month cost total against the `lite.subscription.get` monthly percent.
+That percent covers a billing cycle rather than a calendar month, and `GO_QUOTA_WEIGHTS` records that some models burn quota four times faster per raw dollar, so dollars do not map linearly onto percent.
+
 ### Known fragility
 
 The server function ids are content hashes that rotate whenever opencode.ai redeploys.
-They can technically be discovered from public deployment assets, but doing so would deepen the scraping and Terms risk, so the app intentionally does not automate discovery.
 When they rotate, the parse fails, the UI falls back to the estimate with a note, and the ids need refreshing from `SERVER_FUNCTION_IDS`.
+
+`src/data/real/opencode-bundle.ts` can recover most ids from the public client bundle, which pairs each `createServerReference("<hash>")` with the `query`/`action` key it was registered under - `workspaces`, `lite.subscription.get`, `usage.list`.
+Those keys survive redeploys; the hashes do not.
+Two details make a naive scan wrong: the bundle aliases a reference before registering it (`const getUsageInfo = getUsageInfo_1`), and the same key is registered by more than one route, so `usage.list` has two distinct hashes and callers must try candidates rather than trust the first.
+`getCosts` is the one id with no recovery path, because the bundle calls it directly instead of registering it.
+
+Discovery runs at runtime, as a recovery path only.
+`callAndParse` tries the shipped id first and re-derives candidates from the bundle only once a response fails to parse, caching the result for the process.
+Credential and rate-limit failures are rethrown rather than treated as drift, since a fresh id cannot fix either.
 
 ## Cross-cutting
 

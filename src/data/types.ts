@@ -123,6 +123,16 @@ export interface DetailSection {
  */
 export type Exactness = "exact" | "estimated" | "unavailable";
 
+/**
+ * Whether a figure is money the user was charged, or value consumed against a
+ * plan already paid for at a flat rate.
+ *
+ * These must never be summed. A Go subscriber can burn $40 of allowance in a
+ * month and be billed nothing, so presenting the two as one total misreports
+ * their spend by the entire amount.
+ */
+export type SpendKind = "billed" | "allowance";
+
 export interface Money {
   /** Amount in the currency's minor unit, e.g. cents. */
   amountMinor: number;
@@ -147,13 +157,20 @@ export interface ModelSpend {
   /** null when the model has no published price and nothing exact to apportion. */
   cost: Money | null;
   exactness: Exactness;
+  /** Defaults to "billed" when absent, which is what every priced provider reports. */
+  kind?: SpendKind;
 }
 
 export interface SpendPeriod {
   /** e.g. "august 2026", "this cycle". */
   label: string;
-  /** null when nothing is known for the period. */
+  /** Money actually charged. null when nothing is known for the period. */
   total: Money | null;
+  /**
+   * Value consumed against a prepaid plan, which is not a charge and is kept
+   * apart from `total` rather than added to it.
+   */
+  allowanceUsed?: Money | null;
   /**
    * Set when the money covers a different window than the period - a billing
    * cycle rarely starts on the 1st, so the two must be labelled apart rather

@@ -8,6 +8,8 @@ import {
   type DetailSection,
   type ProviderId,
   type ProviderNotice,
+  type Money,
+  type SpendPeriod,
   type SpendSummary,
   type UsageSnapshot,
 } from "../data/types";
@@ -201,6 +203,16 @@ const SPEND_BAR_WIDTH = 10;
 /** Enough rows to show where the money went without pushing the chart offscreen. */
 const SPEND_MODEL_ROWS = 5;
 
+/**
+ * A period funded by a prepaid plan reports allowance consumed, which is not a
+ * charge. Labelling it "spend" would overstate what the user actually paid, so
+ * the noun follows the figure rather than the other way round.
+ */
+function headlineFigure(period: SpendPeriod): { noun: string; money: Money | null } {
+  if (period.allowanceUsed != null) return { noun: "allowance used", money: period.allowanceUsed };
+  return { noun: "spend", money: period.total };
+}
+
 function Spend({ spend, width, color }: { spend: SpendSummary; width: number; color: string }) {
   const { current } = spend;
   const models = current.models.slice(0, SPEND_MODEL_ROWS);
@@ -211,12 +223,13 @@ function Spend({ spend, width, color }: { spend: SpendSummary; width: number; co
       columnWidth(shortModelName(model.model) + (model.isFast ? " fast" : "")),
     ),
   );
+  const headline = headlineFigure(current);
   const valueWidth = Math.max(
-    current.total ? columnWidth(formatMoney(current.total)) : 1,
+    headline.money ? columnWidth(formatMoney(headline.money)) : 1,
     ...models.map((model) => (model.cost ? columnWidth(formatMoney(model.cost)) : 1)),
   );
 
-  const heading = `spend · ${current.label}`;
+  const heading = `${headline.noun} · ${current.label}`;
   const tag =
     current.exactness === "exact"
       ? "exact"
@@ -274,8 +287,8 @@ function Spend({ spend, width, color }: { spend: SpendSummary; width: number; co
           { text: padEnd("total", nameWidth), color: COLORS.textMuted, isBold: true },
           { text: "  ", color: COLORS.rule },
           {
-            text: padStart(current.total ? formatMoney(current.total) : "-", valueWidth),
-            color: current.total ? COLORS.textBright : COLORS.textGhost,
+            text: padStart(headline.money ? formatMoney(headline.money) : "-", valueWidth),
+            color: headline.money ? COLORS.textBright : COLORS.textGhost,
             isBold: true,
           },
           ...(current.limit
@@ -290,30 +303,36 @@ function Spend({ spend, width, color }: { spend: SpendSummary; width: number; co
             : []),
         ]}
       />
-      <Line
-        width={width}
-        segments={[
-          { text: "in ", color: COLORS.textGhost },
-          { text: formatTokens(split.input / 1_000_000), color: COLORS.text },
-          { text: " ▏ out ", color: COLORS.textGhost },
-          { text: formatTokens(split.output / 1_000_000), color: COLORS.text },
-          { text: " ▏ cache-w ", color: COLORS.textGhost },
-          { text: formatTokens(split.cacheWrite / 1_000_000), color: COLORS.text },
-          { text: " ▏ cache-r ", color: COLORS.textGhost },
-          { text: formatTokens(split.cacheRead / 1_000_000), color: COLORS.text },
-        ]}
-      />
+      {/* Omitted rather than shown as zeros when the source carries no token counts. */}
+      {split.input + split.output + split.cacheWrite + split.cacheRead > 0 ? (
+        <Line
+          width={width}
+          segments={[
+            { text: "in ", color: COLORS.textGhost },
+            { text: formatTokens(split.input / 1_000_000), color: COLORS.text },
+            { text: " ▏ out ", color: COLORS.textGhost },
+            { text: formatTokens(split.output / 1_000_000), color: COLORS.text },
+            { text: " ▏ cache-w ", color: COLORS.textGhost },
+            { text: formatTokens(split.cacheWrite / 1_000_000), color: COLORS.text },
+            { text: " ▏ cache-r ", color: COLORS.textGhost },
+            { text: formatTokens(split.cacheRead / 1_000_000), color: COLORS.text },
+          ]}
+        />
+      ) : null}
       {spend.history.length > 0 ? (
         <Line
           width={width}
-          segments={spend.history.flatMap((period, index) => [
-            ...(index > 0 ? [{ text: " ▏ ", color: COLORS.rule }] : []),
-            { text: `${period.label} `, color: COLORS.textGhost },
-            {
-              text: period.total ? formatMoney(period.total) : "not recorded",
-              color: period.total ? COLORS.textFaint : COLORS.textGhost,
-            },
-          ])}
+          segments={spend.history.flatMap((period, index) => {
+            const past = headlineFigure(period);
+            return [
+              ...(index > 0 ? [{ text: " ▏ ", color: COLORS.rule }] : []),
+              { text: `${period.label} `, color: COLORS.textGhost },
+              {
+                text: past.money ? formatMoney(past.money) : "not recorded",
+                color: past.money ? COLORS.textFaint : COLORS.textGhost,
+              },
+            ];
+          })}
         />
       ) : null}
       {spend.unpricedModels.length > 0 ? (

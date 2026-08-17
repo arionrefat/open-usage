@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { statSync } from "node:fs";
 import { DAY_MS, type HourBuckets } from "./aggregate";
-import { isRecord } from "./json";
+import { finiteNumber, isRecord } from "./json";
 
 export interface OpencodeSessionStats {
   sessions: number;
@@ -80,10 +80,6 @@ const DAILY_COST_ROWS_SQL =
   " SUM(coalesce(json_extract(data,'$.cost'),0)) AS usd" +
   " FROM message WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
   " GROUP BY provider, day";
-
-function finiteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
 
 /** Picks the model with the most assistant messages per provider. */
 function topModels(modelRows: unknown[]): Map<string, string> {

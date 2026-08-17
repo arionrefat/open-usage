@@ -1,10 +1,18 @@
 import { COLORS } from "../../theme";
-import type { DetailSection, ProviderMeta, ProviderUsage, ScopeSummary, UsageLimit } from "../types";
+import type {
+  DetailSection,
+  ProviderMeta,
+  ProviderUsage,
+  ScopeSummary,
+  SpendSummary,
+  UsageLimit,
+} from "../types";
 import { DAY_MS, formatCountdown, seriesFromBuckets, toMillions, tokensPerHour, type HourBuckets } from "./aggregate";
 import type { GoLimitsSource } from "./go-limits-source";
 import type { OpencodeSessionStats } from "./opencode-db";
 import type { GoSpend, SpendWindow } from "./opencode-go-spend";
 import type { GoServerLimits } from "./opencode-server";
+import type { GoBilling } from "./opencode-usage";
 import { capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
 
 const GO_LIMIT_FOOTNOTE = "model-weighted local estimate - cookie unlocks exact %";
@@ -99,9 +107,35 @@ function sessionsFooter(
   return `sessions 30d ${stats.sessions} ▏ avg per session ${formatTokenCount(stats.tokens / stats.sessions)} ▏ tokens from opencode.db`;
 }
 
+/**
+ * Money actually charged, kept in its own section so it can never be read as
+ * part of the allowance figures above it.
+ */
+function billedSection(billing: GoBilling | null): DetailSection | null {
+  if (!billing) return null;
+  const money = (usd: number) => `$${usd.toFixed(2)}`;
+  return {
+    title: "billed",
+    rows: [
+      { label: "balance", value: money(billing.balanceUsd) },
+      ...(billing.monthlyUsageUsd !== null
+        ? [{ label: "metered this month", value: money(billing.monthlyUsageUsd) }]
+        : []),
+      ...(billing.monthlyLimitUsd !== null
+        ? [{ label: "monthly limit", value: money(billing.monthlyLimitUsd) }]
+        : []),
+      {
+        label: "auto-reload",
+        value: billing.isAutoReloadOn ? `on · ${money(billing.reloadAmountUsd ?? 0)}` : "off",
+      },
+    ],
+  };
+}
+
 function detailSections(
   stats: OpencodeSessionStats | undefined,
   useBalance: boolean | null,
+  billing: GoBilling | null,
 ): DetailSection[] | undefined {
   const sections: DetailSection[] = [];
   if (stats?.modelTokens30d) {
@@ -136,16 +170,21 @@ function detailSections(
       .map(([label, tokens]) => ({ label, value: formatTokenCount(tokens), percent: (tokens / total) * 100 }));
     if (rows.length > 0) sections.push({ title: "tokens 30d", rows });
   }
-  const spendRows = [];
+  // These dollars measure allowance drawn against a plan already paid for, so
+  // they are never labelled spend. Money charged lives in the billed section.
+  const usageRows = [];
   if (stats?.cost30d) {
-    spendRows.push(
+    usageRows.push(
       { label: "total", value: `$${stats.cost30d.totalUsd.toFixed(2)}` },
       { label: "avg per day", value: `$${(stats.cost30d.totalUsd / 30).toFixed(2)}` },
       { label: "peak day", value: `$${stats.cost30d.peakDayUsd.toFixed(2)}` },
     );
   }
-  if (useBalance !== null) spendRows.push({ label: "balance fallback", value: useBalance ? "on" : "off" });
-  if (spendRows.length > 0) sections.push({ title: "spend 30d", rows: spendRows });
+  if (useBalance !== null) usageRows.push({ label: "balance fallback", value: useBalance ? "on" : "off" });
+  if (usageRows.length > 0) sections.push({ title: "usage value 30d", rows: usageRows });
+
+  const billed = billedSection(billing);
+  if (billed) sections.push(billed);
   return sections.length > 0 ? sections : undefined;
 }
 
@@ -254,6 +293,9 @@ interface GoProviderInput {
   limitsSource: GoLimitsSource;
   dates: string[];
   now: Date;
+  /** Server-side month history; absent without a cookie or on a failed read. */
+  history?: SpendSummary | null;
+  billing?: GoBilling | null;
 }
 
 interface GoProviderResult {
@@ -271,7 +313,7 @@ function goMetaFor(meta: ProviderMeta, server: GoServerLimits | null, usesEstima
 }
 
 export function buildGoProvider(input: GoProviderInput): GoProviderResult {
-  const { meta, buckets, stats, spend, limitsSource, dates, now } = input;
+  const { meta, buckets, stats, spend, limitsSource, dates, now, history, billing } = input;
   const nowMs = now.getTime();
   const server = limitsSource.read(now);
   const note = displayedSourceNote(limitsSource.note(now), server, spend);
@@ -284,8 +326,8 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
       id: "go",
       meta: goMetaFor(meta, server, usesEstimate),
       series: seriesFromBuckets(buckets, dates, now),
-      // opencode.db is the only history source; the cookie carries percentages only.
-      hasHistory: stats !== undefined,
+      // The server keeps its own month history, so a cookie alone is enough.
+      hasHistory: stats !== undefined || history != null,
       limits: goLimits(server, spend, note, nowMs),
       scopes: {
         session: sessionScope(server, spend, note, nowMs),
@@ -294,7 +336,8 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
       burn: localBurn(tokensPerHour(buckets, now)),
       ...(stats?.sessions !== undefined ? { sessions30d: stats.sessions } : {}),
       ...(stats?.tokenSplit30d ? { cacheRead30d: toMillions(stats.tokenSplit30d.cacheRead) } : {}),
-      details: detailSections(stats, server?.useBalance ?? null),
+      ...(history ? { spend: history } : {}),
+      details: detailSections(stats, server?.useBalance ?? null, billing ?? null),
       ...(noticeText
         ? {
             notice: {

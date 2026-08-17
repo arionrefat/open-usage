@@ -316,6 +316,38 @@ test("a model with no published price is shown as unpriced, not as free", async 
   expect(frame).toContain("brand-new");
 });
 
+test("allowance drawn on a prepaid plan is never labelled spend", async () => {
+  // A Go subscriber burns allowance and is billed nothing. Calling it spend
+  // overstates what they paid by the entire amount.
+  const frame = await renderSpend((snapshot) => {
+    const spend = snapshot.providers.cl.spend;
+    if (!spend) throw new Error("mock provider lost its spend summary");
+    spend.current.label = "august 2026";
+    spend.current.allowanceUsed = { amountMinor: 1_016_290_000, currency: "USD", exponent: 8 };
+    spend.current.total = { amountMinor: 0, currency: "USD", exponent: 8 };
+    spend.current.limit = null;
+    spend.history = [];
+  });
+
+  expect(frame).toContain("allowance used · august 2026");
+  expect(frame).not.toContain("spend · august 2026");
+  expect(frame).toContain("$10.16");
+  // The zero charge must not be shown as the headline figure.
+  expect(frame).not.toContain("$0.00");
+});
+
+test("a token split of all zeros is omitted rather than shown as measured zero", async () => {
+  const frame = await renderSpend((snapshot) => {
+    const spend = snapshot.providers.cl.spend;
+    if (!spend) throw new Error("mock provider lost its spend summary");
+    for (const model of spend.current.models) {
+      model.tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    }
+  });
+
+  expect(frame).not.toContain("cache-w");
+});
+
 test("providers without spend render no spend section", async () => {
   const frame = await renderSpend((snapshot) => {
     snapshot.providers.cl.spend = undefined;

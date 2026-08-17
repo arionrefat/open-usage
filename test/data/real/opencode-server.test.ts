@@ -1,13 +1,17 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import {
   OpencodeRateLimitError,
+  OpencodeServerError,
   SERVER_FUNCTION_IDS,
   fetchGoServerLimits,
+  fetchGoUsageHistory,
   filterCookieHeader,
   isSignedOut,
   parseSubscription,
   parseWorkspaceId,
+  resetDiscoveredIds,
   retryAfterMs,
+  timezoneOffsetLabel,
 } from "../../../src/data/real/opencode-server";
 
 /** Verbatim response shapes from CodexBar's parser fixtures. */
@@ -174,6 +178,110 @@ describe("fetchGoServerLimits", () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+describe("server function id self-healing", () => {
+  const ROTATED = "a".repeat(64);
+  const COSTS = '{usage:[{date:"2026-08-01",model:"kimi-k3",totalCost:100000000,plan:"lite"}],keys:[]}';
+  const BILLING = "{balance:0,reloadAmount:20,monthlyUsage:null,monthlyLimit:null}";
+  const BUNDLE =
+    'const q = createServerReference("' + ROTATED + '");' + 'const w = query(q, "workspaces");';
+
+  /** Answers each function with a payload its own parser accepts. */
+  function payloadFor(id: string): string {
+    if (id === SERVER_FUNCTION_IDS.billing) return BILLING;
+    if (id === SERVER_FUNCTION_IDS.usageCosts) return COSTS;
+    return '[{id:"wrk_01ABC"}]';
+  }
+
+  function mockServer(handle: (url: URL, init?: RequestInit) => Response) {
+    return spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        (input: string | URL | Request, init?: RequestInit | BunFetchRequestInit) =>
+          Promise.resolve(handle(new URL(input.toString()), init as RequestInit)),
+        { preconnect: (_url: string | URL) => undefined },
+      ),
+    );
+  }
+
+  test("re-derives a rotated id from the bundle and retries with it", async () => {
+    resetDiscoveredIds();
+    const idsTried: string[] = [];
+    const fetchSpy = mockServer((url) => {
+      if (url.pathname === "/") return new Response('"/_build/assets/entry-1.js"');
+      if (url.pathname.startsWith("/_build/")) return new Response(BUNDLE);
+
+      const id = url.searchParams.get("id") ?? "";
+      idsTried.push(id);
+      // The shipped workspaces id no longer resolves; the rotated one does.
+      if (id === SERVER_FUNCTION_IDS.workspaces) return new Response("null");
+      if (id === ROTATED) return new Response('[{id:"wrk_01ABC"}]');
+      return new Response(payloadFor(id));
+    });
+
+    try {
+      const history = await fetchGoUsageHistory("auth=secret", new Date("2026-08-18T00:00:00Z"));
+      expect(idsTried[0]).toBe(SERVER_FUNCTION_IDS.workspaces);
+      expect(idsTried).toContain(ROTATED);
+      expect(history.workspaceId).toBe("wrk_01ABC");
+      expect(history.costs.rows[0]?.usd).toBe(1);
+    } finally {
+      fetchSpy.mockRestore();
+      resetDiscoveredIds();
+    }
+  });
+
+  test("an expired session is reported, never chased with a fresh id", async () => {
+    // A new id cannot fix bad credentials. Treating 401 as drift would crawl the
+    // bundle on every poll and hide the real reason from the user.
+    resetDiscoveredIds();
+    let bundleFetches = 0;
+    const fetchSpy = mockServer((url) => {
+      if (url.pathname === "/" || url.pathname.startsWith("/_build/")) {
+        bundleFetches += 1;
+        return new Response(BUNDLE);
+      }
+      return new Response("nope", { status: 401 });
+    });
+
+    try {
+      const failure = await fetchGoUsageHistory("auth=secret", new Date()).catch(
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(OpencodeServerError);
+      expect((failure as OpencodeServerError).kind).toBe("credentials");
+      expect(bundleFetches).toBe(0);
+    } finally {
+      fetchSpy.mockRestore();
+      resetDiscoveredIds();
+    }
+  });
+
+  test("does not touch the bundle while the shipped ids still parse", async () => {
+    resetDiscoveredIds();
+    let bundleFetches = 0;
+    const fetchSpy = mockServer((url) => {
+      if (url.pathname === "/" || url.pathname.startsWith("/_build/")) {
+        bundleFetches += 1;
+        return new Response(BUNDLE);
+      }
+      return new Response(payloadFor(url.searchParams.get("id") ?? ""));
+    });
+
+    try {
+      await fetchGoUsageHistory("auth=secret", new Date("2026-08-18T00:00:00Z"));
+      expect(bundleFetches).toBe(0);
+    } finally {
+      fetchSpy.mockRestore();
+      resetDiscoveredIds();
+    }
+  });
+});
+
+describe("timezoneOffsetLabel", () => {
+  test("formats the offset the cost query buckets days by", () => {
+    expect(timezoneOffsetLabel(new Date())).toMatch(/^[+-]\d{2}:\d{2}$/);
   });
 });
 

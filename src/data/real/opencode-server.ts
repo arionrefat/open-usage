@@ -1,17 +1,41 @@
-import { isRecord } from "./json";
+import { discoverServerFunctionRefs } from "./opencode-bundle";
+import { type GoBilling, type GoCostReport, parseBilling, parseCostReport } from "./opencode-usage";
+import { finiteNumber, isRecord } from "./json";
+import { numberField, objectAtKey } from "./seroval-text";
 
 /**
  * Opencode's dashboard talks to an internal RPC whose responses are serialized
  * JavaScript, not JSON. Server function ids are content hashes that change when
- * opencode.ai redeploys, so a parse failure here is expected drift, not a bug -
- * callers fall back to the local spend estimate.
+ * opencode.ai redeploys, so a parse failure is drift rather than a bug - callers
+ * fall back to the local spend estimate. Most ids can be recovered from the
+ * client bundle by registration key; see `opencode-bundle.ts`.
  */
 const OPENCODE_SERVER_URL = "https://opencode.ai/_server";
 
 export const SERVER_FUNCTION_IDS = {
   workspaces: "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f",
   liteSubscription: "c7389bd0e731f80f49593e5ee53835475f4e28594dd6bd83eb229bab753498cd",
+  /** Per-session usage table, 50 rows a page. */
+  usageList: "bfd684bfc2e4eed05cd0b518f5e4eafd3f3376e3938abb9e536e7c03df831e5c",
+  /** Per-day, per-model cost chart. */
+  usageCosts: "15702f3a12ff8bff357f8c2aa154a17e65b746d5f6b96adc9002c86ee0c15205",
+  /** Balance, metered usage, and reload settings - the only real-money surface. */
+  billing: "c83b78a614689c38ebee981f9b39a8b377716db85c1fd7dbab604adc02d3313d",
 } as const;
+
+/**
+ * Registration keys the bundle declares each id under. These outlive the hashes,
+ * so a stale id can be re-derived from them.
+ *
+ * `usageCosts` is absent on purpose: the bundle calls `getCosts` directly instead
+ * of registering it, leaving its hash the one id with no self-healing path.
+ */
+export const SERVER_FUNCTION_KEYS: Partial<Record<keyof typeof SERVER_FUNCTION_IDS, string>> = {
+  workspaces: "workspaces",
+  liteSubscription: "lite.subscription.get",
+  usageList: "usage.list",
+  billing: "billing.get",
+};
 
 /** Only the session cookies carry auth; everything else is noise we must not send. */
 const AUTH_COOKIE_NAMES = ["auth", "__Host-auth"];
@@ -19,8 +43,6 @@ const AUTH_COOKIE_NAMES = ["auth", "__Host-auth"];
 const DEFAULT_TIMEOUT_MS = 8_000;
 const PERCENT_KEYS = ["usagePercent", "usedPercent", "percentUsed", "percent"];
 const RESET_KEYS = ["resetInSec", "resetInSeconds", "resetSeconds", "resetsInSec"];
-const WINDOW_PERCENT_PATTERN = /usagePercent\s*:\s*([0-9]+(?:\.[0-9]+)?)/;
-const WINDOW_RESET_PATTERN = /resetInSec\s*:\s*([0-9]+)/;
 
 // A control character in a pasted cookie makes fetch throw a header-validation
 // error that can quote the offending value, so such cookies are refused here.
@@ -69,8 +91,8 @@ function normalizePercent(value: number): number {
 
 function firstFiniteNumber(record: Record<string, unknown>, keys: string[]): number | null {
   for (const key of keys) {
-    const candidate = record[key];
-    if (typeof candidate === "number" && Number.isFinite(candidate)) return candidate;
+    const candidate = finiteNumber(record[key]);
+    if (candidate !== null) return candidate;
   }
   return null;
 }
@@ -95,20 +117,14 @@ function windowFromRecord(value: unknown): UsageWindowReading | null {
   return { percent, resetInSec: Math.max(0, resetInSec) };
 }
 
-/**
- * Pulls `usagePercent` and `resetInSec` out of one serialized-JS object literal.
- * The literal must start right after the key, optionally through a `$R[n]=`
- * binding: the serializer emits an already-seen object as a bare `$R[n]`
- * back-reference, and scanning past that would read the NEXT window's values.
- */
+/** Pulls `usagePercent` and `resetInSec` out of one serialized-JS object literal. */
 function windowFromText(text: string, key: string): UsageWindowReading | null {
-  const objectAfterKey = `${key}\\s*:\\s*(?:\\$R\\[\\d+\\]\\s*=\\s*)?\\{[^{}]*\\}`;
-  const block = new RegExp(objectAfterKey).exec(text)?.[0];
-  if (!block) return null;
-  const percentText = WINDOW_PERCENT_PATTERN.exec(block)?.[1];
-  const resetText = WINDOW_RESET_PATTERN.exec(block)?.[1];
-  if (percentText === undefined || resetText === undefined) return null;
-  return { percent: normalizePercent(Number(percentText)), resetInSec: Number(resetText) };
+  const block = objectAtKey(text, key);
+  if (block === null) return null;
+  const percent = numberField(block, "usagePercent");
+  const resetInSec = numberField(block, "resetInSec");
+  if (percent === null || resetInSec === null) return null;
+  return { percent: normalizePercent(percent), resetInSec };
 }
 
 function subscriptionFromJson(text: string): OpencodeSubscription | null {
@@ -194,26 +210,42 @@ export function retryAfterMs(header: string | null, nowMs = Date.now()): number 
   return Number.isFinite(dateMs) ? clamp(dateMs - nowMs) : null;
 }
 
+export type ServerArg = string | number;
+
+/** seroval's JSON AST: node type 0 is a number, 1 a string, 9 an array. */
+function serializeArgs(args: ServerArg[]): string {
+  const elements = args.map((value) => ({ t: typeof value === "string" ? 1 : 0, s: value }));
+  return JSON.stringify({
+    t: { t: 9, i: 0, l: elements.length, a: elements, o: 0 },
+    f: 31,
+    m: [],
+  });
+}
+
+/**
+ * GET carries args in the query string, POST in a JSON body. The dashboard uses
+ * GET for the two limit queries and POST everywhere else, and the server rejects
+ * the wrong pairing.
+ */
 async function callServer(
   functionId: string,
-  args: string[],
+  args: ServerArg[],
   cookie: string,
   referer: string,
   signal?: AbortSignal,
+  method: "GET" | "POST" = "GET",
 ): Promise<string> {
   const url = new URL(OPENCODE_SERVER_URL);
   url.searchParams.set("id", functionId);
-  if (args.length > 0) {
-    const elements = args.map((value) => ({ t: 1, s: value }));
-    url.searchParams.set(
-      "args",
-      JSON.stringify({ t: { t: 9, i: 0, l: elements.length, a: elements, o: 0 }, f: 31, m: [] }),
-    );
+  const isPost = method === "POST";
+  if (!isPost && args.length > 0) {
+    url.searchParams.set("args", serializeArgs(args));
   }
   let response: Response;
   try {
     response = await fetch(url, {
-      method: "GET",
+      method,
+      body: isPost ? serializeArgs(args) : undefined,
       headers: {
         Cookie: cookie,
         "X-Server-Id": functionId,
@@ -221,6 +253,7 @@ async function callServer(
         Origin: "https://opencode.ai",
         Referer: referer,
         Accept: "text/javascript, application/json;q=0.9, */*;q=0.8",
+        ...(isPost ? { "Content-Type": "application/json" } : {}),
       },
       // This RPC never legitimately redirects; refusing keeps the session
       // cookie from following a redirect to another host.
@@ -253,6 +286,148 @@ async function callServer(
     throw new OpencodeServerError("error payload in response", "parse");
   }
   return text;
+}
+
+/**
+ * Ids recovered from the bundle, cached for the process. Discovery is a recovery
+ * path: it runs only after a shipped id stops parsing, never on the happy path.
+ */
+let discoveredIds: Map<string, string[]> | null = null;
+
+export function resetDiscoveredIds(): void {
+  discoveredIds = null;
+}
+
+/**
+ * Every id worth trying for a function, shipped one first. The bundle registers
+ * some keys from more than one route, so a recovered key can yield several
+ * candidates and only the caller's parser can tell which one answered.
+ */
+async function candidateIds(
+  name: keyof typeof SERVER_FUNCTION_IDS,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const shipped = SERVER_FUNCTION_IDS[name];
+  const key = SERVER_FUNCTION_KEYS[name];
+  if (key === undefined) return [shipped];
+
+  if (discoveredIds === null) {
+    discoveredIds = await discoverServerFunctionRefs({ signal }).catch(() => new Map());
+  }
+  const recovered = discoveredIds.get(key) ?? [];
+  return [shipped, ...recovered.filter((hash) => hash !== shipped)];
+}
+
+/**
+ * Calls a function, and if the response does not parse, re-derives the id from
+ * the bundle and tries again. Returns null once every candidate has failed.
+ */
+async function callAndParse<T>(
+  name: keyof typeof SERVER_FUNCTION_IDS,
+  args: ServerArg[],
+  parse: (text: string) => T | null,
+  cookie: string,
+  referer: string,
+  signal?: AbortSignal,
+  method: "GET" | "POST" = "POST",
+): Promise<T | null> {
+  const shipped = SERVER_FUNCTION_IDS[name];
+  const firstAttempt = await callServer(shipped, args, cookie, referer, signal, method)
+    .then(parse)
+    .catch((error: unknown) => {
+      // Credentials and rate limits are the caller's to handle; a fresh id
+      // cannot fix either, so they must not be swallowed as a parse failure.
+      if (error instanceof OpencodeServerError && error.kind !== "parse") throw error;
+      return null;
+    });
+  if (firstAttempt !== null) return firstAttempt;
+
+  for (const id of (await candidateIds(name, signal)).filter((hash) => hash !== shipped)) {
+    const parsed = await callServer(id, args, cookie, referer, signal, method)
+      .then(parse)
+      .catch(() => null);
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
+export interface GoUsageHistory {
+  costs: GoCostReport;
+  billing: GoBilling | null;
+  workspaceId: string;
+  /** Calendar month the cost rows cover, as YYYY-MM. */
+  month: string;
+}
+
+/** `+HH:MM` for a date, which is what decides the calendar day a row lands in. */
+export function timezoneOffsetLabel(now: Date): string {
+  const minutes = -now.getTimezoneOffset();
+  const sign = minutes < 0 ? "-" : "+";
+  const hours = String(Math.floor(Math.abs(minutes) / 60)).padStart(2, "0");
+  return `${sign}${hours}:${String(Math.abs(minutes) % 60).padStart(2, "0")}`;
+}
+
+/**
+ * Reads one calendar month of per-day, per-model cost plus the billing record.
+ *
+ * The two answer different questions and must stay apart: cost rows on a
+ * subscription are allowance consumed, while billing is what was charged.
+ */
+export async function fetchGoUsageHistory(
+  cookieHeader: string,
+  now: Date,
+  options: { workspaceId?: string; signal?: AbortSignal; timeoutMs?: number; monthsAgo?: number } = {},
+): Promise<GoUsageHistory> {
+  const cookie = filterCookieHeader(cookieHeader);
+  if (!cookie) throw new OpencodeServerError("no opencode auth cookie", "credentials");
+
+  const deadline = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+
+  let workspaceId = options.workspaceId;
+  if (!workspaceId) {
+    const listed = await callAndParse(
+      "workspaces",
+      [],
+      parseWorkspaceId,
+      cookie,
+      "https://opencode.ai",
+      signal,
+      "GET",
+    );
+    if (!listed) throw new OpencodeServerError("missing workspace id", "parse");
+    workspaceId = listed;
+  }
+  const referer = `https://opencode.ai/workspace/${workspaceId}/usage`;
+
+  const target = new Date(now.getFullYear(), now.getMonth() - (options.monthsAgo ?? 0), 1);
+  const costs = await callAndParse(
+    "usageCosts",
+    [workspaceId, target.getFullYear(), target.getMonth(), timezoneOffsetLabel(now)],
+    parseCostReport,
+    cookie,
+    referer,
+    signal,
+  );
+  if (!costs) throw new OpencodeServerError("no usage in response", "parse");
+
+  // Billing is supplementary: without it the allowance figures still stand, so a
+  // failure here must not lose the month that was already read.
+  const billing = await callAndParse(
+    "billing",
+    [workspaceId],
+    parseBilling,
+    cookie,
+    `https://opencode.ai/workspace/${workspaceId}/billing`,
+    signal,
+  ).catch(() => null);
+
+  return {
+    costs,
+    billing,
+    workspaceId,
+    month: `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}`,
+  };
 }
 
 export interface GoServerLimits {

@@ -20,6 +20,7 @@ import { readCodexSessions } from "./real/codex-sessions";
 import { createCodexLimitsSource, type CodexLimitsSource } from "./real/codex-limits";
 import { buildGoProvider, createGoMeta } from "./real/go-provider";
 import { createGoLimitsSource, readCookie, type GoLimitsSource } from "./real/go-limits-source";
+import { createGoHistorySource, type GoHistorySource } from "./real/go-history-source";
 import { readOpencodeAuth, type OpencodeAuth } from "./real/opencode-auth";
 import { readOpencodeUsage } from "./real/opencode-db";
 import { readGoSpend } from "./real/opencode-go-spend";
@@ -311,6 +312,7 @@ interface RealProviderOptions {
   env?: Record<string, string | undefined>;
   codexLimits?: CodexLimitsSource;
   goLimits?: GoLimitsSource;
+  goHistory?: GoHistorySource;
   claudeLimits?: ClaudeLimitsSource;
   claudeAuth?: ClaudeAuthSource;
 }
@@ -360,6 +362,7 @@ function buildSnapshot(
   claudeLimits: ClaudeLimitsSource,
   codexLimits: CodexLimitsSource,
   goLimits: GoLimitsSource,
+  goHistory: GoHistorySource,
   trend: WeeklyTrend,
   claudeAuth: ClaudeAuthSource,
 ): BuiltSnapshot {
@@ -445,6 +448,8 @@ function buildSnapshot(
     limitsSource: goLimits,
     dates,
     now,
+    history: goHistory.read(),
+    billing: goHistory.billing(),
   });
   const fetchedAt = latestSourceTimestamp(nowMs, [
     claudeLimits.read()?.fetchedAtMs ?? 0,
@@ -506,9 +511,12 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
     },
   });
   const claudeAuth = options.claudeAuth ?? createClaudeAuthSource();
+  // Shares the limits source's cookie: history is dormant without one.
+  const goHistory =
+    options.goHistory ?? createGoHistorySource(() => readCookie(paths.configFile, env));
   const trend = createWeeklyTrend();
   const meta = buildMeta();
-  let built = buildSnapshot(paths, meta, claudeLimits, codexLimits, goLimits, trend, claudeAuth);
+  let built = buildSnapshot(paths, meta, claudeLimits, codexLimits, goLimits, goHistory, trend, claudeAuth);
 
   return {
     scopeTitles: { session: "current session", weekly: "weekly limit" },
@@ -543,6 +551,7 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
           providerIds.has("cl") ? claudeLimits.poll(at, pollOptions) : null,
           providerIds.has("cl") ? claudeAuth.poll(at, pollOptions) : null,
           providerIds.has("go") ? goLimits.poll(at, pollOptions) : null,
+          providerIds.has("go") ? goHistory.poll(at, pollOptions) : null,
           providerIds.has("cx") ? codexLimits.poll(at, pollOptions) : null,
         ].map((poll) => poll?.catch(() => undefined)),
       );
@@ -551,7 +560,7 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
           ? signal.reason
           : new DOMException("Refresh aborted", "AbortError");
       }
-      built = buildSnapshot(paths, meta, claudeLimits, codexLimits, goLimits, trend, claudeAuth);
+      built = buildSnapshot(paths, meta, claudeLimits, codexLimits, goLimits, goHistory, trend, claudeAuth);
       return built.snapshot;
     },
   };
