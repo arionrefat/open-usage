@@ -130,8 +130,14 @@ console.error = (...args: unknown[]) => {
 };
 
 const [, , outPath, ...specs] = process.argv;
-if (!outPath) {
+// A flag in first position means the out path was omitted; without this the run
+// writes a file literally named after the flag.
+if (!outPath || outPath.startsWith("-")) {
   console.error('usage: bun run shot <out.html> "label:--flags" ...');
+  if (outPath?.startsWith("-")) {
+    console.error(`the first argument is the output file, not a flag (got "${outPath}")`);
+    console.error("to pick a screen, use: bun run preview -- --screen detail --view claude");
+  }
   process.exit(1);
 }
 
