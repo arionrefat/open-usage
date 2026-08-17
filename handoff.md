@@ -199,9 +199,10 @@ Consequences for the UI:
 
 ## Next Steps
 
-1. Per-model **token** counts for go. `getCosts` carries money only, so model rows currently have a zeroed `TokenSplit` and the UI omits the token line rather than printing zeros. Real counts need paging `usage.list` and aggregating by model.
-2. Consider surfacing `keys` from the cost report. Both endpoints attribute rows to an API key and the dashboard offers a key filter; this account has two (`Default API Key` and `pi`), so per-key attribution is available but unused.
-3. Optional, lower value: add `model` to `DAILY_COST_ROWS_SQL`'s `GROUP BY` in `opencode-db.ts` for the zero-network local fallback. Cannot be tested on this machine, which has no `opencode.db`.
+1. Consider surfacing `keys` from the cost report. Both endpoints attribute rows to an API key and the dashboard offers a key filter; this account has two (`Default API Key` and `pi`), so per-key attribution is available but unused.
+2. Optional, lower value: add `model` to `DAILY_COST_ROWS_SQL`'s `GROUP BY` in `opencode-db.ts` for the zero-network local fallback. Cannot be tested on this machine, which has no `opencode.db`.
+
+**Not doing: per-model token counts for go.** Decided against on 2026-08-18. `getCosts` carries money only; tokens live in `usage.list`, which pages 50 rows at a time and would cost roughly 30-40 requests a month against opencode's server. The per-model dollar split already answers where the allowance went, so the token line stays omitted rather than printed as zeros. Reopen only if token-level detail is asked for directly.
 
 Verify with `bun run typecheck` and `bun test`.
 For the go history specifically, `preview` cannot show it - await `createGoHistorySource(...).poll(...)` in a script instead.
