@@ -112,6 +112,57 @@ const SNAPSHOT: UsageSnapshot = {
         ],
       },
       cacheRead30d: 2684.07,
+      // Credits on, so the total is Claude's own figure and the per-model split
+      // is apportioned to it - the sample deliberately sums to the headline.
+      spend: {
+        current: {
+          label: "cycle since aug 3",
+          total: { amountMinor: 1842, currency: "USD", exponent: 2 },
+          limit: { amountMinor: 5000, currency: "USD", exponent: 2 },
+          exactness: "exact",
+          isBeforeRecordsBegan: false,
+          models: [
+            {
+              model: "claude-opus-5",
+              tokens: { input: 61_204, output: 2_840_115, cacheRead: 812_004_551, cacheWrite: 18_402_776 },
+              cost: { amountMinor: 1402, currency: "USD", exponent: 2 },
+              exactness: "exact",
+            },
+            {
+              model: "claude-sonnet-5",
+              tokens: { input: 24_880, output: 402_551, cacheRead: 210_884_002, cacheWrite: 7_115_204 },
+              cost: { amountMinor: 315, currency: "USD", exponent: 2 },
+              exactness: "exact",
+            },
+            {
+              model: "claude-haiku-4-5",
+              tokens: { input: 18_004, output: 41_882, cacheRead: 12_004_551, cacheWrite: 902_118 },
+              cost: { amountMinor: 125, currency: "USD", exponent: 2 },
+              exactness: "exact",
+            },
+          ],
+        },
+        history: [
+          {
+            label: "jul 3 - aug 2",
+            total: { amountMinor: 4712, currency: "USD", exponent: 2 },
+            limit: null,
+            exactness: "exact",
+            isBeforeRecordsBegan: false,
+            models: [],
+          },
+          {
+            label: "jun 3 - jul 2",
+            total: null,
+            limit: null,
+            exactness: "unavailable",
+            isBeforeRecordsBegan: true,
+            models: [],
+          },
+        ],
+        pricesAsOf: "2026-08-17",
+        unpricedModels: [],
+      },
       details: [
         {
           title: "model share",

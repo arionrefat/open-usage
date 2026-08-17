@@ -261,3 +261,94 @@ describe("readClaudeTranscripts", () => {
     expect(tokenSplit.cacheRead).toBe(900_000);
   });
 });
+
+describe("cache TTL and speed", () => {
+  function line(usage: Record<string, unknown>, timestamp = "2026-07-30T10:15:00.000Z"): string {
+    return JSON.stringify({
+      type: "assistant",
+      timestamp,
+      sessionId: "ttl",
+      message: { id: `m-${timestamp}-${JSON.stringify(usage)}`, model: "claude-opus-5", usage },
+    });
+  }
+
+  test("splits cache writes by TTL, which bill at different rates", () => {
+    const event = parseTranscriptLine(
+      line({
+        input_tokens: 1,
+        output_tokens: 1,
+        cache_creation_input_tokens: 1_000,
+        cache_creation: { ephemeral_5m_input_tokens: 400, ephemeral_1h_input_tokens: 600 },
+      }),
+    );
+
+    expect(event?.cacheWrite5mTokens).toBe(400);
+    expect(event?.cacheWrite1hTokens).toBe(600);
+  });
+
+  test("an unsplit cache write falls to the cheaper 5m rate rather than over-billing", () => {
+    const event = parseTranscriptLine(
+      line({ input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 1_000 }),
+    );
+
+    expect(event?.cacheWrite5mTokens).toBe(1_000);
+    expect(event?.cacheWrite1hTokens).toBe(0);
+  });
+
+  test("the split never exceeds the reported total", () => {
+    const event = parseTranscriptLine(
+      line({
+        input_tokens: 1,
+        output_tokens: 1,
+        cache_creation_input_tokens: 500,
+        cache_creation: { ephemeral_5m_input_tokens: 400, ephemeral_1h_input_tokens: 600 },
+      }),
+    );
+
+    expect(event?.cacheWrite5mTokens).toBe(400);
+    expect(event?.cacheWrite1hTokens).toBe(600);
+  });
+
+  test("fast mode is carried through so it can be priced apart", () => {
+    const standard = parseTranscriptLine(line({ input_tokens: 1, output_tokens: 1 }));
+    const fast = parseTranscriptLine(line({ input_tokens: 1, output_tokens: 1, speed: "fast" }));
+
+    expect(standard?.speed).toBe("standard");
+    expect(fast?.speed).toBe("fast");
+  });
+});
+
+describe("day buckets", () => {
+  test("buckets per local day and per model, beyond the 30-day headline window", () => {
+    const root = tempRoot("open-usage-transcript-days-");
+    const projects = join(root, "projects");
+    mkdirSync(projects);
+    const event = (timestamp: string, model: string, output: number) =>
+      JSON.stringify({
+        type: "assistant",
+        timestamp,
+        message: { id: `${timestamp}-${model}`, model, usage: { output_tokens: output } },
+      });
+    writeFileSync(
+      join(projects, "s.jsonl"),
+      [
+        // Well outside the 30-day window: still banked for history.
+        event("2026-05-02T10:00:00Z", "claude-opus-5", 5),
+        event("2026-08-15T10:00:00Z", "claude-opus-5", 10),
+        event("2026-08-15T11:00:00Z", "claude-sonnet-5", 20),
+      ].join("\n"),
+    );
+
+    const aggregate = readClaudeTranscripts(projects, new Date("2026-08-17T12:00:00Z"));
+    const day = (date: Date) =>
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    const aug15 = aggregate.dayModelTokens.get(day(new Date("2026-08-15T10:00:00Z")));
+
+    expect(aug15?.get("claude-opus-5")?.output).toBe(10);
+    expect(aug15?.get("claude-sonnet-5")?.output).toBe(20);
+    // The May event is outside the 30-day headline but inside the day buckets.
+    expect(aggregate.dayModelTokens.size).toBe(2);
+    expect(aggregate.modelTokens.get("claude-opus-5")).toBe(10);
+    expect(aggregate.earliestMs).toBe(Date.parse("2026-05-02T10:00:00Z"));
+  });
+});

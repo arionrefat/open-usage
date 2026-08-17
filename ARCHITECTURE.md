@@ -92,6 +92,10 @@ Touch when a shared provider presentation primitive changes.
 | `claude-history.ts` | `~/.claude/history.jsonl` | Prompt and session counts, last 30 days |
 | `statusline-snapshot.ts` | `~/.claude/usage-snapshot.json` | The actual limit percentages (5h and 7d windows) plus a trend tracker |
 | `usage-cache.ts` | `~/.config/open-usage/usage-cache.json` | Last successful Claude, Codex, and OpenCode Go limit readings for startup display |
+| `claude-account-usage.ts` | `~/.claude.json` | The account's real credit spend, cap and balance (`cachedUsageUtilization`) |
+| `spend-store.ts` | `~/.config/open-usage/spend-history.json` | Our own record: spend cycles as a high-water mark, tokens per day per model |
+| `pricing.ts` | shipped table + `~/.config/open-usage/pricing.json` | Per-model rates, used only to apportion an exact total or to label an estimate |
+| `claude-spend.ts` | - | Assembles the two into the `SpendSummary` the detail screen renders |
 | `aggregate.ts` | - | Shared time bucketing and formatting helpers (`formatCountdown`, `seriesFromBuckets`, ...) |
 | `json.ts` | - | The shared `isRecord` guard for parsing unknown JSON |
 

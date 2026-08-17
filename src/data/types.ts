@@ -117,6 +117,71 @@ export interface DetailSection {
   rows: DetailRow[];
 }
 
+/**
+ * Whether a figure is the provider's own number or one we derived. Rendered
+ * next to every money value, so an estimate can never read as a bill.
+ */
+export type Exactness = "exact" | "estimated" | "unavailable";
+
+export interface Money {
+  /** Amount in the currency's minor unit, e.g. cents. */
+  amountMinor: number;
+  currency: string;
+  /** Minor units per major unit, as a power of ten. 2 means cents. */
+  exponent: number;
+}
+
+export interface TokenSplit {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export interface ModelSpend {
+  /** Canonical model id, e.g. "claude-opus-5". */
+  model: string;
+  /** True when this row is fast-mode usage, which bills at its own rate. */
+  isFast?: boolean;
+  tokens: TokenSplit;
+  /** null when the model has no published price and nothing exact to apportion. */
+  cost: Money | null;
+  exactness: Exactness;
+}
+
+export interface SpendPeriod {
+  /** e.g. "august 2026", "this cycle". */
+  label: string;
+  /** null when nothing is known for the period. */
+  total: Money | null;
+  /**
+   * Set when the money covers a different window than the period - a billing
+   * cycle rarely starts on the 1st, so the two must be labelled apart rather
+   * than silently presented as the same window.
+   */
+  totalWindowLabel?: string;
+  /** Spend cap for the period, when the provider publishes one. */
+  limit: Money | null;
+  exactness: Exactness;
+  /** Highest spend first. */
+  models: ModelSpend[];
+  /**
+   * True when the period predates our own records, so a missing figure means
+   * "never measured" rather than "measured zero".
+   */
+  isBeforeRecordsBegan: boolean;
+}
+
+export interface SpendSummary {
+  current: SpendPeriod;
+  /** Completed periods, newest first. */
+  history: SpendPeriod[];
+  /** Date stamp of the shipped price table, shown wherever an estimate appears. */
+  pricesAsOf: string;
+  /** Models seen with no published price, so a gap is visible rather than silent. */
+  unpricedModels: string[];
+}
+
 export interface ProviderUsage {
   id: ProviderId;
   meta: ProviderMeta;
@@ -140,6 +205,8 @@ export interface ProviderUsage {
    * same as a measured zero and must not be rendered as one.
    */
   cacheRead30d?: number;
+  /** Money and per-model token history; absent when the provider exposes none. */
+  spend?: SpendSummary;
   notice?: ProviderNotice;
   details?: DetailSection[];
   /** Extra stat line under the detail chart, e.g. codex code-review runs. */

@@ -34,6 +34,9 @@ function pathsIn(root: string): RealProviderPaths {
     claudeSettings: join(root, "claude", "settings.json"),
     usageSnapshot: join(root, "claude", "usage-snapshot.json"),
     usageCache: join(root, "open-usage", "usage-cache.json"),
+    claudeConfig: join(root, "claude.json"),
+    spendHistory: join(root, "open-usage", "spend-history.json"),
+    pricingOverrides: join(root, "open-usage", "pricing.json"),
     codexHome: join(root, "codex"),
   };
 }

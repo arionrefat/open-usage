@@ -246,3 +246,80 @@ test("caps stacked detail rows on narrow screens", async () => {
 
   expect(row?.indexOf("41")).toBeLessThan(65);
 });
+
+async function renderSpend(
+  mutate: (snapshot: ReturnType<UsageProvider["readSnapshot"]>) => void,
+  width = 100,
+): Promise<string> {
+  const snapshot = structuredClone(mockUsageProvider.readSnapshot());
+  snapshot.providers.cl.notice = undefined;
+  mutate(snapshot);
+  const provider: UsageProvider = {
+    ...mockUsageProvider,
+    readSnapshot: () => snapshot,
+    refresh: async () => snapshot,
+  };
+  const setup = await testRender(
+    <App
+      provider={provider}
+      startup={{ screen: "app", view: "claude", mode: "detailed", useSeverityColors: false }}
+    />,
+    { width, height: HEIGHT },
+  );
+  try {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await setup.flush();
+    });
+    return setup.captureCharFrame();
+  } finally {
+    act(() => setup.renderer.destroy());
+  }
+}
+
+test("spend renders the exact total, its cap, and the per-model split", async () => {
+  const frame = await renderSpend(() => {});
+
+  expect(frame).toContain("spend · cycle since aug 3");
+  expect(frame).toContain("exact");
+  expect(frame).toContain("$18.42");
+  expect(frame).toContain("of $50.00");
+  expect(frame).toContain("opus 5");
+  expect(frame).toContain("$14.02");
+  // A period from before we kept records must not read as a measured zero.
+  expect(frame).toContain("not recorded");
+});
+
+test("an estimated period is labelled with the price date rather than passing as a bill", async () => {
+  const frame = await renderSpend((snapshot) => {
+    const spend = snapshot.providers.cl.spend;
+    if (!spend) throw new Error("mock provider lost its spend summary");
+    spend.current.exactness = "estimated";
+    spend.current.limit = null;
+    for (const model of spend.current.models) model.exactness = "estimated";
+  });
+
+  expect(frame).toContain("est · api rates");
+  expect(frame).not.toContain("of $50.00");
+});
+
+test("a model with no published price is shown as unpriced, not as free", async () => {
+  const frame = await renderSpend((snapshot) => {
+    const spend = snapshot.providers.cl.spend;
+    if (!spend) throw new Error("mock provider lost its spend summary");
+    spend.unpricedModels = ["claude-brand-new"];
+    spend.current.models[0]!.cost = null;
+    spend.current.models[0]!.exactness = "unavailable";
+  });
+
+  expect(frame).toContain("unpriced");
+  expect(frame).toContain("brand-new");
+});
+
+test("providers without spend render no spend section", async () => {
+  const frame = await renderSpend((snapshot) => {
+    snapshot.providers.cl.spend = undefined;
+  });
+
+  expect(frame).not.toContain("spend ·");
+});

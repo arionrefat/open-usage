@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { addToBucket, mergeBuckets, type HourBuckets } from "./aggregate";
+import { addToBucket, localDateKey, mergeBuckets, type HourBuckets } from "./aggregate";
 import { isRecord } from "./json";
+import { emptyTokenUsage, modelUsageKey, type TokenUsage } from "./pricing";
 
 export interface TranscriptEvent {
   epochMs: number;
@@ -13,6 +14,11 @@ export interface TranscriptEvent {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  /** Cache writes split by TTL; they bill at 1.25x and 2x of input respectively. */
+  cacheWrite5mTokens: number;
+  cacheWrite1hTokens: number;
+  /** Fast mode bills at its own rate, so it cannot be priced as standard. */
+  speed: "standard" | "fast";
 }
 
 export interface TranscriptTokenSplit {
@@ -27,6 +33,64 @@ export interface TranscriptAggregate {
   latestMs: number;
   modelTokens: Map<string, number>;
   tokenSplit: TranscriptTokenSplit;
+  /**
+   * Per local day (`YYYY-MM-DD`), per `modelUsageKey`. Unlike the figures above
+   * this is not capped at 30 days - it reports whatever is still on disk, so
+   * the spend store can bank days before Claude prunes them.
+   *
+   * Day granularity rather than month because billing cycles do not align to
+   * calendar months; only per-day figures can be summed over an arbitrary
+   * window without mixing one window's tokens with another's money.
+   */
+  dayModelTokens: Map<string, Map<string, TokenUsage>>;
+  /**
+   * Oldest event found on disk. A day beginning before this is only partly
+   * covered, so its measurement must not overwrite an already-banked total.
+   */
+  earliestMs: number | null;
+}
+
+/** The zero value, for callers that must stand in for an unreadable read. */
+export function emptyTranscriptAggregate(): TranscriptAggregate {
+  return {
+    buckets: new Map(),
+    latestMs: 0,
+    modelTokens: new Map(),
+    tokenSplit: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    dayModelTokens: new Map(),
+    earliestMs: null,
+  };
+}
+
+/** Epoch ms of the first instant of a local `YYYY-MM-DD`. */
+export function dayStartMs(day: string): number {
+  const [year, month, date] = day.split("-").map(Number);
+  if (year === undefined || month === undefined || date === undefined) return Number.NaN;
+  return new Date(year, month - 1, date).getTime();
+}
+
+function accumulateDay(
+  days: Map<string, Map<string, TokenUsage>>,
+  event: TranscriptEvent,
+): void {
+  if (event.model === null) return;
+  const day = localDateKey(new Date(event.epochMs));
+  let models = days.get(day);
+  if (!models) {
+    models = new Map();
+    days.set(day, models);
+  }
+  const key = modelUsageKey(event.model, event.speed);
+  let usage = models.get(key);
+  if (!usage) {
+    usage = emptyTokenUsage();
+    models.set(key, usage);
+  }
+  usage.input += event.inputTokens;
+  usage.output += event.outputTokens;
+  usage.cacheRead += event.cacheReadTokens;
+  usage.cacheWrite5m += event.cacheWrite5mTokens;
+  usage.cacheWrite1h += event.cacheWrite1hTokens;
 }
 
 const ASSISTANT_MARKER = '"type":"assistant"';
@@ -73,7 +137,30 @@ export function parseTranscriptLine(line: string): TranscriptEvent | null {
   if (tokens <= 0 && cacheReadTokens <= 0) return null;
   const id = typeof message.id === "string" ? message.id : null;
   const model = typeof message.model === "string" ? message.model : null;
-  return { epochMs, tokens, id, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
+
+  const cacheCreation = usage.cache_creation;
+  const split5m = isRecord(cacheCreation) ? tokenCount(cacheCreation.ephemeral_5m_input_tokens) : 0;
+  const split1h = isRecord(cacheCreation) ? tokenCount(cacheCreation.ephemeral_1h_input_tokens) : 0;
+  // Older transcripts carry no TTL breakdown. Attributing the remainder to the
+  // 5m rate is the conservative read: it is the cheaper of the two multipliers,
+  // so an unsplit write is never over-billed in the estimate.
+  const accounted = split5m + split1h;
+  const cacheWrite5mTokens = split5m + Math.max(0, cacheWriteTokens - accounted);
+  const speed = usage.speed === "fast" ? "fast" : "standard";
+
+  return {
+    epochMs,
+    tokens,
+    id,
+    model,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    cacheWrite5mTokens,
+    cacheWrite1hTokens: split1h,
+    speed,
+  };
 }
 
 export interface PerFileEvents {
@@ -136,13 +223,23 @@ export function readClaudeTranscripts(
   const combined: HourBuckets = new Map();
   const modelTokens = new Map<string, number>();
   const tokenSplit: TranscriptTokenSplit = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const dayModelTokens = new Map<string, Map<string, TokenUsage>>();
   const cutoffMs = now.getTime() - THIRTY_DAYS_MS;
   let latestMs = 0;
+  let earliestMs: number | null = null;
+  const empty = (): TranscriptAggregate => ({
+    buckets: combined,
+    latestMs,
+    modelTokens,
+    tokenSplit,
+    dayModelTokens,
+    earliestMs,
+  });
   try {
     statSync(projectsDir);
   } catch (error) {
     clearProjectCache(projectsDir);
-    if (isMissing(error)) return { buckets: combined, latestMs, modelTokens, tokenSplit };
+    if (isMissing(error)) return empty();
     throw error;
   }
 
@@ -151,7 +248,7 @@ export function readClaudeTranscripts(
     entries = readdirSync(projectsDir, { recursive: true, encoding: "utf8" });
   } catch (error) {
     clearProjectCache(projectsDir);
-    if (isMissing(error)) return { buckets: combined, latestMs, modelTokens, tokenSplit };
+    if (isMissing(error)) return empty();
     throw error;
   }
 
@@ -177,6 +274,10 @@ export function readClaudeTranscripts(
       if (!cacheMatchesFile) fileCache.set(path, entry);
       mergeBuckets(combined, entry.buckets);
       for (const event of entry.events) {
+        // Month buckets take everything on disk, not just the 30-day window, so
+        // a month can be banked before Claude prunes the transcripts behind it.
+        accumulateDay(dayModelTokens, event);
+        if (earliestMs === null || event.epochMs < earliestMs) earliestMs = event.epochMs;
         if (event.epochMs < cutoffMs) continue;
         // Same blended figure as `event.tokens`, so the per-model bars sum to the
         // headline total instead of contradicting it by the cache-read volume.
@@ -197,5 +298,5 @@ export function readClaudeTranscripts(
   }
   for (const path of fileCache.keys()) if (!seen.has(path)) fileCache.delete(path);
   if (unreadable) throw unreadable;
-  return { buckets: combined, latestMs, modelTokens, tokenSplit };
+  return empty();
 }

@@ -29,6 +29,9 @@ const MISSING_PATHS: RealProviderPaths = {
   claudeSettings: "/nonexistent/settings.json",
   usageSnapshot: "/nonexistent/usage-snapshot.json",
   usageCache: "/nonexistent/usage-cache.json",
+  claudeConfig: "/nonexistent/.claude.json",
+  spendHistory: "/nonexistent/spend-history.json",
+  pricingOverrides: "/nonexistent/pricing.json",
   codexHome: "/nonexistent/codex",
 };
 

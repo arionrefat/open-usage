@@ -1,5 +1,12 @@
 import { COLORS } from "../../theme";
-import type { DetailRow, DetailSection, ProviderMeta, ProviderUsage, UsageLimit } from "../types";
+import type {
+  DetailRow,
+  DetailSection,
+  ProviderMeta,
+  ProviderUsage,
+  SpendSummary,
+  UsageLimit,
+} from "../types";
 import { HOUR_MS, formatAge, formatClock, formatCountdown, formatRate, seriesFromBuckets, toMillions, tokensPerHour } from "./aggregate";
 import type { HistoryStats } from "./claude-history";
 import type { TranscriptAggregate } from "./claude-transcripts";
@@ -196,6 +203,8 @@ interface ClaudeProviderInput {
   dates: string[];
   now: Date;
   authSource?: ClaudeAuthSource;
+  /** Money and per-model history; absent when neither source has anything. */
+  spend?: SpendSummary;
 }
 
 function sessionDetails(snapshotFile: SnapshotFile | null): DetailSection | null {
@@ -323,6 +332,7 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
   return {
     id: "cl",
     meta,
+    ...(input.spend ? { spend: input.spend } : {}),
     series: seriesFromBuckets(transcripts.buckets, dates, now),
     limits: claudeLimits(
       five,

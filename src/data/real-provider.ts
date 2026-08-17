@@ -10,7 +10,10 @@ import { buildClaudeProvider, createClaudeMeta } from "./real/claude-provider";
 import { createClaudeAuthSource, type ClaudeAuthSource } from "./real/claude-auth";
 import { readHistoryStats } from "./real/claude-history";
 import { hasStatuslineConfigured } from "./real/claude-settings";
-import { readClaudeTranscripts } from "./real/claude-transcripts";
+import { emptyTranscriptAggregate, readClaudeTranscripts } from "./real/claude-transcripts";
+import { readClaudeAccountUsage } from "./real/claude-account-usage";
+import { buildClaudeSpend, recordClaudeSpend } from "./real/claude-spend";
+import { loadPriceTable } from "./real/pricing";
 import { createClaudeLimitsSource, type ClaudeLimitsSource } from "./real/claude-usage";
 import { buildCodexProvider, codexWindowNote, createCodexMeta } from "./real/codex-provider";
 import { readCodexSessions } from "./real/codex-sessions";
@@ -49,6 +52,12 @@ export interface RealProviderPaths {
   claudeSettings: string;
   usageSnapshot: string;
   usageCache: string;
+  /** `~/.claude.json` - the only local source of real credit spend. */
+  claudeConfig: string;
+  /** Our own append-only record of spend and per-day tokens. */
+  spendHistory: string;
+  /** Optional user overrides for the shipped price table. */
+  pricingOverrides: string;
   codexHome: string;
   claudeExecutable?: string | null;
   codexExecutable?: string | null;
@@ -86,6 +95,9 @@ export function defaultRealProviderPaths(
     claudeSettings: join(home, ".claude", "settings.json"),
     usageSnapshot: join(home, ".claude", "usage-snapshot.json"),
     usageCache: configPath("usage-cache.json", env, home),
+    claudeConfig: join(home, ".claude.json"),
+    spendHistory: configPath("spend-history.json", env, home),
+    pricingOverrides: configPath("pricing.json", env, home),
     codexHome: codexHomeEnv || join(home, ".codex"),
     claudeExecutable: which("claude", env.PATH),
     codexExecutable: which("codex", env.PATH),
@@ -367,20 +379,27 @@ function buildSnapshot(
     transcripts = readClaudeTranscripts(paths.claudeProjects);
   } catch {
     unreadable.add("cl");
-    transcripts = {
-      buckets: new Map(),
-      latestMs: 0,
-      modelTokens: new Map(),
-      tokenSplit: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    };
+    transcripts = emptyTranscriptAggregate();
   }
   const history = readHistoryStats(paths.claudeHistory, nowMs - STATS_WINDOW_DAYS * DAY_MS);
   const snapshotFile = readUsageSnapshot(paths.usageSnapshot, now);
+  // Money and long-range history: Claude's own account figures for spend, our
+  // own record for tokens, since Claude keeps neither past the current window.
+  const priceTable = loadPriceTable(paths.pricingOverrides);
+  const account = readClaudeAccountUsage(paths.claudeConfig);
+  const spendStore = recordClaudeSpend({
+    path: paths.spendHistory,
+    account,
+    transcripts,
+    nowMs,
+  });
+  const spend = buildClaudeSpend({ account, store: spendStore, table: priceTable, now });
   const cl = buildClaudeProvider({
     meta: meta.cl,
     transcripts,
     history,
     snapshotFile,
+    spend,
     limitsSource: claudeLimits,
     hasStatusline: hasStatuslineConfigured(paths.claudeSettings),
     trend,

@@ -1,12 +1,14 @@
 import { barLabels, bars, formatTokens, sum } from "../lib/chart";
 import { buildMeter } from "../lib/meter";
-import { columnWidth, padStart } from "../lib/text";
+import { columnWidth, padEnd, padStart } from "../lib/text";
+import { formatMoney, modelShares, shortModelName } from "../lib/spend";
 import { COLORS, PROVIDER_COLORS } from "../theme";
 import {
   STATUS_PRESENTATION,
   type DetailSection,
   type ProviderId,
   type ProviderNotice,
+  type SpendSummary,
   type UsageSnapshot,
 } from "../data/types";
 import { isProviderLive, type AppState } from "../state/app-state";
@@ -195,6 +197,138 @@ function Details({ sections, width, color }: {
   ));
 }
 
+const SPEND_BAR_WIDTH = 10;
+/** Enough rows to show where the money went without pushing the chart offscreen. */
+const SPEND_MODEL_ROWS = 5;
+
+function Spend({ spend, width, color }: { spend: SpendSummary; width: number; color: string }) {
+  const { current } = spend;
+  const models = current.models.slice(0, SPEND_MODEL_ROWS);
+  const shares = modelShares(current.models).slice(0, SPEND_MODEL_ROWS);
+  const nameWidth = Math.max(
+    columnWidth("total"),
+    ...models.map((model) =>
+      columnWidth(shortModelName(model.model) + (model.isFast ? " fast" : "")),
+    ),
+  );
+  const valueWidth = Math.max(
+    current.total ? columnWidth(formatMoney(current.total)) : 1,
+    ...models.map((model) => (model.cost ? columnWidth(formatMoney(model.cost)) : 1)),
+  );
+
+  const heading = `spend · ${current.label}`;
+  const tag =
+    current.exactness === "exact"
+      ? "exact"
+      : current.exactness === "estimated"
+        ? `est · api rates ${spend.pricesAsOf}`
+        : "no figure";
+
+  const split = current.models.reduce(
+    (totals, model) => ({
+      input: totals.input + model.tokens.input,
+      output: totals.output + model.tokens.output,
+      cacheWrite: totals.cacheWrite + model.tokens.cacheWrite,
+      cacheRead: totals.cacheRead + model.tokens.cacheRead,
+    }),
+    { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 },
+  );
+
+  return (
+    <box flexDirection="column" flexShrink={0} width={width}>
+      <SplitLine
+        width={width}
+        left={[
+          { text: "─ ", color: COLORS.borderPanel },
+          { text: `${heading} `, color: COLORS.textMuted, isBold: true },
+        ]}
+        right={[{ text: ` ${tag} `, color: COLORS.textGhost }]}
+        filler="─"
+        fillerColor={COLORS.borderPanel}
+      />
+      {models.map((model, index) => {
+        const meter = buildMeter(shares[index] ?? 0, SPEND_BAR_WIDTH, color);
+        const name = shortModelName(model.model) + (model.isFast ? " fast" : "");
+        return (
+          <Line
+            key={`${model.model}-${index}`}
+            width={width}
+            segments={[
+              { text: padEnd(name, nameWidth), color: COLORS.textFaint },
+              { text: "  ", color: COLORS.rule },
+              {
+                text: padStart(model.cost ? formatMoney(model.cost) : "-", valueWidth),
+                color: model.cost ? COLORS.text : COLORS.textGhost,
+              },
+              { text: "  ", color: COLORS.rule },
+              { text: meter.fill, color },
+              { text: meter.track, color: COLORS.track },
+              { text: `  ${padStart(meter.percentLabel, 4)}`, color: COLORS.textGhost },
+            ]}
+          />
+        );
+      })}
+      <Line
+        width={width}
+        segments={[
+          { text: padEnd("total", nameWidth), color: COLORS.textMuted, isBold: true },
+          { text: "  ", color: COLORS.rule },
+          {
+            text: padStart(current.total ? formatMoney(current.total) : "-", valueWidth),
+            color: current.total ? COLORS.textBright : COLORS.textGhost,
+            isBold: true,
+          },
+          ...(current.limit
+            ? [
+                { text: "  of ", color: COLORS.textGhost },
+                { text: formatMoney(current.limit), color: COLORS.textFaint },
+              ]
+            : []),
+          // The money's window when it is not this period's - never conflate them.
+          ...(current.totalWindowLabel
+            ? [{ text: `  ${current.totalWindowLabel}`, color: COLORS.textGhost }]
+            : []),
+        ]}
+      />
+      <Line
+        width={width}
+        segments={[
+          { text: "in ", color: COLORS.textGhost },
+          { text: formatTokens(split.input / 1_000_000), color: COLORS.text },
+          { text: " ▏ out ", color: COLORS.textGhost },
+          { text: formatTokens(split.output / 1_000_000), color: COLORS.text },
+          { text: " ▏ cache-w ", color: COLORS.textGhost },
+          { text: formatTokens(split.cacheWrite / 1_000_000), color: COLORS.text },
+          { text: " ▏ cache-r ", color: COLORS.textGhost },
+          { text: formatTokens(split.cacheRead / 1_000_000), color: COLORS.text },
+        ]}
+      />
+      {spend.history.length > 0 ? (
+        <Line
+          width={width}
+          segments={spend.history.flatMap((period, index) => [
+            ...(index > 0 ? [{ text: " ▏ ", color: COLORS.rule }] : []),
+            { text: `${period.label} `, color: COLORS.textGhost },
+            {
+              text: period.total ? formatMoney(period.total) : "not recorded",
+              color: period.total ? COLORS.textFaint : COLORS.textGhost,
+            },
+          ])}
+        />
+      ) : null}
+      {spend.unpricedModels.length > 0 ? (
+        <Line
+          width={width}
+          segments={[
+            { text: "unpriced ", color: COLORS.textGhost },
+            { text: spend.unpricedModels.map(shortModelName).join(", "), color: COLORS.textFaint },
+          ]}
+        />
+      ) : null}
+    </box>
+  );
+}
+
 export function ProviderDetail({
   id,
   state,
@@ -320,6 +454,13 @@ export function ProviderDetail({
           )}
         </>
       )}
+
+      {provider.spend ? (
+        <>
+          <Spacer />
+          <Spend spend={provider.spend} width={width} color={PROVIDER_COLORS[id]} />
+        </>
+      ) : null}
 
       {provider.details?.some((section) => section.rows.length > 0) ? (
         <>

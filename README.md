@@ -74,7 +74,7 @@ open-usage --help
 | `↵`     | open the selected provider                      |
 | `m`     | overview mode: simplified / detailed            |
 | `w`     | window: session / weekly (simplified mode only) |
-| `t`     | cycle range: today / 7d / 30d / month / all     |
+| `t`     | cycle range: today / 7d / 30d / month           |
 | `r`     | refresh all providers                           |
 | `/`     | filter providers by name                        |
 | `o`     | re-run the setup wizard                         |
@@ -105,9 +105,28 @@ The check runs at most once a day, and [Configuration](#configuration) below cov
 Those three are what ships today.
 More providers are planned, so if a plan you pay for is missing, [open an issue](https://github.com/arionrefat/open-usage/issues) and say which one.
 
+### Spend
+
+The Claude Code screen also answers what a month cost, and where the money went.
+
+Where Claude reports real money it is used as-is: `~/.claude.json` carries the account's credit spend, the monthly cap, and the remaining balance.
+That figure is labelled `exact` and is never recomputed.
+
+Where Claude reports no money - a subscription with usage credits switched off - the tokens are priced against a shipped rate table and the figure is labelled `est`, alongside the date the prices were taken.
+Override any rate in `~/.config/open-usage/pricing.json`; a model with no published price is listed as unpriced rather than counted as free.
+
+The per-model split is an apportionment, not a second opinion.
+When an exact total covers the same window, each model's share is scaled to it, so the rows always add up to the headline and a stale price can move the split but never the total.
+
+Claude keeps neither history: transcripts are pruned at `cleanupPeriodDays` (30 by default) and the account block reports only the window you are in.
+So `open-usage` keeps its own record in `~/.config/open-usage/spend-history.json`, written from the day it is first run.
+Month one answers this month; by month four it answers all four.
+A month from before that file existed is shown as not recorded, never as zero.
+
 `open-usage` is read-only, and there is no account to create and no key to paste.
 It reuses the logins your CLIs already have: Claude and Codex limits come from their own signed-in CLIs, so their credentials are never read.
 The one credential file it opens is OpenCode's `auth.json`, and only to show connection status - the key is masked on read and never displayed, logged, or sent anywhere.
+It also reads `~/.claude.json`, but only the `cachedUsageUtilization` block Claude Code caches there, which is how the spend figures stay first-party; nothing else in that file is parsed, and no token in it is read.
 
 Nothing is written outside its own config directory, and there is no telemetry or analytics of any kind.
 It makes two outbound requests of its own accord.

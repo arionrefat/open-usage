@@ -81,6 +81,52 @@ Limit percentages and the burn projection are unaffected either way, since those
 Surface the snapshot's age (mtime), but remove its percentages once it exceeds ten minutes.
 The next provider refresh asks the signed-in Claude CLI for live values, so opening an interactive Claude session is only the fallback.
 
+### Spend: where the money comes from
+
+Verified 2026-08-17 against Claude Code 2.1.233.
+
+Cost per token is stored nowhere. Transcript assistant lines carry `usage` counts only - no `costUSD`.
+`Stop` and `SessionEnd` hooks were probed directly and carry no cost data at all, only `session_id` and `transcript_path`.
+Claude Code's own `costLedger` is in memory and dies with the session, so `total_cost_usd` and its per-model `modelUsage` map are reachable only from a headless `claude -p --output-format json` run or the statusline payload, neither of which covers ordinary interactive use.
+
+What is available is the account block Claude Code caches in `~/.claude.json` under `cachedUsageUtilization.utilization`:
+
+- `spend` - `used` as `{amount_minor, currency, exponent}`, plus `limit`, `balance`, `cap`, `percent`, `enabled`.
+- `extra_usage` - `is_enabled`, `monthly_limit`, `used_credits`, `utilization`, `spend_limit_reached`, `credits_ever_enabled`.
+- `five_hour` / `seven_day` - each with `limit_dollars`, `used_dollars`, `remaining_dollars`.
+
+`spend.used` is the figure used, because its shape is unambiguous.
+`extra_usage.used_credits` is paired with a sibling `decimal_places`, and the intended scaling of that pair was not observable on the account this was built against (credits were off, so every credit field read null), so it is deliberately not parsed rather than guessed.
+
+Two mechanics follow, and they must not be swapped:
+
+**Spend is an odometer.** `used_credits` is cumulative within a billing cycle and resets at the boundary.
+Readings are sampled and the running maximum kept; a reading below that maximum means the cycle rolled over, so the peak is banked as that cycle's final total.
+Summing the samples instead would multiply the real figure by the poll count - roughly 1000x per day at a 60s interval.
+Sampling the account odometer also captures usage from other machines and from claude.ai, which local session data structurally cannot see; Claude's own `/usage` output says so outright.
+
+**Tokens are events.** They carry timestamps, so they are bucketed per local day and re-measured on every poll.
+Day granularity rather than month because a billing cycle rarely starts on the 1st, and only per-day figures can be summed over an arbitrary window without mixing one window's tokens with another's money.
+
+### Spend: what is estimated, and what that costs
+
+The shipped price table only apportions.
+Where an exact total covers the same window, per-model costs are priced, normalised, and scaled to that total, with the rounding remainder given to the largest row so the parts sum exactly to the headline.
+A stale price therefore shifts the split and can never move the total.
+
+A cycle's start is only learned when it is first observed, so a cycle first seen mid-month cannot be spread across that whole month's tokens.
+In that case the exact total keeps its own window label and the per-model split stays an estimate - the two windows are never silently merged.
+
+Cache writes are priced by TTL: `ephemeral_5m_input_tokens` at 1.25x input and `ephemeral_1h_input_tokens` at 2x.
+Transcripts predating that breakdown attribute the remainder to the 5m rate, which is the cheaper multiplier and so never over-bills.
+Fast-mode usage is kept in a separate bucket because it bills at its own rate.
+
+### Spend: the retention constraint
+
+`cleanupPeriodDays` defaults to 30, and the account block reports only the current window.
+Neither answers "what did last month cost", so `open-usage` keeps its own record in its config directory, written from first run.
+The oldest day on disk is only partly covered, so re-measuring it takes the element-wise maximum against what was already banked rather than replacing it - otherwise Claude's pruning would erase history we had already recorded.
+
 ## codex
 
 ### Sources, best first
