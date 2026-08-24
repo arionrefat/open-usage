@@ -77,6 +77,7 @@ function ProviderRow({
           {
             text: padEnd(`${status.dot} ${status.label}`, STATUS_COLUMN),
             color: connection.isEnabled ? status.color : COLORS.textFaint,
+            onClick: () => actions.reconnect(id),
           },
         ]}
       />
@@ -184,6 +185,8 @@ export function Settings(props: SettingsProps) {
         width={width}
         left={[{ text: "providers", color: COLORS.textDim }]}
         right={[
+          ...keyHint("enter", "reconnect", () => actions.reconnect(selectedId)),
+          { text: "   " },
           ...keyHint("space", "show / hide", () => actions.settingsToggle(selectedId)),
         ]}
       />

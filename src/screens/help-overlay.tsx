@@ -33,14 +33,21 @@ interface HelpOverlayProps {
 
 export function HelpOverlay({ width, height, isSettings = false, onClose }: HelpOverlayProps) {
   const keymap = isSettings
-    ? KEYMAP.flatMap(([key, description]): Array<[string, string]> =>
-        key === "w"
-          ? [
-              ["p", "poll interval · 1m / 2m / 3m / 4m / 5m"],
-              ["w", "alert threshold · 80% / 85% / 90%"],
-            ]
-          : [[key, description]],
-      )
+    ? KEYMAP.flatMap(([key, description]): Array<[string, string]> => {
+        if (key === "w") {
+          return [
+            ["p", "poll interval · 1m / 2m / 3m / 4m / 5m"],
+            ["w", "alert threshold · 80% / 85% / 90%"],
+          ];
+        }
+        if (key === "↵") {
+          return [
+            ["↵", "reconnect selected provider"],
+            ["space", "show / hide selected provider"],
+          ];
+        }
+        return [[key, description]];
+      })
     : KEYMAP;
   const margin = width >= 4 ? 2 : 0;
   const panelWidth = Math.max(1, Math.min(PANEL_WIDTH, width - margin * 2));

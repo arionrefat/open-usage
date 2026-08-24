@@ -286,6 +286,44 @@ describe("App interactions", () => {
     }
   });
 
+  test("settings reconnects one provider without re-probing the others", async () => {
+    const requests: RefreshRequest[] = [];
+    const provider: UsageProvider = {
+      ...mockUsageProvider,
+      refresh: (request) => {
+        requests.push(request);
+        return Promise.resolve(mockUsageProvider.readSnapshot());
+      },
+    };
+    const setup = await testRender(
+      <App
+        provider={provider}
+        startup={{ screen: "app", view: "settings", mode: "detailed" }}
+        isPollingEnabled={false}
+      />,
+      { width: 100, height: 40 },
+    );
+
+    try {
+      await setup.flush();
+      expect(setup.captureCharFrame()).toContain("reconnect");
+      await act(async () => {
+        setup.renderer.stdin.emit("data", Buffer.from("\u001b[B"));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+      await act(async () => {
+        setup.renderer.stdin.emit("data", Buffer.from("\r"));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      await setup.flush();
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.providerIds).toEqual(["cx"]);
+      expect(requests[0]?.reason).toBe("manual");
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
   test("settings renders live, cache, and local connection states truthfully", async () => {
     const connections = mockUsageProvider.initialConnections();
     connections.cl.status = "cached";

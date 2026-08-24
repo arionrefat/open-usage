@@ -18,6 +18,8 @@ export interface AppActions {
   openSelected(): void;
   cycleView(): void;
   refresh(): void;
+  /** Re-probes a single provider, bypassing throttles the way `r` does. */
+  reconnect(id: ProviderId): void;
   startFilter(): void;
   toggleHelp(): void;
   closeHelp(): void;

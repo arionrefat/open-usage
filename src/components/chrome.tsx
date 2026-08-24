@@ -227,6 +227,7 @@ export function StatusBar({
   const hints: Array<[string, string, (() => void)?]> = view === "settings"
     ? [
         ["j/k", "move"],
+        ["↵", "reconnect"],
         ["space", "toggle", () => actions.settingsToggle()],
         ["m", "mode", () => actions.toggleMode()],
         ["p", "poll", () => actions.cyclePollInterval()],

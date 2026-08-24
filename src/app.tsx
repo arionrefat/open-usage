@@ -105,23 +105,27 @@ export function App({
   const refreshContextRef = useRef({
     connections: state.connections,
     screen: state.screen,
+    settingsCursor: state.settingsCursor,
   });
   refreshContextRef.current = {
     connections: state.connections,
     screen: state.screen,
+    settingsCursor: state.settingsCursor,
   };
   // Read by quit() so its identity stays stable; unstable deps here would
   // re-render the whole tree via `actions` and feed Bun's per-commit leak.
   const sessionRef = useRef({ connections: state.connections, fetchedAt: snapshot.fetchedAt });
   sessionRef.current = { connections: state.connections, fetchedAt: snapshot.fetchedAt };
 
-  const refresh = useCallback((reason: RefreshReason = "manual") => {
+  const refresh = useCallback((reason: RefreshReason = "manual", only?: ProviderId) => {
     if (refreshAbortRef.current) {
       if (reason === "manual") pendingManualRefreshRef.current = true;
       return;
     }
     const context = refreshContextRef.current;
-    const providerIds = providerIdsForRefresh(context.connections, reason);
+    const providerIds = only
+      ? [only]
+      : providerIdsForRefresh(context.connections, reason);
     const controller = new AbortController();
     refreshAbortRef.current = controller;
     dispatch({ type: "refresh-start" });
@@ -266,6 +270,10 @@ export function App({
       openSelected: () => dispatch({ type: "open-selected" }),
       cycleView: () => dispatch({ type: "cycle-view" }),
       refresh: () => refresh("manual"),
+      reconnect: (id: ProviderId) => {
+        dispatch({ type: "select-provider", id });
+        refresh("manual", id);
+      },
       startFilter: () => dispatch({ type: "start-filter" }),
       toggleHelp: () => dispatch({ type: "toggle-help" }),
       closeHelp: () => dispatch({ type: "close-help" }),
@@ -351,6 +359,10 @@ export function App({
     }
     if (key.name === "space" || char === " " || char === "x") {
       dispatch({ type: "settings-toggle-enabled" });
+      return true;
+    }
+    if (key.name === "return" || key.name === "enter") {
+      actions.reconnect(PROVIDER_IDS[refreshContextRef.current.settingsCursor]!);
       return true;
     }
     return false;
