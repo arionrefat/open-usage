@@ -57,10 +57,12 @@ export function createCodexLimitsSource(
   return createPolledSource<CodexAccountLimits>({
     fetch: (now, signal) => reader(now, { signal }),
     fetchedAtMs: (value) => value.fetchedAtMs,
-    describeFailure: (error) =>
-      error instanceof CodexProbeError
-        ? (NOTES[error.kind] ?? "codex limits unavailable")
-        : "codex limits unavailable",
+    describeFailure: (error) => {
+      if (!(error instanceof CodexProbeError)) return "codex limits unavailable";
+      // Only the CLI knows why it refused, so quote it rather than guess.
+      if (error.kind === "incompatible") return `codex cli: ${error.message}`;
+      return NOTES[error.kind] ?? "codex limits unavailable";
+    },
     staleAfterMs: CODEX_LIMITS_STALE_MS,
     staleNote: (ageMs) => `cached limits stale (${formatAge(ageMs)} old) - press r to refresh`,
     minPollMs: MIN_POLL_MS,

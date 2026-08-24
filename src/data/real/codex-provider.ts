@@ -1,6 +1,6 @@
 import { COLORS } from "../../theme";
-import type { DetailSection, ProviderMeta, ProviderUsage, UsageLimit } from "../types";
-import { formatAge, formatClock, seriesFromBuckets, toMillions, tokensPerHour, type HourBuckets } from "./aggregate";
+import type { DetailSection, LimitAlert, ProviderMeta, ProviderUsage, UsageLimit } from "../types";
+import { formatAge, formatClock, formatCountdown, seriesFromBuckets, toMillions, tokensPerHour, type HourBuckets } from "./aggregate";
 import type { CodexAccountLimits, CodexWindow } from "./codex-app-server";
 import type { CodexLimitsSource } from "./codex-limits";
 import type { OpencodeSessionStats } from "./opencode-db";
@@ -110,17 +110,28 @@ function codexLimitLines(limits: CodexAccountLimits, nowMs: number): UsageLimit[
         : {}),
     });
   }
-  // A free reset grant is worth surfacing: it is the way out of a capped week.
-  if (lines.length > 0 && limits.resetCredits > 0) {
-    const first = lines[0];
-    if (first) {
-      first.alert = {
-        text: `✓ ${limits.resetCredits} free limit reset available`,
-        color: COLORS.ok,
-      };
-    }
-  }
+  const first = lines[0];
+  if (first) first.alert = codexAlert(limits, nowMs);
   return lines;
+}
+
+/**
+ * A spend control outranks a grant: it blocks the account at any percentage,
+ * so the meter beside it cannot explain why codex refuses to run.
+ */
+function codexAlert(limits: CodexAccountLimits, nowMs: number): LimitAlert | undefined {
+  if (limits.isSpendControlReached) {
+    return { text: "▲ spend control reached", color: COLORS.danger, isOnCard: true };
+  }
+  if (limits.resetCredits <= 0) return undefined;
+  const count = limits.resetCredits;
+  const grants = `✓ ${count} free reset${count > 1 ? "s" : ""}`;
+  const expiresAtMs = limits.resetCreditsExpireAtMs;
+  const deadline =
+    expiresAtMs !== null && expiresAtMs > nowMs
+      ? ` · ${count > 1 ? "next expires" : "expires"} in ${formatCountdown(expiresAtMs - nowMs)}`
+      : "";
+  return { text: `${grants}${deadline}`, color: COLORS.ok, isOnCard: true };
 }
 
 /** Last-active explains a flat local chart at a glance. */

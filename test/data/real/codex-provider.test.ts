@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { HOUR_MS } from "../../../src/data/real/aggregate";
+import { DAY_MS, HOUR_MS } from "../../../src/data/real/aggregate";
 import type { CodexAccountLimits } from "../../../src/data/real/codex-app-server";
 import type { CodexLimitsSource } from "../../../src/data/real/codex-limits";
 import { buildCodexProvider, createCodexMeta } from "../../../src/data/real/codex-provider";
@@ -22,6 +22,8 @@ function account(overrides: Partial<CodexAccountLimits> = {}): CodexAccountLimit
     weekly: { usedPercent: 60, resetsAtMs: NOW_MS + 2 * HOUR_MS, windowMinutes: 10_080 },
     planType: "plus",
     resetCredits: 0,
+    resetCreditsExpireAtMs: null,
+    isSpendControlReached: false,
     additionalRateLimits: [],
     credits: null,
     usage: null,
@@ -68,8 +70,39 @@ describe("buildCodexProvider", () => {
   test("puts a reset-credit alert on the first rendered row", () => {
     const provider = build(account({ resetCredits: 2 }));
 
-    expect(provider.limits[0]?.alert?.text).toBe("✓ 2 free limit reset available");
+    expect(provider.limits[0]?.alert?.text).toBe("✓ 2 free resets");
+    // A grant is the way out of a capped week, so the overview states it too.
+    expect(provider.limits[0]?.alert?.isOnCard).toBe(true);
     expect(provider.limits[1]?.alert).toBeUndefined();
+  });
+
+  test("states the deadline on a grant that expires", () => {
+    const single = build(account({ resetCredits: 1, resetCreditsExpireAtMs: NOW_MS + 27 * DAY_MS }));
+    expect(single.limits[0]?.alert?.text).toBe("✓ 1 free reset · expires in 27d 0h");
+
+    // With several grants the soonest deadline is the one that can be missed.
+    const many = build(account({ resetCredits: 3, resetCreditsExpireAtMs: NOW_MS + 2 * DAY_MS }));
+    expect(many.limits[0]?.alert?.text).toBe("✓ 3 free resets · next expires in 2d 0h");
+  });
+
+  test("a passed deadline is dropped rather than counted down into the negative", () => {
+    const provider = build(account({ resetCredits: 1, resetCreditsExpireAtMs: NOW_MS - HOUR_MS }));
+
+    expect(provider.limits[0]?.alert?.text).toBe("✓ 1 free reset");
+  });
+
+  test("a reached spend control outranks a grant, because it blocks below the cap", () => {
+    const provider = build(
+      account({ resetCredits: 1, isSpendControlReached: true, weekly: {
+        usedPercent: 40,
+        resetsAtMs: NOW_MS + 2 * HOUR_MS,
+        windowMinutes: 10_080,
+      } }),
+    );
+
+    // The meter reads 40%, so only this line explains why codex refuses to run.
+    expect(provider.limits[0]?.alert?.text).toBe("▲ spend control reached");
+    expect(provider.limits[0]?.alert?.isOnCard).toBe(true);
   });
 
   test("renders a capless row with the source note when limits are unavailable", () => {

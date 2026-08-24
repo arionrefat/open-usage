@@ -41,6 +41,10 @@ export interface CodexAccountLimits {
   planType: string | null;
   /** Free "reset my limits" grants the account currently holds. */
   resetCredits: number;
+  /** Soonest deadline among those grants; they are use-it-or-lose-it. */
+  resetCreditsExpireAtMs: number | null;
+  /** A spend control can block the account well below its percentage cap. */
+  isSpendControlReached: boolean;
   additionalRateLimits: CodexAdditionalRateLimit[];
   credits: CodexCredits | null;
   usage: CodexUsageHistory | null;
@@ -52,6 +56,7 @@ export type CodexProbeFailure =
   | "not-logged-in"
   | "unsupported-auth"
   | "timeout"
+  | "incompatible"
   | "protocol";
 
 export class CodexProbeError extends Error {
@@ -167,11 +172,27 @@ export function parseRateLimits(result: unknown, fetchedAtMs: number): CodexAcco
     weekly,
     planType: typeof plan === "string" ? plan : null,
     resetCredits: typeof credits === "number" && Number.isFinite(credits) ? credits : 0,
+    resetCreditsExpireAtMs: resetCreditExpiryMs(result.rateLimitResetCredits),
+    isSpendControlReached: snapshot.spendControlReached === true,
     additionalRateLimits,
     credits: accountCredits,
     usage: null,
     fetchedAtMs,
   };
+}
+
+/** Soonest expiry among the grants still available to spend. */
+function resetCreditExpiryMs(value: unknown): number | null {
+  if (!isRecord(value) || !Array.isArray(value.credits)) return null;
+  let soonest: number | null = null;
+  for (const credit of value.credits) {
+    if (!isRecord(credit) || credit.status !== "available") continue;
+    const expiresAt = credit.expiresAt;
+    if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) continue;
+    const expiresAtMs = expiresAt * 1000;
+    if (soonest === null || expiresAtMs < soonest) soonest = expiresAtMs;
+  }
+  return soonest;
 }
 
 function positiveNumber(value: unknown): number {
@@ -251,13 +272,34 @@ export interface RunRequestsOptions {
 }
 
 function spawnAppServer(options: RunRequestsOptions) {
-  // Sandboxed read-only and untrusted: this only ever reads account state.
-  return Bun.spawn([options.executable ?? "codex", "-s", "read-only", "-a", "untrusted", "app-server"], {
+  // Sandboxed read-only with approvals off: this only ever reads account state.
+  return Bun.spawn([options.executable ?? "codex", "-s", "read-only", "-a", "never", "app-server"], {
     stdin: "pipe",
     stdout: "pipe",
-    stderr: "ignore",
+    stderr: "pipe",
     env: subprocessEnvironment(options.env),
   });
+}
+
+const MAX_DIAGNOSTIC_CHARS = 160;
+
+/**
+ * Drained concurrently so a chatty child never stalls on a full stderr pipe.
+ * A CLI that refuses our arguments says so here and nowhere else.
+ */
+async function readDiagnostic(stderr: ReadableStream<Uint8Array>): Promise<string | null> {
+  const decoder = new TextDecoder();
+  let text = "";
+  for await (const chunk of stderr) {
+    if (text.length > MAX_DIAGNOSTIC_CHARS) continue;
+    text += decoder.decode(chunk as Uint8Array, { stream: true });
+  }
+  const line = text.split("\n").find((candidate) => candidate.trim().length > 0);
+  if (!line) return null;
+  const cleaned = line.trim().replace(/^error:\s*/i, "");
+  return cleaned.length > MAX_DIAGNOSTIC_CHARS
+    ? `${cleaned.slice(0, MAX_DIAGNOSTIC_CHARS - 1)}…`
+    : cleaned;
 }
 
 function writeRpcMessage(
@@ -313,6 +355,7 @@ export async function runRequests(
     throw new CodexProbeError("not-installed", "codex cli not found", { cause: error });
   }
 
+  const diagnostic = readDiagnostic(proc.stderr).catch(() => null);
   const results = new Map<number, unknown>();
   const errors = new Map<number, unknown>();
   const wanted = new Set([0, ...requests.map((request) => request.id)]);
@@ -365,6 +408,9 @@ export async function runRequests(
   }
 
   if (wanted.size > 0 && results.size === 0 && errors.size === 0) {
+    // The child is dead by now, so its stderr has closed and this cannot hang.
+    const complaint = await diagnostic;
+    if (complaint) throw new CodexProbeError("incompatible", complaint);
     throw new CodexProbeError("protocol", "codex app-server returned no usable reply");
   }
   return { results, errors };

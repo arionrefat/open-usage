@@ -141,11 +141,17 @@ function codex(value: unknown): CodexAccountLimits | null {
   if (raw.session !== null && session === null) return null;
   if (raw.weekly !== null && weekly === null) return null;
   if (raw.credits !== null && credits === null) return null;
+  // Absent on entries written before these fields existed; that is not corruption.
+  const rawExpireAtMs = raw.resetCreditsExpireAtMs ?? null;
+  const expireAtMs = rawExpireAtMs === null ? null : finite(rawExpireAtMs);
+  if (rawExpireAtMs !== null && expireAtMs === null) return null;
   return {
     session,
     weekly,
     planType: raw.planType,
     resetCredits,
+    resetCreditsExpireAtMs: expireAtMs,
+    isSpendControlReached: raw.isSpendControlReached === true,
     additionalRateLimits: additionalRateLimits as CodexAdditionalRateLimit[],
     credits,
     usage,

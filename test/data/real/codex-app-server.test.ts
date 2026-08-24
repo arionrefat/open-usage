@@ -40,9 +40,32 @@ const LIVE_RESPONSE = {
   },
   rateLimitResetCredits: {
     availableCount: 1,
-    credits: [{ id: "x", resetType: "codexRateLimits", status: "available", grantedAt: 1 }],
+    credits: [
+      { id: "x", resetType: "codexRateLimits", status: "available", grantedAt: 1, expiresAt: 1_789_947_975 },
+    ],
   },
 };
+
+/**
+ * codex-cli 0.149.1 dropped `untrusted` from `--ask-for-approval`; clap rejects
+ * an unknown value with a usage error on stderr and exit code 2.
+ */
+const APPROVAL_POLICY_GUARD = `
+approval=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -a) approval="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$approval" in
+  on-request|never) ;;
+  *)
+    printf "error: invalid value '%s' for '--ask-for-approval <APPROVAL_POLICY>'\\n" "$approval" >&2
+    printf '  [possible values: on-request, never]\\n' >&2
+    exit 2
+    ;;
+esac`;
 
 const NOW_MS = 1_786_000_000_000;
 
@@ -65,6 +88,7 @@ function appServerStub() {
     dailyUsageBuckets: [{ startDate: "2026-08-16", tokens: 100 }],
   });
   const stub = createStubExecutable(`
+${APPROVAL_POLICY_GUARD}
 if [ "$STUB_MODE" = timeout ] || [ "$STUB_MODE" = abort ]; then
   trap '' TERM
   while :; do sleep 1; done
@@ -194,6 +218,20 @@ describe("Codex app-server transport", () => {
     }
   });
 
+  test("surfaces the cli's own complaint when it refuses our arguments", async () => {
+    const stub = createStubExecutable(`
+printf "error: invalid value 'untrusted' for '--ask-for-approval <APPROVAL_POLICY>'\\n" >&2
+exit 2`);
+    cleanups.push(stub.cleanup);
+    await expect(readCodexLimits(new Date(NOW_MS), {
+      executable: stub.executable,
+      env: stubEnvironment(),
+    })).rejects.toMatchObject({
+      kind: "incompatible",
+      message: expect.stringContaining("--ask-for-approval"),
+    });
+  });
+
   test("scrubs OPEN_USAGE variables from the app-server environment", async () => {
     const { executable } = appServerStub();
     const limits = await readCodexLimits(new Date(NOW_MS), {
@@ -209,6 +247,50 @@ describe("Codex app-server transport", () => {
 });
 
 describe("parseRateLimits", () => {
+  test("reads the grant deadline and the spend-control flag the live reply carries", () => {
+    const limits = parseRateLimits(LIVE_RESPONSE, NOW_MS);
+
+    expect(limits?.resetCreditsExpireAtMs).toBe(1_789_947_975 * 1000);
+    expect(limits?.isSpendControlReached).toBe(false);
+    expect(
+      parseRateLimits(
+        { ...LIVE_RESPONSE, rateLimits: { ...LIVE_RESPONSE.rateLimits, spendControlReached: true } },
+        NOW_MS,
+      )?.isSpendControlReached,
+    ).toBe(true);
+  });
+
+  test("takes the soonest deadline and ignores grants that are not available", () => {
+    const limits = parseRateLimits(
+      {
+        ...LIVE_RESPONSE,
+        rateLimitResetCredits: {
+          availableCount: 2,
+          credits: [
+            { id: "a", status: "available", expiresAt: 3_000 },
+            { id: "b", status: "available", expiresAt: 2_000 },
+            { id: "c", status: "used", expiresAt: 1_000 },
+          ],
+        },
+      },
+      NOW_MS,
+    );
+
+    expect(limits?.resetCreditsExpireAtMs).toBe(2_000 * 1000);
+  });
+
+  test("a grant with no stated deadline reports none rather than zero", () => {
+    const limits = parseRateLimits(
+      {
+        ...LIVE_RESPONSE,
+        rateLimitResetCredits: { availableCount: 1, credits: [{ id: "a", status: "available" }] },
+      },
+      NOW_MS,
+    );
+
+    expect(limits?.resetCreditsExpireAtMs).toBeNull();
+  });
+
   test("classifies a lone weekly primary window by its duration", () => {
     const limits = parseRateLimits(LIVE_RESPONSE, NOW_MS);
     // A positional mapping would have called this the session window.
@@ -376,5 +458,23 @@ describe("legacy additional limits", () => {
     expect(limits?.additionalRateLimits).toEqual([
       { name: "codex mini", usedPercent: 37.4, resetsAtMs: null, windowMinutes: null },
     ]);
+  });
+});
+
+/**
+ * The stub above encodes codex-cli 0.149.1's argument grammar, which catches a
+ * regression but not the next upstream change. Only the installed binary can.
+ * Skipped wherever codex is absent, so CI stays hermetic. `initialize` needs no
+ * account, so this stays an argument check rather than an auth check - and it
+ * must spawn the real server, because `--help` short-circuits clap's validation
+ * and would pass even with arguments the CLI rejects.
+ */
+const installedCodex = Bun.which("codex");
+
+describe.skipIf(installedCodex === null)("against the installed codex cli", () => {
+  test("accepts the arguments we spawn it with", async () => {
+    const outcome = await runRequests([], { timeoutMs: 20_000 });
+
+    expect(outcome.errors.size).toBe(0);
   });
 });

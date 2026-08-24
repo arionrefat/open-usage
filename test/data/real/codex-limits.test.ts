@@ -8,6 +8,8 @@ function limits(fetchedAtMs: number): CodexAccountLimits {
     weekly: { usedPercent: 12, resetsAtMs: fetchedAtMs + 600_000, windowMinutes: 10080 },
     planType: "plus",
     resetCredits: 1,
+    resetCreditsExpireAtMs: null,
+    isSpendControlReached: false,
     additionalRateLimits: [],
     credits: null,
     usage: null,
@@ -73,6 +75,19 @@ describe("createCodexLimitsSource", () => {
       expect(source.read()).toBeNull();
       expect(source.note()).toContain(expected);
     }
+  });
+
+  test("an incompatible cli is quoted rather than paraphrased", async () => {
+    const source = createCodexLimitsSource(() =>
+      Promise.reject(
+        new CodexProbeError("incompatible", "invalid value 'untrusted' for '--ask-for-approval'"),
+      ),
+    );
+    await source.poll(new Date());
+    expect(source.read()).toBeNull();
+    expect(source.note()).toBe(
+      "codex cli: invalid value 'untrusted' for '--ask-for-approval'",
+    );
   });
 
   test("a cancelled poll rethrows without setting a note", async () => {

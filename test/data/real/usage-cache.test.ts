@@ -32,6 +32,8 @@ const cache: UsageCache = {
     weekly: { usedPercent: 38, resetsAtMs: fetchedAtMs + DAY_MS, windowMinutes: 10080 },
     planType: "plus",
     resetCredits: 1,
+    resetCreditsExpireAtMs: null,
+    isSpendControlReached: false,
     additionalRateLimits: [],
     credits: null,
     usage: {
@@ -105,6 +107,28 @@ describe("usage cache", () => {
         go: null,
       }));
       expect(readUsageCache(path).claude).toEqual(claudeWithoutFable);
+    });
+  });
+
+  test("accepts older Codex cache entries without the grant deadline", () => {
+    tempCache((path) => {
+      const {
+        resetCreditsExpireAtMs: _expiry,
+        isSpendControlReached: _blocked,
+        ...codexBeforeTheFields
+      } = cache.codex!;
+      writeFileSync(path, JSON.stringify({
+        version: 1,
+        claude: null,
+        codex: { ...codexBeforeTheFields, usage: { dailyTokens: [["2026-08-15", 1200]], summary: null } },
+        go: null,
+      }));
+
+      // Rejecting the entry would show "not connected" for a provider that is.
+      const restored = readUsageCache(path).codex;
+      expect(restored?.weekly?.usedPercent).toBe(38);
+      expect(restored?.resetCreditsExpireAtMs).toBeNull();
+      expect(restored?.isSpendControlReached).toBe(false);
     });
   });
 

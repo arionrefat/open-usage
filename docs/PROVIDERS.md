@@ -143,11 +143,12 @@ The oldest day on disk is only partly covered, so re-measuring it takes the elem
 CodexBar's `docs/codex.md` documents a route the earlier research missed entirely: Codex CLI can be driven as a JSON-RPC server, so limits come from the tool itself with no token handling and no private endpoint.
 
 ```
-codex -s read-only -a untrusted app-server
+codex -s read-only -a never app-server
 ```
 
 Methods: `initialize` (client name/version), then `account/read` and `account/rateLimits/read`.
-Sandboxed read-only and untrusted, with a per-method timeout and the child killed on overrun.
+Sandboxed read-only with approvals off, a per-method timeout, and the child killed on overrun.
+The original write-up used `-a untrusted`; codex-cli 0.149.1 dropped that value, so the flag is now `-a never`.
 This should be the first choice wherever the CLI exists, because it survives endpoint changes and never touches a credential.
 
 ### Exact wire format
@@ -180,13 +181,16 @@ Writing the rotated token back into opencode's `auth.json` avoids that but means
 ### Implemented
 
 Codex CLI 0.146.0 was installed, which made the CLI RPC route available, so no token is ever read, refreshed or transmitted by this app.
-`src/data/real/codex-app-server.ts` spawns `codex -s read-only -a untrusted app-server`, sends `initialize`, then `account/rateLimits/read`, `account/read`, and `account/usage/read`, and kills the child on every path including timeout and cancellation.
+`src/data/real/codex-app-server.ts` spawns `codex -s read-only -a never app-server`, sends `initialize`, then `account/rateLimits/read`, `account/read`, and `account/usage/read`, and kills the child on every path including timeout and cancellation.
 
 Ground truth beat the third-party docs in three places, all verified against `codex app-server generate-json-schema` and a live call:
 
 - Fields are camelCase (`usedPercent`, `resetsAt`, `windowDurationMins`), not the snake_case in CodexBar's write-up. `resetsAt` is unix **seconds**.
 - `primary` is not necessarily the session window. This Plus account reports a single **weekly** window (`windowDurationMins: 10080`) as `primary` with `secondary: null`, so windows are classified by their own reported duration - anything at or under six hours is the session lane - and position is only a fallback when the duration is absent.
 - The response also carries `rateLimitResetCredits`, a free "reset my limits" grant. It surfaces on the card because it is the way out of a capped week.
+  Each grant carries an `expiresAt`, so the card states the soonest deadline - the grant is use-it-or-lose-it and expires roughly a month after it is issued.
+- `spendControlReached` is read as well. A spend control blocks the account at any percentage, so the meter beside it cannot explain why codex refuses to run, and this line outranks the grant when both apply.
+- Still unread: `rateLimitReachedType` and `individualLimit`, both null on every account seen so far. Nothing renders them until there is a live reply to check against.
 
 `account/read` supplies the real plan name, which replaces the opencode-derived stand-in label.
 

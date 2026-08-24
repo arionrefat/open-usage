@@ -43,6 +43,8 @@ export interface ProviderConnection {
 export interface LimitAlert {
   text: string;
   color: string;
+  /** Also shown on the compact overview card; long alerts stay detail-only. */
+  isOnCard?: boolean;
 }
 
 export interface UsageLimit {
