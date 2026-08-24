@@ -160,6 +160,7 @@ function ProviderCard({
 }) {
   const provider = snapshot.providers[id];
   const isLive = isProviderLive(state.connections[id]);
+  const cardAlert = provider.limits.find((limit) => limit.alert?.isOnCard)?.alert;
 
   return (
     <box
@@ -178,24 +179,34 @@ function ProviderCard({
       />
       <Spacer />
       {isLive ? (
-        provider.limits.map((limit, index) => (
-          <box key={limit.id} flexDirection="column" flexShrink={0}>
-            {index > 0 ? <Spacer /> : null}
-            <CardLimitMeter
-              limit={limit}
-              width={width}
-              accentColor={PROVIDER_COLORS[id]}
-              useSeverityColors={state.useSeverityColors}
-              dangerThreshold={state.warnThreshold}
-            />
-          </box>
-        ))
+        <box flexDirection="column" flexShrink={0}>
+          {provider.limits.map((limit, index) => (
+            <box key={limit.id} flexDirection="column" flexShrink={0}>
+              {index > 0 ? <Spacer /> : null}
+              <CardLimitMeter
+                limit={limit}
+                width={width}
+                accentColor={PROVIDER_COLORS[id]}
+                useSeverityColors={state.useSeverityColors}
+                dangerThreshold={state.warnThreshold}
+              />
+            </box>
+          ))}
+          {/* Below every meter, so a card-side alert never offsets the rows beside it. */}
+          {cardAlert ? (
+            <Line segments={[{ text: cardAlert.text, color: cardAlert.color }]} />
+          ) : null}
+        </box>
       ) : (
         <DisconnectedNotice
           id={id}
           state={state}
           width={width}
-          onOpenSettings={() => actions.setView("settings")}
+          onOpenSettings={() => {
+            // Land on the row the card is about, where enter now reconnects it.
+            actions.selectProvider(id);
+            actions.setView("settings");
+          }}
         />
       )}
     </box>

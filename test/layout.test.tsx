@@ -206,6 +206,46 @@ test("a provider with no history source says so instead of claiming a zero share
   expect(shareRow(rows, "claude code")).toContain(SHARE_BAR);
 });
 
+const CARD_ALERT = "✓ 1 free limit reset available";
+
+/** Flags one alert for the card and leaves a second alert detail-only. */
+function withCardAlert(snapshot: UsageSnapshot): UsageSnapshot {
+  return {
+    ...snapshot,
+    providers: {
+      ...snapshot.providers,
+      cl: {
+        ...snapshot.providers.cl,
+        limits: snapshot.providers.cl.limits.map((limit, index) => ({
+          ...limit,
+          alert:
+            index === 0
+              ? { text: CARD_ALERT, color: COLORS.ok, isOnCard: true }
+              : { text: "▲ detail-only warning", color: COLORS.danger },
+        })),
+      },
+    },
+  };
+}
+
+test("overview cards carry card-flagged limit alerts and leave the rest to the detail screen", async () => {
+  const frame = (await renderRows(140, "overview", "detailed", withCardAlert)).join("\n");
+
+  expect(frame).toContain(CARD_ALERT);
+  expect(frame).not.toContain("▲ detail-only warning");
+});
+
+test("a card alert sits below every meter so neighbouring cards stay row-aligned", async () => {
+  const meterRow = (rows: string[]) => rows.findIndex((row) => row.includes("weekly · all models"));
+  const plain = await renderRows(140, "overview", "detailed");
+  const alerted = await renderRows(140, "overview", "detailed", withCardAlert);
+
+  expect(meterRow(plain)).toBeGreaterThan(0);
+  expect(meterRow(alerted)).toBe(meterRow(plain));
+  // The alert lands after the card's last meter, not between two of them.
+  expect(alerted.findIndex((row) => row.includes(CARD_ALERT))).toBeGreaterThan(meterRow(alerted));
+});
+
 test("a provider with no cap states its rate instead of projecting against nothing", async () => {
   const rows = await renderRows(140, "overview", "detailed", (snapshot) => ({
     ...snapshot,
