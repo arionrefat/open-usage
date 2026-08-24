@@ -20,7 +20,7 @@ export interface UpdateCacheEntry {
   checkedAtMs: number;
 }
 
-export function defaultUpdateCachePath(): string {
+function defaultUpdateCachePath(): string {
   return configPath("update-check.json");
 }
 

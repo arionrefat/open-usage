@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { statSync } from "node:fs";
 import { DAY_MS, type HourBuckets } from "./aggregate";
 import { finiteNumber, isRecord } from "./json";
+import { isMissingFile } from "./fs-errors";
 
 export interface OpencodeSessionStats {
   sessions: number;
@@ -198,7 +199,7 @@ export function readOpencodeUsage(dbPath: string, now: Date): OpencodeUsage | nu
   try {
     statSync(dbPath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") return null;
+    if (isMissingFile(error)) return null;
     throw error;
   }
   let db: Database | null = null;

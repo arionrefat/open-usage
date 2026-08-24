@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { statSync } from "node:fs";
 import { DAY_MS, HOUR_MS } from "./aggregate";
 import { isRecord } from "./json";
+import { isMissingFile } from "./fs-errors";
 
 /**
  * Derived from message.cost in opencode.db against the published caps.
@@ -131,7 +132,7 @@ export function readGoSpend(dbPath: string, now: Date, caps: GoPlanCaps = GO_PLA
   try {
     statSync(dbPath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") return null;
+    if (isMissingFile(error)) return null;
     throw error;
   }
   let db: Database | null = null;

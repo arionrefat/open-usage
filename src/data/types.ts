@@ -4,6 +4,14 @@ export type ProviderId = "cl" | "cx" | "go";
 
 export const PROVIDER_IDS: readonly ProviderId[] = ["cl", "cx", "go"] as const;
 
+/**
+ * Object.fromEntries widens the key back to `string`, so build the record
+ * literally: adding a provider then fails here instead of passing an assertion.
+ */
+export function byProvider<T>(build: (id: ProviderId) => T): Record<ProviderId, T> {
+  return { cl: build("cl"), cx: build("cx"), go: build("go") };
+}
+
 /** Result of the provider's most recent limits read, or its startup cache state. */
 export type ConnectionStatus = "active" | "cached" | "local" | "expired" | "none";
 

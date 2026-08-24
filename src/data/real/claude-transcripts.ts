@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { addToBucket, localDateKey, mergeBuckets, type HourBuckets } from "./aggregate";
 import { isRecord } from "./json";
 import { emptyTokenUsage, modelUsageKey, type TokenUsage } from "./pricing";
+import { isMissingFile } from "./fs-errors";
 
 export interface TranscriptEvent {
   epochMs: number;
@@ -204,10 +205,6 @@ interface FileCacheEntry extends PerFileEvents {
 // so a 60s poll over tens of MB of transcripts stays effectively free.
 const fileCache = new Map<string, FileCacheEntry>();
 
-function isMissing(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
-}
-
 function clearProjectCache(projectsDir: string): void {
   const prefix = `${projectsDir}/`;
   for (const path of fileCache.keys()) if (path.startsWith(prefix)) fileCache.delete(path);
@@ -239,7 +236,7 @@ export function readClaudeTranscripts(
     statSync(projectsDir);
   } catch (error) {
     clearProjectCache(projectsDir);
-    if (isMissing(error)) return empty();
+    if (isMissingFile(error)) return empty();
     throw error;
   }
 
@@ -248,7 +245,7 @@ export function readClaudeTranscripts(
     entries = readdirSync(projectsDir, { recursive: true, encoding: "utf8" });
   } catch (error) {
     clearProjectCache(projectsDir);
-    if (isMissing(error)) return empty();
+    if (isMissingFile(error)) return empty();
     throw error;
   }
 
@@ -293,7 +290,7 @@ export function readClaudeTranscripts(
     } catch (error) {
       fileCache.delete(path);
       // The cleanup job prunes transcripts between readdir and stat; skip the gap.
-      if (!isMissing(error)) unreadable ??= error;
+      if (!isMissingFile(error)) unreadable ??= error;
     }
   }
   for (const path of fileCache.keys()) if (!seen.has(path)) fileCache.delete(path);

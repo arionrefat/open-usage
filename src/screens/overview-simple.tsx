@@ -3,6 +3,7 @@ import { buildMeter, emptyMeter } from "../lib/meter";
 import { columnWidth, padEnd } from "../lib/text";
 import { COLORS, PROVIDER_COLORS, THRESHOLDS } from "../theme";
 import {
+  byProvider,
   PROVIDER_IDS,
   STATUS_PRESENTATION,
   type ProviderId,
@@ -245,14 +246,11 @@ export function OverviewSimple({
 }: OverviewSimpleProps) {
   // The design plots all three providers regardless of filter or visibility;
   // consumption counts live providers only. Candidate to lift into derive.ts.
-  const consumption = Object.fromEntries(
-    PROVIDER_IDS.map((id) => [
-      id,
-      isProviderLive(state.connections[id])
-        ? (snapshot.providers[id].scopes[state.scope].percent ?? 0)
-        : 0,
-    ]),
-  ) as Record<ProviderId, number>;
+  const consumption = byProvider((id) =>
+    isProviderLive(state.connections[id])
+      ? (snapshot.providers[id].scopes[state.scope].percent ?? 0)
+      : 0,
+  );
   const consumptionTotal = PROVIDER_IDS.reduce((acc, id) => acc + consumption[id], 0);
 
   const chart = planChart(

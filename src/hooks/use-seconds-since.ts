@@ -13,6 +13,8 @@ export interface SecondsSinceScheduler {
 const systemScheduler: SecondsSinceScheduler = {
   now: () => Date.now(),
   setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+  // The seam types its handle as `unknown` so tests can pass a plain counter;
+  // only this implementation knows the handle is really a timer.
   clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
 };
 

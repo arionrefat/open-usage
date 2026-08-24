@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DAY_MS, addToBucket, type HourBuckets } from "./aggregate";
 import { isRecord } from "./json";
+import { isMissingFile } from "./fs-errors";
 
 /** Token usage summed from rollout files under codex sessions and archives. */
 export interface CodexLocalUsage {
@@ -32,10 +33,6 @@ const TURN_CONTEXT_MARKER = '"type":"turn_context"';
 const STATS_WINDOW_MS = 30 * DAY_MS;
 
 const fileCache = new Map<string, FileCacheEntry>();
-
-function isMissing(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
-}
 
 function clearDirectoryCache(directory: string): void {
   const prefix = `${directory}/`;
@@ -88,7 +85,7 @@ function collectRolloutPaths(root: string): string[] {
     if (!statSync(root).isDirectory()) throw new Error("codex home is not a directory");
   } catch (error) {
     for (const dir of directories) clearDirectoryCache(dir);
-    if (isMissing(error)) return paths;
+    if (isMissingFile(error)) return paths;
     throw error;
   }
   for (const dir of directories) {
@@ -96,7 +93,7 @@ function collectRolloutPaths(root: string): string[] {
       statSync(dir);
     } catch (error) {
       clearDirectoryCache(dir);
-      if (isMissing(error)) continue;
+      if (isMissingFile(error)) continue;
       throw error;
     }
     let entries: string[];
@@ -104,7 +101,7 @@ function collectRolloutPaths(root: string): string[] {
       entries = readdirSync(dir, { recursive: true, encoding: "utf8" });
     } catch (error) {
       clearDirectoryCache(dir);
-      if (isMissing(error)) continue;
+      if (isMissingFile(error)) continue;
       throw error;
     }
     for (const relative of entries) {
@@ -157,7 +154,7 @@ export function readCodexSessions(codexHome: string, now: Date = new Date()): Co
     } catch (error) {
       fileCache.delete(path);
       // A rollout can be rotated between readdir and stat; skip the gap.
-      if (!isMissing(error)) unreadable ??= error;
+      if (!isMissingFile(error)) unreadable ??= error;
     }
   }
   for (const path of fileCache.keys()) if (!seen.has(path)) fileCache.delete(path);

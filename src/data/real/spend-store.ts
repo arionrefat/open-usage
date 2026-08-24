@@ -273,7 +273,7 @@ export function recordsBeganMs(store: SpendStore): number | null {
   return earliest;
 }
 
-export function readSpendStore(path: string): SpendStore {
+function readSpendStore(path: string): SpendStore {
   try {
     return parseSpendStore(JSON.parse(readFileSync(path, "utf8")));
   } catch {

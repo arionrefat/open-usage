@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { withFileLock } from "../../lib/file-lock";
+import { isRecord } from "./json";
 import type { ClaudeCliUsage } from "./claude-usage";
 import type {
   CodexAccountLimits,
@@ -19,9 +20,7 @@ export interface UsageCache {
 }
 
 function record(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return isRecord(value) && !Array.isArray(value) ? value : null;
 }
 
 function finite(value: unknown): number | null {
@@ -131,8 +130,12 @@ function codex(value: unknown): CodexAccountLimits | null {
     return null;
   }
   if (!Array.isArray(raw?.additionalRateLimits)) return null;
-  const additionalRateLimits = raw.additionalRateLimits.map(codexAdditional);
-  if (additionalRateLimits.some((limit) => limit === null)) return null;
+  const additionalRateLimits: CodexAdditionalRateLimit[] = [];
+  for (const item of raw.additionalRateLimits) {
+    const limit = codexAdditional(item);
+    if (!limit) return null;
+    additionalRateLimits.push(limit);
+  }
   const usage = raw.usage === null ? null : codexUsage(raw.usage);
   if (raw.usage !== null && usage === null) return null;
   const session = raw.session === null ? null : codexWindow(raw.session);
@@ -152,7 +155,7 @@ function codex(value: unknown): CodexAccountLimits | null {
     resetCredits,
     resetCreditsExpireAtMs: expireAtMs,
     isSpendControlReached: raw.isSpendControlReached === true,
-    additionalRateLimits: additionalRateLimits as CodexAdditionalRateLimit[],
+    additionalRateLimits,
     credits,
     usage,
     fetchedAtMs,

@@ -30,7 +30,7 @@ export const SERVER_FUNCTION_IDS = {
  * `usageCosts` is absent on purpose: the bundle calls `getCosts` directly instead
  * of registering it, leaving its hash the one id with no self-healing path.
  */
-export const SERVER_FUNCTION_KEYS: Partial<Record<keyof typeof SERVER_FUNCTION_IDS, string>> = {
+const SERVER_FUNCTION_KEYS: Partial<Record<keyof typeof SERVER_FUNCTION_IDS, string>> = {
   workspaces: "workspaces",
   liteSubscription: "lite.subscription.get",
   usageList: "usage.list",

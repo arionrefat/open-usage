@@ -1,4 +1,5 @@
 import {
+  byProvider,
   PROVIDER_IDS,
   RANGE_KEYS,
   type ProviderConnection,
@@ -205,12 +206,10 @@ function reconcileConnections(
   refreshed: Record<ProviderId, ProviderConnection>,
   meta: Record<ProviderId, ProviderMeta>,
 ): AppState {
-  const connections = Object.fromEntries(
-    PROVIDER_IDS.map((id) => [
-      id,
-      { ...refreshed[id], isEnabled: state.connections[id].isEnabled },
-    ]),
-  ) as Record<ProviderId, ProviderConnection>;
+  const connections = byProvider((id) => ({
+    ...refreshed[id],
+    isEnabled: state.connections[id].isEnabled,
+  }));
   return normalizeSelection(
     { ...state, isRefreshing: false, refreshError: null, connections },
     meta,
@@ -278,7 +277,6 @@ function beginOnboardingAuth(
 export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
   return function appReducer(state: AppState, action: AppAction): AppState {
     switch (action.type) {
-      // View, mode, and selection.
       case "set-view":
         return { ...state, view: action.view };
       case "cycle-view":
@@ -311,7 +309,6 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
         if (!id || !selectableProviders(normalized, meta).includes(id)) return normalized;
         return { ...normalized, view: PROVIDER_VIEWS[id] };
       }
-      // Help and provider filtering.
       case "toggle-help":
         return { ...state, isHelpOpen: !state.isHelpOpen, isFiltering: false };
       case "close-help":
@@ -329,7 +326,6 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
         return { ...state, isFiltering: false, filterQuery: "" };
       case "paste-input":
         return pasteInput(state, action.text);
-      // Refresh lifecycle.
       case "refresh-start":
         return { ...state, isRefreshing: true, refreshError: null };
       case "refresh-success":
@@ -340,7 +336,6 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
         return { ...state, preferenceSaveFailed: true };
       case "preference-save-success":
         return state.preferenceSaveFailed ? { ...state, preferenceSaveFailed: false } : state;
-      // Onboarding wizard.
       case "open-onboarding":
         return {
           ...state,
@@ -390,7 +385,6 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
         return { ...state, screen: "app", view: "overview" };
       case "onboarding-cancel":
         return { ...state, screen: "app" };
-      // Settings cursor and connections.
       case "settings-move":
         return {
           ...state,

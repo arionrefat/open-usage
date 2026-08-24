@@ -183,42 +183,6 @@ export function SplitLine({
   );
 }
 
-interface TripleLineProps {
-  width: number;
-  left: Segment[];
-  center: Segment[];
-  right: Segment[];
-}
-
-/** Three groups spread across the width, matching the design's flex spacers. */
-export function TripleLine({ width, left, center, right }: TripleLineProps) {
-  // The centre readout is the first thing dropped; the axis ends matter more.
-  if (segmentsWidth(left) + segmentsWidth(center) + segmentsWidth(right) + 2 > width) {
-    return <SplitLine width={width} left={left} right={right} />;
-  }
-
-  const centerWidth = segmentsWidth(center);
-  const rightWidth = segmentsWidth(right);
-  const slack = Math.max(0, width - segmentsWidth(left) - centerWidth - rightWidth);
-  const leftGap = Math.floor(slack / 2);
-  const centerStart = segmentsWidth(left) + leftGap;
-  const ranges = [
-    ...hitRanges(left, 0),
-    ...hitRanges(center, centerStart),
-    ...hitRanges(right, width - rightWidth),
-  ];
-
-  return (
-    <text onMouseDown={clickHandler(ranges)}>
-      {renderSegments(left, "l")}
-      <span>{" ".repeat(leftGap)}</span>
-      {renderSegments(center, "c")}
-      <span>{" ".repeat(slack - leftGap)}</span>
-      {renderSegments(right, "r")}
-    </text>
-  );
-}
-
 interface ChartProps {
   rows: ChartRow[];
   labels?: ChartLabel[];

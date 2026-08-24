@@ -13,6 +13,13 @@ function initialState() {
 }
 
 describe("app reducer", () => {
+  test("simplified mode opens on the weekly window", () => {
+    // The session window is nearly always 0% early in a session, so weekly is
+    // the one that answers "how much have I got left".
+    expect(initialState().scope).toBe("weekly");
+    expect(reducer(initialState(), { type: "toggle-scope" }).scope).toBe("session");
+  });
+
   test("initial selection starts on the first enabled provider", () => {
     const connections = mockUsageProvider.initialConnections();
     connections.cl.isEnabled = false;

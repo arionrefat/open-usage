@@ -292,7 +292,7 @@ async function readDiagnostic(stderr: ReadableStream<Uint8Array>): Promise<strin
   let text = "";
   for await (const chunk of stderr) {
     if (text.length > MAX_DIAGNOSTIC_CHARS) continue;
-    text += decoder.decode(chunk as Uint8Array, { stream: true });
+    text += decoder.decode(chunk, { stream: true });
   }
   const line = text.split("\n").find((candidate) => candidate.trim().length > 0);
   if (!line) return null;
@@ -390,7 +390,7 @@ export async function runRequests(
     const responses = (async () => {
       for await (const chunk of proc.stdout) {
         // stream: true keeps multibyte characters split across chunks intact.
-        pendingText += decoder.decode(chunk as Uint8Array, { stream: true });
+        pendingText += decoder.decode(chunk, { stream: true });
         let newlineIndex = pendingText.indexOf("\n");
         while (newlineIndex >= 0) {
           const line = pendingText.slice(0, newlineIndex).trim();

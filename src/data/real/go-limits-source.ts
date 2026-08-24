@@ -38,7 +38,7 @@ const MIN_FORCED_POLL_MS = 5_000;
 const BACKOFF_MS = 5 * 60_000;
 const MAX_BACKOFF_MS = 30 * 60_000;
 /** Past this, a cached reading is rendered with a stale notice. */
-export const GO_LIMITS_STALE_MS = 15 * 60_000;
+const GO_LIMITS_STALE_MS = 15 * 60_000;
 
 export function readCookie(path: string, env: Record<string, string | undefined>): string | null {
   const fromEnv = env[COOKIE_ENV_VAR]?.trim();
