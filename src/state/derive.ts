@@ -26,6 +26,14 @@ const RANGE_LABELS: Record<RangeKey, string> = {
   month: "cal month",
 };
 
+export interface ProviderPressure {
+  percent: number;
+  /** The limit the figure came from, so the headline can name its window. */
+  label: string;
+  /** That limit's own reset text, which is the one that matters for routing. */
+  reset: string;
+}
+
 export interface DerivedState {
   /** Providers passing both the enabled flag and the current name filter. */
   visibleIds: ProviderId[];
@@ -34,7 +42,7 @@ export interface DerivedState {
   enabledCount: number;
   /** Enabled but unusable - expired or missing credential. */
   disconnectedIds: ProviderId[];
-  /** Live providers at or past the danger threshold in the current scope. */
+  /** Live providers at or past the danger threshold on their tightest limit. */
   hotIds: ProviderId[];
   alertText: string;
   alertColor: string;
@@ -52,10 +60,13 @@ export interface DerivedState {
   axis: readonly [string, string, string];
   rangeName: string;
   rangeLabel: string;
-  /** Scope percentages by provider, zero when the provider is not live. */
-  scopeConsumption: Record<ProviderId, number>;
-  scopeTotal: number;
-  /** Live providers with a cap in this scope, most-consumed first. */
+  /**
+   * The tightest capped limit each provider reports, whatever window it covers.
+   * null when the provider publishes no cap at all. `scopes` holds only session
+   * and weekly, so ranking on it hid limits like a monthly cycle entirely.
+   */
+  pressure: Record<ProviderId, ProviderPressure | null>;
+  /** Live providers with a cap, most-pressured first. */
   ranked: ProviderId[];
   /** Unfiltered live-provider ranking used by simplified mode, which renders every provider. */
   unfilteredRanked: ProviderId[];
@@ -124,27 +135,37 @@ function weekOverWeek(
   return { cl: windowsFor("cl"), cx: windowsFor("cx"), go: windowsFor("go") };
 }
 
-function consumptionByProvider(
-  snapshot: UsageSnapshot,
-  scope: AppState["scope"],
-  visibleLiveIds: ProviderId[],
-): Record<ProviderId, number> {
-  const consumption = (id: ProviderId) => {
-    if (!visibleLiveIds.includes(id)) return 0;
-    return snapshot.providers[id].scopes[scope].percent ?? 0;
-  };
-  return { cl: consumption("cl"), cx: consumption("cx"), go: consumption("go") };
+/**
+ * The provider's tightest limit. Whichever window binds first is the one that
+ * decides whether to route work here, so an uncapped row contributes nothing
+ * and a monthly cycle outranks an idle rolling window.
+ */
+function providerPressure(snapshot: UsageSnapshot, id: ProviderId): ProviderPressure | null {
+  let tightest: ProviderPressure | null = null;
+  for (const limit of snapshot.providers[id].limits) {
+    if (limit.percent === null) continue;
+    if (tightest === null || limit.percent > tightest.percent) {
+      tightest = { percent: limit.percent, label: limit.label, reset: limit.reset };
+    }
+  }
+  return tightest;
 }
 
-function rankConsumption(
-  snapshot: UsageSnapshot,
-  scope: AppState["scope"],
-  visibleLiveIds: ProviderId[],
+function pressureByProvider(snapshot: UsageSnapshot): Record<ProviderId, ProviderPressure | null> {
+  return {
+    cl: providerPressure(snapshot, "cl"),
+    cx: providerPressure(snapshot, "cx"),
+    go: providerPressure(snapshot, "go"),
+  };
+}
+
+function rankPressure(
+  pressure: Record<ProviderId, ProviderPressure | null>,
+  liveIds: ProviderId[],
 ): ProviderId[] {
-  const percent = (id: ProviderId) => snapshot.providers[id].scopes[scope].percent;
-  return visibleLiveIds
-    .filter((id) => percent(id) !== null)
-    .sort((first, second) => (percent(second) ?? 0) - (percent(first) ?? 0));
+  return liveIds
+    .filter((id) => pressure[id] !== null)
+    .sort((first, second) => (pressure[second]?.percent ?? 0) - (pressure[first]?.percent ?? 0));
 }
 
 function alertText(liveCount: number, issueCount: number, disconnectedCount: number): string {
@@ -208,15 +229,11 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
   const totals = { cl: sum(series.cl), cx: sum(series.cx), go: sum(series.go) };
   const visibleTotal = visibleIds.reduce((acc, id) => acc + totals[id], 0);
 
-  const scopeConsumption = consumptionByProvider(snapshot, state.scope, visibleLiveIds);
-  const scopeTotal = visibleIds.reduce((acc, id) => acc + scopeConsumption[id], 0);
+  const pressure = pressureByProvider(snapshot);
+  const ranked = rankPressure(pressure, visibleLiveIds);
+  const unfilteredRanked = rankPressure(pressure, liveIds);
 
-  const ranked = rankConsumption(snapshot, state.scope, visibleLiveIds);
-  const unfilteredRanked = rankConsumption(snapshot, state.scope, liveIds);
-
-  const hotIds = liveIds.filter(
-    (id) => (snapshot.providers[id].scopes[state.scope].percent ?? 0) >= state.warnThreshold,
-  );
+  const hotIds = liveIds.filter((id) => (pressure[id]?.percent ?? 0) >= state.warnThreshold);
   const alertCount = hotIds.length + disconnectedIds.length;
 
   return {
@@ -234,8 +251,7 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
     axis: isHourly ? snapshot.hourlyAxis : axisForDates(visibleDates),
     rangeName: RANGE_NAMES[state.range],
     rangeLabel: RANGE_LABELS[state.range],
-    scopeConsumption,
-    scopeTotal,
+    pressure,
     ranked,
     unfilteredRanked,
     worstId: ranked[0] ?? null,

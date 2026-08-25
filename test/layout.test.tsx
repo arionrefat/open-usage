@@ -251,9 +251,10 @@ test("a provider with no cap states its rate instead of projecting against nothi
     ...snapshot,
     providers: {
       ...snapshot.providers,
-      cl: {
-        ...snapshot.providers.cl,
-        burn: { ...snapshot.providers.cl.burn, rate: "9K tok/h", capsOutAt: null },
+      // go carries the burn column: its 91% monthly makes it the worst provider.
+      go: {
+        ...snapshot.providers.go,
+        burn: { ...snapshot.providers.go.burn, rate: "9K tok/h", outcome: { kind: "no-cap" } },
       },
     },
   }));

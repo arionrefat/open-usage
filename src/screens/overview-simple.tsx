@@ -12,7 +12,7 @@ import {
 } from "../data/types";
 import { isProviderLive, type AppState } from "../state/app-state";
 import type { AppActions } from "../state/actions";
-import type { DerivedState } from "../state/derive";
+import type { DerivedState, ProviderPressure } from "../state/derive";
 import { Chart, Line, Rule, SplitLine, Spacer, leftClick, type Segment } from "../components/primitives";
 import { toggleChip, toggleSegments, type ToggleOption } from "../components/toggle";
 
@@ -76,18 +76,19 @@ function pressureColor(percent: number, dangerThreshold: number): string {
 
 function closestToLimitSegments(
   worstId: ProviderId | null,
-  worstPercent: number,
+  worst: ProviderPressure | null,
   snapshot: UsageSnapshot,
   dangerThreshold: number,
 ): Segment[] {
-  const providerLabel = worstId
-    ? `${snapshot.providers[worstId].meta.name} ${worstPercent}%`
-    : "nothing is being tracked";
+  const providerLabel =
+    worstId && worst
+      ? `${snapshot.providers[worstId].meta.name} ${worst.percent}%`
+      : "nothing is being tracked";
   return [
-    { text: "▲ ", color: pressureColor(worstPercent, dangerThreshold) },
+    { text: "▲ ", color: pressureColor(worst?.percent ?? 0, dangerThreshold) },
     { text: providerLabel, color: COLORS.text },
     {
-      text: worstId ? " closest to cap" : " - every provider is off or disconnected",
+      text: worst ? ` closest to cap · ${worst.label}` : " - every provider is off or disconnected",
       color: COLORS.textFaint,
     },
   ];
@@ -95,17 +96,18 @@ function closestToLimitSegments(
 
 function mostHeadroomSegments(
   bestId: ProviderId | null,
-  bestPercent: number,
+  best: ProviderPressure | null,
   snapshot: UsageSnapshot,
 ): Segment[] {
-  const providerLabel = bestId
-    ? `${snapshot.providers[bestId].meta.name} ${100 - bestPercent}% free`
-    : "open settings";
+  const providerLabel =
+    bestId && best
+      ? `${snapshot.providers[bestId].meta.name} ${100 - best.percent}% free`
+      : "open settings";
   return [
     { text: "→ ", color: COLORS.ok },
     { text: providerLabel, color: COLORS.text },
     {
-      text: bestId ? " most headroom" : " to enable a provider or paste a key",
+      text: best ? ` most headroom · ${best.label}` : " to enable a provider or paste a key",
       color: COLORS.textFaint,
     },
   ];
@@ -273,8 +275,8 @@ export function OverviewSimple({
 
   const worstId = derived.unfilteredRanked[0] ?? null;
   const bestId = derived.unfilteredRanked.at(-1) ?? null;
-  const worstPercent = worstId ? (snapshot.providers[worstId].scopes[state.scope].percent ?? 0) : 0;
-  const bestPercent = bestId ? (snapshot.providers[bestId].scopes[state.scope].percent ?? 0) : 0;
+  const worstPressure = worstId ? derived.pressure[worstId] : null;
+  const bestPressure = bestId ? derived.pressure[bestId] : null;
 
   return (
     <box flexDirection="column" flexShrink={0}>
@@ -309,11 +311,11 @@ export function OverviewSimple({
           <Rule width={legendWidth} />
           <Line
             width={legendWidth}
-            segments={closestToLimitSegments(worstId, worstPercent, snapshot, state.warnThreshold)}
+            segments={closestToLimitSegments(worstId, worstPressure, snapshot, state.warnThreshold)}
           />
           <Line
             width={legendWidth}
-            segments={mostHeadroomSegments(bestId, bestPercent, snapshot)}
+            segments={mostHeadroomSegments(bestId, bestPressure, snapshot)}
           />
           <Line
             width={legendWidth}

@@ -20,14 +20,42 @@ describe("derived state", () => {
     const snapshot = mockUsageProvider.readSnapshot();
 
     const weekly = deriveState(initialState(), snapshot);
-    expect(weekly.hotIds).toEqual(["cl"]);
+    // go is hot on its monthly limit (91%), which sits in no scope at all.
+    expect(weekly.hotIds).toEqual(["cl", "go"]);
     expect(weekly.alertText).toBe("▲ warning");
     expect(weekly.alertColor).toBe(COLORS.danger);
 
     const session = deriveState({ ...initialState(), scope: "session" }, snapshot);
-    expect(session.hotIds).toEqual([]);
+    expect(session.hotIds).toEqual(["cl", "go"]);
     expect(session.alertText).toBe("▲ warning");
     expect(session.alertColor).toBe(COLORS.danger);
+  });
+
+  test("measures pressure against the tightest capped limit, whatever its window", () => {
+    const derived = deriveState(initialState(), mockUsageProvider.readSnapshot());
+
+    // cl max(21, 88, 60) · cx max(34) with two uncapped rows · go max(12, 41, 91)
+    expect(derived.pressure.cl).toMatchObject({ percent: 88, label: "weekly · all models" });
+    expect(derived.pressure.cx).toMatchObject({ percent: 34, label: "weekly limit" });
+    expect(derived.pressure.go).toMatchObject({ percent: 91, label: "monthly" });
+  });
+
+  test("ranks on pressure, so a limit outside the scopes still decides the headline", () => {
+    const derived = deriveState(initialState(), mockUsageProvider.readSnapshot());
+
+    // Ranking by the weekly scope alone put cl worst and never saw go's monthly.
+    // codex is expired in the mock, so the live field is cl and go only.
+    expect(derived.worstId).toBe("go");
+    expect(derived.bestId).toBe("cl");
+  });
+
+  test("holds the ranking still as the scope toggles", () => {
+    const snapshot = mockUsageProvider.readSnapshot();
+    const weekly = deriveState(initialState(), snapshot);
+    const session = deriveState({ ...initialState(), scope: "session" }, snapshot);
+
+    expect(session.worstId).toBe(weekly.worstId);
+    expect(session.bestId).toBe(weekly.bestId);
   });
 
   test("shows the disconnected warning when every enabled provider is offline", () => {
@@ -97,7 +125,8 @@ describe("derived state", () => {
     const derived = deriveState(state, mockUsageProvider.readSnapshot());
 
     expect(derived.ranked).toEqual(["go"]);
-    expect(derived.unfilteredRanked).toEqual(["cl", "go"]);
+    // go leads on its 91% monthly, ahead of cl's 88% weekly.
+    expect(derived.unfilteredRanked).toEqual(["go", "cl"]);
   });
 
   test("lists disconnected providers with their status labels", () => {
@@ -110,16 +139,24 @@ describe("derived state", () => {
     expect(derived.windowNote).toContain("opencode go - not connected");
   });
 
-  test("marks only providers at the danger threshold in the current scope as hot", () => {
+  test("marks only providers at the danger threshold on their tightest limit as hot", () => {
     const snapshot = structuredClone(mockUsageProvider.readSnapshot());
-    snapshot.providers.cl.scopes.weekly.percent = 84;
-    snapshot.providers.go.scopes.weekly.percent = 85;
-    snapshot.providers.cl.scopes.session.percent = 85;
-    snapshot.providers.go.scopes.session.percent = 84;
+    for (const limit of snapshot.providers.cl.limits) limit.percent = 84;
+    for (const limit of snapshot.providers.go.limits) limit.percent = 84;
+    // One row over the line is enough, wherever it sits in the list.
+    snapshot.providers.go.limits[2]!.percent = 85;
 
     expect(deriveState(initialState(), snapshot).hotIds).toEqual(["go"]);
-    expect(
-      deriveState({ ...initialState(), scope: "session" }, snapshot).hotIds,
-    ).toEqual(["cl"]);
+  });
+
+  test("ignores uncapped rows when reading a provider's pressure", () => {
+    const snapshot = structuredClone(mockUsageProvider.readSnapshot());
+    // codex carries two rows with no cap at all; they must not read as zero.
+    expect(snapshot.providers.cx.limits.filter((limit) => limit.percent === null)).toHaveLength(2);
+
+    expect(deriveState(initialState(), snapshot).pressure.cx).toMatchObject({
+      percent: 34,
+      label: "weekly limit",
+    });
   });
 });

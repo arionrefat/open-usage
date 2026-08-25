@@ -1,7 +1,13 @@
 import { formatDelta, formatTokens, stackedBar, sum, type TokenDelta } from "../lib/chart";
 import { columnWidth, padEnd, padStart } from "../lib/text";
 import { COLORS, PROVIDER_COLORS, THRESHOLDS } from "../theme";
-import { PROVIDER_IDS, STATUS_PRESENTATION, type ProviderId, type UsageSnapshot } from "../data/types";
+import {
+  PROVIDER_IDS,
+  STATUS_PRESENTATION,
+  type BurnRate,
+  type ProviderId,
+  type UsageSnapshot,
+} from "../data/types";
 import { isProviderLive, type AppState } from "../state/app-state";
 import type { AppActions } from "../state/actions";
 import type { DerivedState } from "../state/derive";
@@ -69,6 +75,20 @@ function pressureColor(percent: number, dangerThreshold: number): string {
   if (percent >= dangerThreshold) return COLORS.danger;
   if (percent >= THRESHOLDS.warn) return COLORS.warn;
   return COLORS.textGhost;
+}
+
+/** Each outcome needs its own sentence; one template across all of them cannot stay grammatical. */
+function burnSentence(burn: BurnRate): string {
+  switch (burn.outcome.kind) {
+    case "caps-out":
+      return `at ${burn.rate} you cap out ${burn.outcome.at}`;
+    case "clear":
+      return `at ${burn.rate} you stay under the cap`;
+    case "capped":
+      return `at ${burn.rate}, already capped`;
+    case "no-cap":
+      return "no cap to project against";
+  }
 }
 
 function closestToLimitSegments(
@@ -223,8 +243,10 @@ function SummaryTrio({
   const isStacked = columnsStack(width, 3);
   const worstId = derived.worstId;
   const bestId = derived.bestId;
-  const worstPercent = worstId ? (snapshot.providers[worstId].scopes[state.scope].percent ?? 0) : 0;
-  const bestPercent = bestId ? (snapshot.providers[bestId].scopes[state.scope].percent ?? 0) : 0;
+  const worstPressure = worstId ? derived.pressure[worstId] : null;
+  const bestPressure = bestId ? derived.pressure[bestId] : null;
+  const worstPercent = worstPressure?.percent ?? 0;
+  const bestPercent = bestPressure?.percent ?? 0;
   const burn = worstId ? snapshot.providers[worstId].burn : null;
   const isOverBudget = burn !== null && burn.projectedPercent > 100;
 
@@ -244,7 +266,9 @@ function SummaryTrio({
         <Line
           segments={[
             {
-              text: burn ? `${burn.limit} · ${burn.timeToReset}` : "every provider is off or disconnected",
+              text: worstPressure
+                ? `${worstPressure.label} · ${worstPressure.reset}`
+                : "every provider is off or disconnected",
               color: COLORS.textFaint,
             },
           ]}
@@ -257,7 +281,7 @@ function SummaryTrio({
             { text: "◈ burn rate", color: isOverBudget ? COLORS.warn : COLORS.textFaint, isBold: true },
           ]}
         />
-        {burn && burn.capsOutAt !== null ? (
+        {burn && burn.outcome.kind !== "no-cap" ? (
           <>
             <Line
               segments={[
@@ -269,11 +293,7 @@ function SummaryTrio({
                 { text: " at reset", color: COLORS.text },
               ]}
             />
-            <Line
-              segments={[
-                { text: `at ${burn.rate} you cap out ${burn.capsOutAt}`, color: COLORS.textFaint },
-              ]}
-            />
+            <Line segments={[{ text: burnSentence(burn), color: COLORS.textFaint }]} />
           </>
         ) : burn ? (
           // Rate without a cap: the measurement is real, the projection is not.
@@ -299,7 +319,11 @@ function SummaryTrio({
         <Line
           segments={[
             {
-              text: bestId ? "has the most headroom right now" : "to enable a provider or paste a key",
+              // Names the limit that binds first, which is the one the headroom
+              // is measured against. No reset here: the column cannot hold it.
+              text: bestPressure
+                ? `tightest: ${bestPressure.label}`
+                : "to enable a provider or paste a key",
               color: COLORS.textFaint,
             },
           ]}

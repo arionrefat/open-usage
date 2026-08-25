@@ -100,7 +100,7 @@ const SNAPSHOT: UsageSnapshot = {
         timeToReset: "2d 11h to reset",
         rate: "12.4M tok/h",
         projectedPercent: 104,
-        capsOutAt: "Tue 19:40",
+        outcome: { kind: "caps-out", at: "Tue 19:40" },
       },
       notice: {
         icon: "ⓘ",
@@ -226,7 +226,7 @@ const SNAPSHOT: UsageSnapshot = {
         timeToReset: "3d 4h to reset",
         rate: "3.1M tok/h",
         projectedPercent: 61,
-        capsOutAt: "not before reset",
+        outcome: { kind: "clear" },
       },
       details: [
         {
@@ -291,7 +291,7 @@ const SNAPSHOT: UsageSnapshot = {
         timeToReset: "6d 5h to reset",
         rate: "5.8M tok/h",
         projectedPercent: 118,
-        capsOutAt: "Fri 02:10",
+        outcome: { kind: "caps-out", at: "Fri 02:10" },
       },
       notice: {
         segments: [

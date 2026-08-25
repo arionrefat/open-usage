@@ -1,5 +1,6 @@
 import { COLORS } from "../../theme";
 import type {
+  BurnOutcome,
   DetailRow,
   DetailSection,
   ProviderMeta,
@@ -17,7 +18,7 @@ import {
   type ClaudeLimitsSource,
   type ClaudeUsageWindow,
 } from "./claude-usage";
-import { capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
+import { capLessLimit, formatTokenCount, localBurn, resetText, trimResetProse } from "./provider-helpers";
 import type { ClaudeAuthInfo, ClaudeAuthSource } from "./claude-auth";
 import { SNAPSHOT_FRESH_MS, type RateWindowReading, type SnapshotFile, type WeeklyTrend } from "./statusline-snapshot";
 
@@ -35,7 +36,7 @@ export function createClaudeMeta(): ProviderMeta {
 
 interface ClaudeProjection {
   projectedPercent: number;
-  capsOutAt: string | null;
+  outcome: BurnOutcome;
 }
 
 function projectWeekly(
@@ -43,20 +44,23 @@ function projectWeekly(
   trendRate: number | null,
   nowMs: number,
 ): ClaudeProjection {
-  if (!seven) return { projectedPercent: 0, capsOutAt: null };
+  if (!seven) return { projectedPercent: 0, outcome: { kind: "no-cap" } };
   const current = Math.round(seven.percent);
   if (trendRate === null || seven.resetsAtMs === null) {
     // No usable snapshot delta yet - the projection is just the current figure.
     return {
       projectedPercent: current,
-      capsOutAt: current >= 100 ? "already capped" : "not before reset",
+      outcome: current >= 100 ? { kind: "capped" } : { kind: "clear" },
     };
   }
   const hoursToReset = Math.max(0, (seven.resetsAtMs - nowMs) / HOUR_MS);
   const projectedPercent = Math.round(seven.percent + trendRate * hoursToReset);
-  if (projectedPercent <= 100) return { projectedPercent, capsOutAt: "not before reset" };
+  if (projectedPercent <= 100) return { projectedPercent, outcome: { kind: "clear" } };
   const hoursToCap = (100 - seven.percent) / trendRate;
-  return { projectedPercent, capsOutAt: formatClock(nowMs + hoursToCap * HOUR_MS) };
+  return {
+    projectedPercent,
+    outcome: { kind: "caps-out", at: formatClock(nowMs + hoursToCap * HOUR_MS) },
+  };
 }
 
 function staleSnapshotNote(
@@ -89,7 +93,7 @@ function cliWindow(
   return {
     percent: window.percent,
     resetsAtMs: snapshotWindow?.resetsAtMs ?? null,
-    resetLabel: window.reset,
+    resetLabel: trimResetProse(window.reset),
   };
 }
 
@@ -109,6 +113,11 @@ function sessionLimit(
     percent: Math.round(five.percent),
     reset: five.resetLabel ?? resetText(five.resetsAtMs, nowMs),
   };
+  // Matches the weekly line so the card does not mix the CLI's date prose with
+  // our own countdown on rows sitting one above the other.
+  if (five.resetsAtMs !== null) {
+    limit.resetLong = `${resetText(five.resetsAtMs, nowMs)} · ${formatClock(five.resetsAtMs)}`;
+  }
   if (!isFresh) limit.footnote = staleNote;
   return limit;
 }
@@ -277,16 +286,18 @@ function transcriptDetails(transcripts: TranscriptAggregate): DetailSection[] {
   return [models, tokens].filter((section): section is DetailSection => section !== null);
 }
 
-function authPlanLabel(fallback: string, auth: ClaudeAuthInfo): string {
+/** Every screen reads a different one of the three labels, so the tier has to land on all three. */
+function withAuthPlan(meta: ProviderMeta, auth: ClaudeAuthInfo): ProviderMeta {
   const subType = auth.subscriptionType;
-  if (!subType) return fallback;
-  return subType.charAt(0).toUpperCase() + subType.slice(1).replace(/[_-]/g, " ");
+  if (!subType) return meta;
+  const plan = subType.charAt(0).toUpperCase() + subType.slice(1).replace(/[_-]/g, " ");
+  return { ...meta, plan, planShort: plan, planDetail: plan };
 }
 
 export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
   const { transcripts, history, snapshotFile, limitsSource, hasStatusline, trend, dates, now } = input;
   const auth = input.authSource?.read();
-  const meta = auth ? { ...input.meta, plan: authPlanLabel(input.meta.plan, auth) } : input.meta;
+  const meta = auth ? withAuthPlan(input.meta, auth) : input.meta;
   const nowMs = now.getTime();
   const rate = tokensPerHour(transcripts.buckets, now);
   const rateLabel = formatRate(rate);
@@ -364,15 +375,17 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
     burn: seven
       ? {
           limit: "weekly · all models",
+          // A countdown beats the CLI's date prose here: this sits in a narrow
+          // column where "Aug 26 at 6am to reset" wraps mid-phrase.
           timeToReset:
-            seven.resetLabel
-              ? seven.resetLabel.replace(/^resets\s+/i, "") + " to reset"
-              : seven.resetsAtMs !== null
+            seven.resetsAtMs !== null
               ? `${formatCountdown(seven.resetsAtMs - nowMs)} to reset`
-              : "reset unknown",
+              : seven.resetLabel
+                ? seven.resetLabel.replace(/^resets\s+/i, "") + " to reset"
+                : "reset unknown",
           rate: rateLabel,
           projectedPercent: projection.projectedPercent,
-          capsOutAt: projection.capsOutAt,
+          outcome: projection.outcome,
         }
       : localBurn(rate),
     ...(history.available ? { sessions30d: history.sessions } : {}),

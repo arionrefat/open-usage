@@ -28,6 +28,12 @@ export function resetText(resetsAtMs: number | null, nowMs: number): string {
   return resetsAtMs !== null ? `resets in ${formatCountdown(resetsAtMs - nowMs)}` : "reset unknown";
 }
 
+/** Claude's CLI appends the account's own zone to its reset prose. Every time we
+ *  render is already local, so the suffix only costs a line wrap. */
+export function trimResetProse(text: string): string {
+  return text.replace(/\s*\([A-Za-z_]+\/[A-Za-z_/-]+\)\s*$/, "").trimEnd();
+}
+
 /** Like formatTokens but keeps sub-million counts readable ("442K", "1.9M"). */
 export function formatTokenCount(tokens: number): string {
   if (tokens >= 10_000_000) return formatTokens(tokens / 1_000_000);
@@ -42,7 +48,7 @@ export function localBurn(rate: number): BurnRate {
     timeToReset: NO_CAP_DATA,
     rate: formatRate(rate),
     projectedPercent: 0,
-    capsOutAt: null,
+    outcome: { kind: "no-cap" },
   };
 }
 

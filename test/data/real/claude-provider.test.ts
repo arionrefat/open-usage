@@ -36,6 +36,14 @@ function snapshot(ageMs: number, weeklyPercent = 40): SnapshotFile {
   };
 }
 
+function liveUsage(reset: string): ClaudeCliUsage {
+  return {
+    session: { percent: 25.4, reset },
+    weekly: { percent: 40, reset },
+    fetchedAtMs: NOW_MS,
+  };
+}
+
 function trend(rate: number | null): WeeklyTrend {
   return { observe: () => rate };
 }
@@ -47,6 +55,7 @@ function build(options: {
   sessions?: number;
   historyAvailable?: boolean;
   live?: ClaudeCliUsage | null;
+  subscriptionType?: string | null;
 } = {}) {
   return buildClaudeProvider({
     meta: createClaudeMeta(),
@@ -80,6 +89,18 @@ function build(options: {
     trend: trend(options.trendRate ?? null),
     dates: ["2026-01-15"],
     now: NOW,
+    ...(options.subscriptionType === undefined
+      ? {}
+      : {
+          authSource: {
+            read: () => ({
+              loggedIn: true,
+              subscriptionType: options.subscriptionType ?? null,
+              fetchedAtMs: NOW_MS,
+            }),
+            poll: () => Promise.resolve(),
+          },
+        }),
   });
 }
 
@@ -148,12 +169,12 @@ describe("buildClaudeProvider", () => {
 
     expect(provider.scopes.session.percent).toBe(10);
     expect(provider.scopes.weekly.percent).toBe(95);
-    expect(provider.limits[1]?.reset).toBe("resets Aug 5 at 6am (Asia/Dhaka)");
+    expect(provider.limits[1]?.reset).toBe("resets Aug 5 at 6am");
     expect(provider.limits[2]).toEqual({
       id: "fable",
       label: "weekly · Fable",
       percent: 65,
-      reset: "resets Aug 5 at 6am (Asia/Dhaka)",
+      reset: "resets Aug 5 at 6am",
     });
     expect(provider.notice).toBeUndefined();
   });
@@ -272,8 +293,55 @@ describe("buildClaudeProvider", () => {
 
   test("reports a clamped 100 percent reading as already capped", () => {
     expect(
-      build({ snapshotFile: snapshot(60_000, 100), trendRate: null }).burn.capsOutAt,
-    ).toBe("already capped");
+      build({ snapshotFile: snapshot(60_000, 100), trendRate: null }).burn.outcome,
+    ).toEqual({ kind: "capped" });
+  });
+
+  test("separates staying under the cap from the time a cap is hit", () => {
+    // 40% with 10h to reset: 1%/h stays clear, 7%/h runs out first.
+    expect(build({ snapshotFile: snapshot(60_000, 40), trendRate: 1 }).burn.outcome).toEqual({
+      kind: "clear",
+    });
+    expect(build({ snapshotFile: snapshot(60_000, 40), trendRate: 7 }).burn.outcome).toMatchObject({
+      kind: "caps-out",
+    });
+  });
+
+  test("names the plan tier on every screen's label, not just settings", () => {
+    const meta = build({ subscriptionType: "max" }).meta;
+
+    expect(meta.plan).toBe("Max");
+    expect(meta.planShort).toBe("Max");
+    expect(meta.planDetail).toBe("Max");
+  });
+
+  test("keeps the generic label when the cli reports no tier", () => {
+    expect(build({ subscriptionType: null }).meta.planShort).toBe("Claude subscription");
+  });
+
+  test("drops the timezone the cli appends to its own reset prose", () => {
+    const provider = build({
+      live: liveUsage("resets Aug 26 at 8:20am (Asia/Dhaka)"),
+      snapshotFile: null,
+    });
+
+    expect(provider.limits[0]?.reset).toBe("resets Aug 26 at 8:20am");
+  });
+
+  test("gives the session line the same reset shape as the weekly line", () => {
+    const provider = build({ snapshotFile: snapshot(60_000) });
+
+    expect(provider.limits[0]?.resetLong).toBe("resets in 1h 0m · Thu 13:00");
+    expect(provider.limits[1]?.resetLong).toBe("resets in 10h 0m · Thu 22:00");
+  });
+
+  test("counts down to the weekly reset rather than echoing the cli's date prose", () => {
+    const provider = build({
+      live: liveUsage("resets Aug 26 at 8:20am (Asia/Dhaka)"),
+      snapshotFile: snapshot(60_000),
+    });
+
+    expect(provider.burn.timeToReset).toBe("10h 0m to reset");
   });
 
   test("adds session, model, and token detail sections for fresh data", () => {

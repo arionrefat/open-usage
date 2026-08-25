@@ -53,9 +53,9 @@ describe("localBurn", () => {
       timeToReset: "no cap data",
       rate: "2K tok/h",
       projectedPercent: 0,
-      // null, not a label: the overview reads this to suppress a projection it
-      // cannot make, rather than splicing the words into a sentence.
-      capsOutAt: null,
+      // A distinct outcome, not a label: the overview reads this to suppress a
+      // projection it cannot make, rather than splicing words into a sentence.
+      outcome: { kind: "no-cap" },
     });
   });
 });

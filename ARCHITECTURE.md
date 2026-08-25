@@ -112,7 +112,8 @@ No timers, no filesystem, no terminal, which is why `test/state/app-state.test.t
 Touch when: adding any new interaction or piece of UI state.
 
 **`derive.ts`**
-Pure function from state + snapshot to render-ready values: which providers are visible/live/hot, ranked consumption, chart series for the chosen range, alert text.
+Pure function from state + snapshot to render-ready values: which providers are visible/live/hot, provider pressure and the ranking built on it, chart series for the chosen range, alert text.
+Pressure is a provider's tightest capped limit whatever window it covers, so a monthly cycle counts even though `scopes` only carries session and weekly.
 Touch when: changing what a screen displays without changing what the user can do.
 
 **`actions.ts`**

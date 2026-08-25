@@ -84,16 +84,27 @@ export interface ScopeSummary {
   reset: string;
 }
 
+/**
+ * What the measured rate implies for the cap. Kept as a union because the three
+ * outcomes need three different sentences; a single string forced one template
+ * onto all of them and produced "you cap out not before reset".
+ */
+export type BurnOutcome =
+  /** No cap to run out against, which makes `projectedPercent` meaningless too. */
+  | { kind: "no-cap" }
+  /** The limit is already spent, so there is nothing left to project. */
+  | { kind: "capped" }
+  /** The rate does not reach the cap before the window resets. */
+  | { kind: "clear" }
+  /** The rate reaches the cap at `at`, a formatted clock time. */
+  | { kind: "caps-out"; at: string };
+
 export interface BurnRate {
   limit: string;
   timeToReset: string;
   rate: string;
   projectedPercent: number;
-  /**
-   * null when there is no cap to run out against, which makes
-   * `projectedPercent` meaningless too - the measured rate is still real.
-   */
-  capsOutAt: string | null;
+  outcome: BurnOutcome;
 }
 
 export interface NoticeSegment {

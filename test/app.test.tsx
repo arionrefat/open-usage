@@ -579,8 +579,9 @@ describe("App interactions", () => {
       }
       await setup.flush();
       const frame = setup.captureCharFrame();
-      expect(frame).toContain("claude code 88% closest to cap");
-      expect(frame).toContain("opencode go");
+      expect(frame).toContain("opencode go 91% closest to cap");
+      // Still ranked across every provider, including the one the filter hides.
+      expect(frame).toContain("codex 66% free");
     } finally {
       act(() => setup.renderer.destroy());
     }
