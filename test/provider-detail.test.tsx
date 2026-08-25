@@ -121,7 +121,12 @@ test("frames the token chart with embedded labels and all three dates", async ()
   expect(top).not.toContain("peak");
   expect(bottom?.trim()).toStartWith(`└─ ${first} `);
   expect(bottom).toContain(` ${middle} `);
-  expect(bottom?.indexOf(middle)).toBe(Math.floor((WIDTH - Bun.stringWidth(middle)) / 2));
+  // Centred within the footer's own width. Comparing the gaps keeps this from
+  // tracking today's date: a 6-character label rounds the other way to a 5.
+  const footer = bottom?.trimEnd() ?? "";
+  const gapBefore = footer.indexOf(middle);
+  const gapAfter = Bun.stringWidth(footer) - gapBefore - Bun.stringWidth(middle);
+  expect(Math.abs(gapBefore - gapAfter)).toBeLessThanOrEqual(1);
   expect(bottom?.trim()).toEndWith(` ${last} ─┘`);
   const topIndex = rows.findIndex((row) => row.includes("tokens last 30 days"));
   expect(rows.slice(topIndex + 1, topIndex + 9).every((row) => row.trim().startsWith("│"))).toBe(true);
