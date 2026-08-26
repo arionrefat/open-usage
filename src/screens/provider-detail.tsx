@@ -374,7 +374,6 @@ export function ProviderDetail({
   }));
   const activeDays = series.filter((value) => value > 0).length;
   const totalTokens = sum(series);
-  const chartTokenLabel = provider.activityScope === "account" ? "account tokens" : "tokens";
   const chartFooterSegments = chartFooter(derived.axis, width);
 
   return (
@@ -424,7 +423,7 @@ export function ProviderDetail({
           left={[
             { text: "─ ", color: COLORS.borderPanel },
             {
-              text: `${chartTokenLabel} ${derived.rangeName} · no activity `,
+              text: `tokens ${derived.rangeName} · no activity `,
               color: COLORS.textMuted,
               isBold: true,
             },
@@ -439,7 +438,7 @@ export function ProviderDetail({
             left={[
               { text: "┌─ ", color: COLORS.borderPanel },
               {
-                text: `${chartTokenLabel} ${derived.rangeName} · ${formatTokens(totalTokens)} total · ${activeDays}/${series.length} active `,
+                text: `tokens ${derived.rangeName} · ${formatTokens(totalTokens)} total · ${activeDays}/${series.length} active `,
                 color: COLORS.textMuted,
                 isBold: true,
               },

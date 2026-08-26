@@ -118,7 +118,10 @@ describe("buildCodexProvider", () => {
     ]);
   });
 
-  test("uses server history instead of local buckets for the daily series", () => {
+  test("keeps the daily series local and blended even when server history exists", () => {
+    // The server's own history is account-wide and counts cached input, so it
+    // cannot share an axis with the other providers - or with this provider's
+    // own hourly view and burn rate, which are local.
     const buckets = new Map([[Math.floor(NOW_MS / HOUR_MS), 1_000_000]]);
     const limits = account({
       usage: {
@@ -129,9 +132,22 @@ describe("buildCodexProvider", () => {
 
     const provider = build(limits, buckets);
 
-    expect(provider.series.daily).toEqual([2.5]);
+    expect(provider.series.daily.at(-1)).toBe(1);
     expect(provider.series.hourly.some((value) => value === 1)).toBe(true);
-    expect(provider.activityScope).toBe("account");
+  });
+
+  test("reports the account-wide window total as a labelled row, not as bars", () => {
+    const limits = account({
+      usage: {
+        dailyTokens: new Map([[DATE, 2_500_000]]),
+        summary: null,
+      },
+    });
+
+    const rows = build(limits, new Map()).details?.find((s) => s.title === "records")?.rows ?? [];
+
+    expect(rows[0]?.label).toBe("account 30d · incl. cached");
+    expect(rows[0]?.value).toBe("2.5M");
   });
 
   test("moves usage summary records out of the footer", () => {

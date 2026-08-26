@@ -1,6 +1,6 @@
 import { COLORS } from "../../theme";
-import type { DetailSection, LimitAlert, ProviderMeta, ProviderUsage, UsageLimit } from "../types";
-import { formatAge, formatClock, formatCountdown, seriesFromBuckets, toMillions, tokensPerHour, type HourBuckets } from "./aggregate";
+import type { DetailRow, DetailSection, LimitAlert, ProviderMeta, ProviderUsage, UsageLimit } from "../types";
+import { formatAge, formatClock, formatCountdown, seriesFromBuckets, tokensPerHour, type HourBuckets } from "./aggregate";
 import type { CodexAccountLimits, CodexWindow } from "./codex-app-server";
 import type { CodexLimitsSource } from "./codex-limits";
 import type { OpencodeSessionStats } from "./opencode-db";
@@ -30,24 +30,40 @@ function compactDuration(totalSeconds: number): string {
   return `${remainder}s`;
 }
 
-function codexDetails(limits: CodexAccountLimits): DetailSection[] | undefined {
+/**
+ * Account-wide figures live here rather than in `series` because they count
+ * cached input, which the charts do not. Labelling them keeps the larger number
+ * available without letting it be read as the same quantity as the bars.
+ */
+function accountUsageRows(limits: CodexAccountLimits, dates: string[]): DetailRow[] {
+  const usage = limits.usage;
+  if (!usage) return [];
+  const windowTotal = dates.reduce((sum, date) => sum + (usage.dailyTokens.get(date) ?? 0), 0);
+  return windowTotal > 0
+    ? [{ label: "account 30d · incl. cached", value: formatTokenCount(windowTotal) }]
+    : [];
+}
+
+function codexDetails(limits: CodexAccountLimits, dates: string[]): DetailSection[] | undefined {
   const sections: DetailSection[] = [];
   const summary = limits.usage?.summary;
-  if (summary) {
+  const accountRows = accountUsageRows(limits, dates);
+  if (summary || accountRows.length > 0) {
     const rows = [
-      ...(summary.lifetimeTokens > 0
+      ...accountRows,
+      ...(summary && summary.lifetimeTokens > 0
         ? [{ label: "lifetime tokens", value: formatTokenCount(summary.lifetimeTokens) }]
         : []),
-      ...(summary.peakDailyTokens > 0
+      ...(summary && summary.peakDailyTokens > 0
         ? [{ label: "peak day", value: formatTokenCount(summary.peakDailyTokens) }]
         : []),
-      ...(summary.longestRunningTurnSec > 0
+      ...(summary && summary.longestRunningTurnSec > 0
         ? [{ label: "longest turn", value: compactDuration(summary.longestRunningTurnSec) }]
         : []),
-      ...(summary.currentStreakDays > 0
+      ...(summary && summary.currentStreakDays > 0
         ? [{ label: "current streak", value: `${summary.currentStreakDays}d` }]
         : []),
-      ...(summary.longestStreakDays > 0
+      ...(summary && summary.longestStreakDays > 0
         ? [{ label: "longest streak", value: `${summary.longestStreakDays}d` }]
         : []),
     ];
@@ -160,18 +176,15 @@ export function buildCodexProvider(input: CodexProviderInput): ProviderUsage {
   const nowMs = now.getTime();
   const limits = limitsSource.read();
   const limitsNote = limitsSource.note();
-  // Server-side daily history is account-wide; local buckets only cover this device.
-  const usage = limits?.usage ?? null;
   return {
     id: "cx",
     // Codex reports the real plan; the opencode-derived label is only a stand-in.
     meta: limits?.planType ? withPlan(meta, limits.planType) : meta,
-    series: usage
-      ? {
-          daily: dates.map((date) => toMillions(usage.dailyTokens.get(date) ?? 0)),
-          hourly: seriesFromBuckets(buckets, dates, now).hourly,
-        }
-      : seriesFromBuckets(buckets, dates, now),
+    // Local rollouts, blended, always. The server's own daily history is wider
+    // but cache-inclusive, so it cannot share an axis with the other providers
+    // or even with this provider's hourly view and burn rate, which are local.
+    // It is reported as its own labelled figure instead - see docs/PROVIDERS.md.
+    series: seriesFromBuckets(buckets, dates, now),
     limits: limits
       ? codexLimitLines(limits, nowMs)
       : [
@@ -204,10 +217,11 @@ export function buildCodexProvider(input: CodexProviderInput): ProviderUsage {
           },
     },
     burn: localBurn(tokensPerHour(buckets, now)),
-    activityScope: limits?.usage ? "account" : "local",
     ...(input.stats?.sessions !== undefined ? { sessions30d: input.stats.sessions } : {}),
-    details: limits ? codexDetails(limits) : undefined,
-    detailFooter: usage ? undefined : localStatsFooter(stats, nowMs),
+    details: limits ? codexDetails(limits, dates) : undefined,
+    // The chart is local now, so the local footer describes it rather than
+    // contradicting an account-wide series above it.
+    detailFooter: localStatsFooter(stats, nowMs),
     ...(limits && limitsNote
       ? {
           notice: {

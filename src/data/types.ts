@@ -226,9 +226,13 @@ export interface ProviderUsage {
   limits: UsageLimit[];
   scopes: Record<ScopeKey, ScopeSummary>;
   burn: BurnRate;
+  /**
+   * Always this device, always the blended basis, so the overview can put all
+   * three providers on one axis and mean it. A source that only reports a wider
+   * population or a cache-inclusive count does not go here - it is reported as
+   * its own labelled figure. See docs/PROVIDERS.md.
+   */
   series: UsageSeries;
-  /** Whether the provider's activity series covers an account or this device. */
-  activityScope?: "account" | "local";
   /**
    * false when no history source exists at all, which is not the same as a
    * measured zero and must not be rendered as one. Absent means history exists.

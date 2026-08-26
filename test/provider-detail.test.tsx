@@ -11,10 +11,9 @@ import { COLORS } from "../src/theme";
 const WIDTH = 60;
 const HEIGHT = 60;
 
-function providerWith(details: DetailSection[] | undefined, activityScope?: "account" | "local"): UsageProvider {
+function providerWith(details: DetailSection[] | undefined): UsageProvider {
   const snapshot = structuredClone(mockUsageProvider.readSnapshot());
   snapshot.providers.cl.details = details;
-  snapshot.providers.cl.activityScope = activityScope;
   snapshot.providers.cl.notice = undefined;
   return {
     ...mockUsageProvider,
@@ -26,11 +25,10 @@ function providerWith(details: DetailSection[] | undefined, activityScope?: "acc
 async function renderDetails(
   details: DetailSection[] | undefined,
   width = WIDTH,
-  activityScope?: "account" | "local",
 ): Promise<string> {
   const setup = await testRender(
     <App
-      provider={providerWith(details, activityScope)}
+      provider={providerWith(details)}
       startup={{ screen: "app", view: "claude", mode: "detailed", useSeverityColors: false }}
     />,
     { width, height: HEIGHT },
@@ -220,9 +218,10 @@ test("renders guide-row labels with breathing room without overwriting frame bor
   }
 });
 
-test("labels account-wide token charts explicitly", async () => {
-  const frame = await renderDetails(undefined, WIDTH, "account");
-  expect(frame).toContain("account tokens last 30 days");
+test("labels the token chart plainly, since every series is now local", async () => {
+  const frame = await renderDetails(undefined, WIDTH);
+  expect(frame).toContain("tokens last 30 days");
+  expect(frame).not.toContain("account tokens");
 });
 
 test("lays up to three detail sections in a band and wraps the fourth", async () => {
