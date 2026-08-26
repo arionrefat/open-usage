@@ -7,6 +7,8 @@ import type { OpencodeSessionStats } from "./opencode-db";
 import { capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
 
 const CODEX_NO_LIMITS = "codex limits unavailable";
+/** A limit id can contribute both a short and a long window, so budget two each. */
+const MAX_EXTRA_LIMIT_ROWS = 10;
 
 export function createCodexMeta(): ProviderMeta {
   return {
@@ -72,7 +74,7 @@ function codexDetails(limits: CodexAccountLimits, dates: string[]): DetailSectio
   if (limits.additionalRateLimits.length > 0) {
     sections.push({
       title: "per-model limits",
-      rows: limits.additionalRateLimits.slice(0, 5).map((limit) => ({
+      rows: limits.additionalRateLimits.slice(0, MAX_EXTRA_LIMIT_ROWS).map((limit) => ({
         label: limit.name,
         value: `${Math.round(limit.usedPercent)}%`,
         percent: limit.usedPercent,
@@ -92,9 +94,24 @@ function codexDetails(limits: CodexAccountLimits, dates: string[]): DetailSectio
   return sections.length > 0 ? sections : undefined;
 }
 
-/** "plus" reads as a plan name, not a sentence, so only the case changes. */
+/** Turns the CLI's wire enum into a plan label rather than exposing underscores. */
 function withPlan(meta: ProviderMeta, planType: string): ProviderMeta {
-  const plan = planType.charAt(0).toUpperCase() + planType.slice(1);
+  const known: Record<string, string> = {
+    ent26: "Enterprise",
+    self_serve_business_prolite: "Business Pro Lite",
+    self_serve_business_usage_based: "Business",
+    enterprise_cbp_automation: "Enterprise",
+    enterprise_cbp_usage_based: "Enterprise",
+    edu: "Education",
+    edu_plus: "Education Plus",
+    edu_pro: "Education Pro",
+    prolite: "Pro Lite",
+  };
+  const plan = known[planType] ?? planType
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
   return { ...meta, plan, planShort: plan, planDetail: plan };
 }
 
@@ -126,6 +143,20 @@ function codexLimitLines(limits: CodexAccountLimits, nowMs: number): UsageLimit[
         : {}),
     });
   }
+  const spend = limits.spendControl;
+  if (spend) {
+    lines.push({
+      id: "monthly-credit",
+      label: "monthly credits",
+      detailLabel: "monthly workspace credits",
+      percent: Math.round(spend.usedPercent),
+      reset: resetText(spend.resetsAtMs, nowMs),
+      detailValueLabel: `$${spend.used.toFixed(2)} of $${spend.limit.toFixed(2)}`,
+      ...(spend.resetsAtMs !== null
+        ? { resetLong: `${resetText(spend.resetsAtMs, nowMs)} · ${formatClock(spend.resetsAtMs)}` }
+        : {}),
+    });
+  }
   const first = lines[0];
   if (first) first.alert = codexAlert(limits, nowMs);
   return lines;
@@ -138,6 +169,16 @@ function codexLimitLines(limits: CodexAccountLimits, nowMs: number): UsageLimit[
 function codexAlert(limits: CodexAccountLimits, nowMs: number): LimitAlert | undefined {
   if (limits.isSpendControlReached) {
     return { text: "▲ spend control reached", color: COLORS.danger, isOnCard: true };
+  }
+  // Only the classifications that actually mean "blocked". An unrecognized
+  // value is far more likely to be a not-reached sentinel than a new block,
+  // and a false red banner on a healthy account is the worse mistake.
+  const reachedType = limits.rateLimitReachedType;
+  if (reachedType?.includes("credits_depleted")) {
+    return { text: "▲ workspace credits depleted", color: COLORS.danger, isOnCard: true };
+  }
+  if (reachedType?.includes("usage_limit_reached")) {
+    return { text: "▲ workspace usage limit reached", color: COLORS.danger, isOnCard: true };
   }
   if (limits.resetCredits <= 0) return undefined;
   const count = limits.resetCredits;

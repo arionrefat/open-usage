@@ -312,6 +312,72 @@ describe("parseRateLimits", () => {
     expect(limits?.credits).toEqual({ balance: 0, unlimited: false });
   });
 
+  test("keeps both windows for an additional model limit", () => {
+    const limits = parseRateLimits(
+      {
+        rateLimits: {
+          limitId: "codex",
+          primary: { usedPercent: 10, windowDurationMins: 300 },
+        },
+        rateLimitsByLimitId: {
+          codex: { primary: { usedPercent: 10, windowDurationMins: 300 } },
+          spark: {
+            limitName: "Codex Spark",
+            primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: 2_000 },
+            secondary: { usedPercent: 70, windowDurationMins: 10_080, resetsAt: 3_000 },
+          },
+        },
+      },
+      NOW_MS,
+    );
+
+    expect(limits?.additionalRateLimits).toEqual([
+      { name: "Codex Spark · 5h", usedPercent: 20, resetsAtMs: 2_000_000, windowMinutes: 300 },
+      { name: "Codex Spark · 1w", usedPercent: 70, resetsAtMs: 3_000_000, windowMinutes: 10_080 },
+    ]);
+  });
+
+  test("reads the monthly spend control and backend reached classification", () => {
+    const limits = parseRateLimits(
+      {
+        rateLimits: {
+          primary: { usedPercent: 40, windowDurationMins: 300 },
+          rateLimitReachedType: "workspace_member_credits_depleted",
+          individualLimit: {
+            limit: "50",
+            used: "12.5",
+            remainingPercent: 75,
+            resetsAt: 1_800_000_000,
+          },
+        },
+      },
+      NOW_MS,
+    );
+
+    expect(limits?.rateLimitReachedType).toBe("workspace_member_credits_depleted");
+    expect(limits?.spendControl).toEqual({
+      limit: 50,
+      used: 12.5,
+      usedPercent: 25,
+      resetsAtMs: 1_800_000_000_000,
+    });
+  });
+
+  test("drops a spend control that reports a cap but no consumption", () => {
+    const limits = parseRateLimits(
+      {
+        rateLimits: {
+          primary: { usedPercent: 40, windowDurationMins: 300 },
+          individualLimit: { limit: 50 },
+        },
+      },
+      NOW_MS,
+    );
+
+    // Rendering this as "$0.00 of $50.00" would present a guess as a reading.
+    expect(limits?.spendControl).toBeNull();
+  });
+
   test("splits a short and a long window into the right scopes", () => {
     const limits = parseRateLimits(
       {

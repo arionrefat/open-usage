@@ -34,6 +34,8 @@ const cache: UsageCache = {
     resetCredits: 1,
     resetCreditsExpireAtMs: null,
     isSpendControlReached: false,
+    rateLimitReachedType: null,
+    spendControl: null,
     additionalRateLimits: [],
     credits: null,
     usage: {
@@ -115,6 +117,8 @@ describe("usage cache", () => {
       const {
         resetCreditsExpireAtMs: _expiry,
         isSpendControlReached: _blocked,
+        rateLimitReachedType: _reachedType,
+        spendControl: _spendControl,
         ...codexBeforeTheFields
       } = cache.codex!;
       writeFileSync(path, JSON.stringify({
@@ -129,6 +133,8 @@ describe("usage cache", () => {
       expect(restored?.weekly?.usedPercent).toBe(38);
       expect(restored?.resetCreditsExpireAtMs).toBeNull();
       expect(restored?.isSpendControlReached).toBe(false);
+      expect(restored?.rateLimitReachedType).toBeNull();
+      expect(restored?.spendControl).toBeNull();
     });
   });
 

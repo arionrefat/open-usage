@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -109,6 +110,57 @@ describe("goQuotaWeight", () => {
 describe("readGoSpend", () => {
   test("returns null when the db file does not exist", () => {
     expect(readGoSpend("/nonexistent/path/opencode.db", NOW)).toBeNull();
+  });
+
+  test("prefers step-finish costs without double-counting transitional message costs", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "opencode-spend-parts-")), "opencode.db");
+    const db = new Database(path);
+    db.run("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)");
+    db.run("CREATE TABLE part (id TEXT, message_id TEXT, time_created INTEGER, data TEXT)");
+    db.prepare("INSERT INTO message VALUES (?1, ?2, ?3, ?4)").run(
+      "m1",
+      "s1",
+      NOW_MS - HOUR_MS,
+      JSON.stringify({
+        role: "assistant",
+        providerID: "opencode-go",
+        modelID: "glm-5.2",
+        cost: 2,
+      }),
+    );
+    db.prepare("INSERT INTO part VALUES (?1, ?2, ?3, ?4)").run(
+      "p1",
+      "m1",
+      NOW_MS - HOUR_MS,
+      JSON.stringify({ type: "step-finish", cost: 3 }),
+    );
+    db.close();
+
+    const spend = readGoSpend(path, NOW);
+    expect(spend?.session.usd).toBe(3);
+    expect(spend?.weekly.usd).toBe(3);
+  });
+
+  test("falls back to a message cost when its parts carry none", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "opencode-spend-message-")), "opencode.db");
+    const db = new Database(path);
+    db.run("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)");
+    db.run("CREATE TABLE part (id TEXT, message_id TEXT, time_created INTEGER, data TEXT)");
+    db.prepare("INSERT INTO message VALUES (?1, ?2, ?3, ?4)").run(
+      "m1",
+      "s1",
+      NOW_MS - HOUR_MS,
+      JSON.stringify({ role: "assistant", providerID: "opencode-go", cost: 2 }),
+    );
+    db.prepare("INSERT INTO part VALUES (?1, ?2, ?3, ?4)").run(
+      "p1",
+      "m1",
+      NOW_MS - HOUR_MS,
+      JSON.stringify({ type: "text" }),
+    );
+    db.close();
+
+    expect(readGoSpend(path, NOW)?.session.usd).toBe(2);
   });
 
   test("throws when an existing database is unreadable", () => {

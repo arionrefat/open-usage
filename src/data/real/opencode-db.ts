@@ -106,6 +106,70 @@ const DAILY_COST_ROWS_SQL =
   " FROM message WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
   " GROUP BY provider, slot";
 
+const PART_COST_CTES = `
+  provider_messages AS (
+    SELECT
+      id AS messageID,
+      CAST(COALESCE(json_extract(data,'$.time.created'), time_created) AS INTEGER) AS createdMs,
+      ${PROVIDER_SQL} AS provider,
+      CAST(json_extract(data,'$.cost') AS REAL) AS messageCost,
+      json_type(data,'$.cost') IN ('integer','real') AS hasMessageCost
+    FROM message
+    WHERE json_extract(data,'$.role')='assistant'
+      -- Bounded so the CTE does not scan every message ever written. The day of
+      -- slack covers a part timestamped after the message that opened it.
+      AND time_created >= ?1 - ${DAY_MS}
+  ),
+  cost_events AS (
+    SELECT
+      m.provider AS provider,
+      CAST(COALESCE(json_extract(p.data,'$.time.created'), p.time_created, m.createdMs) AS INTEGER) AS at,
+      CAST(json_extract(p.data,'$.cost') AS REAL) AS usd
+    FROM part p
+    JOIN provider_messages m ON m.messageID=p.message_id
+    WHERE json_valid(p.data)
+      AND json_extract(p.data,'$.type')='step-finish'
+      AND json_type(p.data,'$.cost') IN ('integer','real')
+    UNION ALL
+    SELECT provider, createdMs AS at, messageCost AS usd
+    FROM provider_messages m
+    WHERE hasMessageCost
+      AND NOT EXISTS (
+        SELECT 1 FROM part p
+        WHERE p.message_id=m.messageID
+          AND json_valid(p.data)
+          AND json_extract(p.data,'$.type')='step-finish'
+          AND json_type(p.data,'$.cost') IN ('integer','real')
+      )
+  )`;
+
+const DETAIL_PART_ROWS_SQL = `
+  WITH ${PART_COST_CTES},
+  token_totals AS (
+    SELECT
+      ${PROVIDER_SQL} AS provider,
+      SUM(coalesce(json_extract(data,'$.tokens.input'),0)) AS input,
+      SUM(coalesce(json_extract(data,'$.tokens.output'),0)) AS output,
+      SUM(coalesce(json_extract(data,'$.tokens.reasoning'),0)) AS reasoning,
+      SUM(coalesce(json_extract(data,'$.tokens.cache.read'),0)) AS cacheRead,
+      SUM(coalesce(json_extract(data,'$.tokens.cache.write'),0)) AS cacheWrite,
+      SUM(CASE WHEN json_type(data,'$.tokens')='object' THEN 1 ELSE 0 END) AS tokenCount
+    FROM message
+    WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1
+    GROUP BY provider
+  ),
+  cost_totals AS (
+    SELECT provider, SUM(usd) AS totalUsd, COUNT(*) AS costCount
+    FROM cost_events WHERE at >= ?1 GROUP BY provider
+  )
+  SELECT t.*, COALESCE(c.totalUsd,0) AS totalUsd, COALESCE(c.costCount,0) AS costCount
+  FROM token_totals t LEFT JOIN cost_totals c ON c.provider=t.provider`;
+
+const DAILY_PART_COST_ROWS_SQL = `
+  WITH ${PART_COST_CTES}
+  SELECT provider, CAST(at/${COST_SLOT_MS} AS INTEGER) AS slot, SUM(usd) AS usd
+  FROM cost_events WHERE at >= ?1 GROUP BY provider, slot`;
+
 /** Picks the model with the most assistant messages per provider. */
 function topModels(modelRows: unknown[]): Map<string, string> {
   const best = new Map<string, { model: string; msgs: number }>();
@@ -218,13 +282,18 @@ export function usageFromRows(
 
 /** Readonly aggregate read; null only when the DB is absent. */
 export function aggregateRowsFromDatabase(db: Database, sinceMs: number): unknown[][] {
-  return db.transaction(() => [
-    db.query(HOUR_ROWS_SQL).all(sinceMs),
-    db.query(SESSION_ROWS_SQL).all(sinceMs),
-    db.query(MODEL_ROWS_SQL).all(sinceMs),
-    db.query(DETAIL_ROWS_SQL).all(sinceMs),
-    db.query(DAILY_COST_ROWS_SQL).all(sinceMs),
-  ])();
+  return db.transaction(() => {
+    const hasPart = db.query(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='part' LIMIT 1",
+    ).get() !== null;
+    return [
+      db.query(HOUR_ROWS_SQL).all(sinceMs),
+      db.query(SESSION_ROWS_SQL).all(sinceMs),
+      db.query(MODEL_ROWS_SQL).all(sinceMs),
+      db.query(hasPart ? DETAIL_PART_ROWS_SQL : DETAIL_ROWS_SQL).all(sinceMs),
+      db.query(hasPart ? DAILY_PART_COST_ROWS_SQL : DAILY_COST_ROWS_SQL).all(sinceMs),
+    ];
+  })();
 }
 
 /**
@@ -239,7 +308,7 @@ export function aggregateRowsFromDatabase(db: Database, sinceMs: number): unknow
  * it a database that vanished after the stat above would be conjured empty and
  * read back as a real measurement of zero.
  */
-function openForReading(dbPath: string): Database {
+export function openForReading(dbPath: string): Database {
   // bun:sqlite connects lazily, so a handle that cannot reach the file is only
   // rejected on first use. Probing here is what makes the fallback reachable.
   let readonlyDb: Database | null = null;

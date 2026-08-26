@@ -3,9 +3,11 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  API_KEY_ENV_VAR,
   COOKIE_ENV_VAR,
   cookieExpiryMs,
   createGoLimitsSource,
+  readApiKey,
   readCookie,
 } from "../../../src/data/real/go-limits-source";
 import {
@@ -38,8 +40,58 @@ function reading(fetchedAtMs: number): GoServerLimits {
   };
 }
 
-describe("readCookie", () => {
-  test("prefers the environment over the file", () => {
+describe("remote credentials", () => {
+  test("reads an API key from the environment or config", () => {
+    const path = tempConfigFile(JSON.stringify({ opencodeApiKey: " from-file " }));
+    expect(readApiKey(path, {})).toBe("from-file");
+    expect(readApiKey(path, { [API_KEY_ENV_VAR]: "from-env" })).toBe("from-env");
+    expect(readApiKey(tempConfigFile("{}"), {})).toBeNull();
+  });
+
+  function countingSource(config: string, env: Record<string, string | undefined> = {}) {
+    const calls = { api: 0, dashboard: 0 };
+    const source = createGoLimitsSource(
+      tempConfigFile(config),
+      env,
+      (_cookie, now) => {
+        calls.dashboard += 1;
+        return Promise.resolve({ ...reading(now.getTime()), source: "dashboard" as const });
+      },
+      {
+        apiFetcher: (_key, now) => {
+          calls.api += 1;
+          return Promise.resolve({ ...reading(now.getTime()), source: "api" as const });
+        },
+      },
+    );
+    return { calls, source };
+  }
+
+  // The API route is still an unmerged proposal, so a stray key must never cost
+  // a user the dashboard readings they already had.
+  test("keeps using the dashboard when both credential types exist", async () => {
+    const { calls, source } = countingSource(JSON.stringify({
+      opencodeApiKey: "go_key",
+      opencodeCookie: "auth=cookie",
+    }));
+
+    await source.poll(new Date());
+    expect(source.credentialKind?.()).toBe("cookie");
+    expect(source.read()?.source).toBe("dashboard");
+    expect(calls).toEqual({ api: 0, dashboard: 1 });
+  });
+
+  test("uses the API only when it is the sole credential", async () => {
+    const { calls, source } = countingSource(JSON.stringify({ opencodeApiKey: "go_key" }));
+
+    await source.poll(new Date());
+    expect(source.credentialKind?.()).toBe("api-key");
+    expect(source.read()?.source).toBe("api");
+    expect(calls).toEqual({ api: 1, dashboard: 0 });
+    expect(source.cookieExpiresAtMs()).toBeNull();
+  });
+
+  test("prefers the cookie environment over the file", () => {
     const path = configWithCookie("auth=from-file");
     expect(readCookie(path, { [COOKIE_ENV_VAR]: "auth=from-env" })).toBe("auth=from-env");
   });

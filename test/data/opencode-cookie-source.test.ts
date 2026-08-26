@@ -9,6 +9,7 @@ import { dormantClaudeLimitsSource } from "../../src/data/real/claude-usage";
 import { dormantClaudeAuthSource } from "../../src/data/real/claude-auth";
 import {
   createRealUsageProvider,
+  hasOpencodeApiKey,
   hasOpencodeCookie,
   hasRealSources,
   type RealProviderPaths,
@@ -66,7 +67,21 @@ function goConnectionFor(paths: RealProviderPaths, env: Record<string, string | 
   return createRealUsageProvider({ paths, env, ...OFFLINE }).initialConnections().go;
 }
 
-describe("opencode cookie as a go source", () => {
+describe("opencode remote credentials as a go source", () => {
+  test("detects an API key and counts it as a real source", () => {
+    withRoot((paths) => {
+      expect(hasOpencodeApiKey(paths, NO_ENV)).toBe(false);
+      writeFileSync(paths.configFile, JSON.stringify({ opencodeApiKey: "go_key" }));
+      expect(hasOpencodeApiKey(paths, NO_ENV)).toBe(true);
+      expect(hasRealSources(paths, NO_ENV)).toBe(true);
+    });
+
+    withRoot((paths) => {
+      expect(hasOpencodeApiKey(paths, { OPEN_USAGE_OPENCODE_API_KEY: "go_env" })).toBe(true);
+      // opencode's own variable must not opt a user into a network call.
+      expect(hasOpencodeApiKey(paths, { OPENCODE_API_KEY: "go_env" })).toBe(false);
+    });
+  });
   test("detects a cookie from the config file and from the environment", () => {
     withRoot((paths) => {
       expect(hasOpencodeCookie(paths, NO_ENV)).toBe(false);

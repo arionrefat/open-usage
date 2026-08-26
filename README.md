@@ -149,6 +149,7 @@ They persist to `~/.config/open-usage/preferences.json` (or `$XDG_CONFIG_HOME/op
 | `CODEX_HOME`                 | non-default Codex home                         |
 | `OPENCODE_DB`                | non-default `opencode.db` path, for history    |
 | `OPEN_USAGE_OPENCODE_COOKIE` | exact OpenCode Go windows, no install needed   |
+| `OPEN_USAGE_OPENCODE_API_KEY` | forward-looking; the Go usage API it calls is not live yet |
 | `OPEN_USAGE_NO_UPDATE_CHECK` | set to anything to stop the daily version check |
 
 ### Exact OpenCode Go limits
@@ -178,6 +179,10 @@ The cookie is optional, and it is also sufficient on its own.
 Without it the Go card still works, on the local estimate; with it, OpenCode need not be installed at all, though a machine with no `opencode.db` has no token history to chart and the card says so.
 
 Only the `auth` / `__Host-auth` pair is ever sent, and anything else in a pasted header is stripped before the request leaves your machine.
+
+There is also an `opencodeApiKey` config key, and `OPEN_USAGE_OPENCODE_API_KEY` to match.
+It targets the proposed `GET /zen/go/v1/usage` route, which is not merged and returns 404 today, so it is only useful once OpenCode ships that endpoint.
+The cookie is used in preference to it until then, and a key alone will simply report the endpoint as unreachable while the local estimate carries on.
 The cookie carries its own expiry, and the card warns you through its final seven days and again once it lapses, so a dead session cannot quietly pass for a live one.
 If the dashboard changes shape underneath it, the card falls back to the estimate with a note rather than showing a figure it can no longer stand behind.
 

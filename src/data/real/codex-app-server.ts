@@ -24,6 +24,13 @@ export interface CodexAdditionalRateLimit extends CodexWindow {
   name: string;
 }
 
+export interface CodexSpendControl {
+  limit: number;
+  used: number;
+  usedPercent: number;
+  resetsAtMs: number | null;
+}
+
 export interface CodexCredits {
   balance: number | null;
   unlimited: boolean;
@@ -45,6 +52,10 @@ export interface CodexAccountLimits {
   resetCreditsExpireAtMs: number | null;
   /** A spend control can block the account well below its percentage cap. */
   isSpendControlReached: boolean;
+  /** Backend classification for exhausted rate, workspace-credit, or usage limits. */
+  rateLimitReachedType?: string | null;
+  /** Effective monthly workspace credit limit, when the CLI publishes one. */
+  spendControl?: CodexSpendControl | null;
   additionalRateLimits: CodexAdditionalRateLimit[];
   credits: CodexCredits | null;
   usage: CodexUsageHistory | null;
@@ -90,12 +101,31 @@ function windowFrom(value: unknown): CodexWindow | null {
   };
 }
 
-function namedWindow(id: string, item: unknown): CodexAdditionalRateLimit | null {
-  if (!isRecord(item)) return null;
+function durationSuffix(window: CodexWindow, fallback: "primary" | "secondary"): string {
+  const minutes = window.windowMinutes;
+  if (minutes === null) return fallback;
+  if (minutes % 10_080 === 0) return `${minutes / 10_080}w`;
+  if (minutes % 1_440 === 0) return `${minutes / 1_440}d`;
+  if (minutes % 60 === 0) return `${minutes / 60}h`;
+  return `${minutes}m`;
+}
+
+function namedWindows(id: string, item: unknown): CodexAdditionalRateLimit[] {
+  if (!isRecord(item)) return [];
   const nameValue = item.limitName ?? item.modelName ?? item.model ?? item.limitId ?? id;
-  const window = windowFrom(item) ?? windowFrom(item.primary) ?? windowFrom(item.secondary);
-  if (typeof nameValue !== "string" || nameValue.length === 0 || !window) return null;
-  return { name: nameValue, ...window };
+  if (typeof nameValue !== "string" || nameValue.length === 0) return [];
+
+  const direct = windowFrom(item);
+  if (direct) return [{ name: nameValue, ...direct }];
+  const windows = [
+    ["primary", windowFrom(item.primary)],
+    ["secondary", windowFrom(item.secondary)],
+  ] as const;
+  const present = windows.filter((entry): entry is readonly ["primary" | "secondary", CodexWindow] => entry[1] !== null);
+  return present.map(([position, window]) => ({
+    name: present.length > 1 ? `${nameValue} · ${durationSuffix(window, position)}` : nameValue,
+    ...window,
+  }));
 }
 
 /** Canonical multi-bucket interface on current CLIs: a map keyed by limit id. */
@@ -103,9 +133,10 @@ function rateLimitsByLimitIdFrom(value: unknown, mainLimitId: string | null): Co
   if (!isRecord(value)) return [];
   const limits: CodexAdditionalRateLimit[] = [];
   for (const [id, item] of Object.entries(value)) {
-    if (id === mainLimitId) continue;
-    const limit = namedWindow(id, item);
-    if (limit) limits.push(limit);
+    // `codex` is the canonical main bucket. The fallback matters for sparse
+    // payloads that omit the mirrored root limit id.
+    if (id === mainLimitId || (mainLimitId === null && id === "codex")) continue;
+    limits.push(...namedWindows(id, item));
   }
   return limits;
 }
@@ -113,12 +144,7 @@ function rateLimitsByLimitIdFrom(value: unknown, mainLimitId: string | null): Co
 /** Legacy fallback: older CLIs carried extra limits as an array on the snapshot. */
 function additionalRateLimitsFrom(value: unknown): CodexAdditionalRateLimit[] {
   if (!Array.isArray(value)) return [];
-  const limits: CodexAdditionalRateLimit[] = [];
-  for (const item of value) {
-    const limit = namedWindow("", item);
-    if (limit) limits.push(limit);
-  }
-  return limits;
+  return value.flatMap((item) => namedWindows("", item));
 }
 
 function creditsFrom(value: unknown): CodexCredits | null {
@@ -128,6 +154,31 @@ function creditsFrom(value: unknown): CodexCredits | null {
   return {
     balance: Number.isFinite(numericBalance) ? numericBalance : null,
     unlimited: value.unlimited === true,
+  };
+}
+
+function flexibleNumber(value: unknown): number | null {
+  const number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(number) ? number : null;
+}
+
+function spendControlFrom(value: unknown): CodexSpendControl | null {
+  if (!isRecord(value)) return null;
+  const limit = flexibleNumber(value.limit);
+  if (limit === null || limit <= 0) return null;
+  const reportedUsed = flexibleNumber(value.used);
+  const remaining = flexibleNumber(value.remainingPercent);
+  // A cap with no consumption figure is not a measurement of zero, and a
+  // "$0.00 of $50.00" lane would present the guess as one.
+  if (reportedUsed === null && remaining === null) return null;
+  const used = reportedUsed ?? limit * (100 - Math.min(100, Math.max(0, remaining ?? 0))) / 100;
+  const usedPercent = Math.min(100, Math.max(0, (used / limit) * 100));
+  const resetsAt = flexibleNumber(value.resetsAt);
+  return {
+    limit,
+    used: Math.max(0, used),
+    usedPercent,
+    resetsAtMs: resetsAt !== null && resetsAt > 0 ? resetsAt * 1000 : null,
   };
 }
 
@@ -174,6 +225,9 @@ export function parseRateLimits(result: unknown, fetchedAtMs: number): CodexAcco
     resetCredits: typeof credits === "number" && Number.isFinite(credits) ? credits : 0,
     resetCreditsExpireAtMs: resetCreditExpiryMs(result.rateLimitResetCredits),
     isSpendControlReached: snapshot.spendControlReached === true,
+    rateLimitReachedType:
+      typeof snapshot.rateLimitReachedType === "string" ? snapshot.rateLimitReachedType : null,
+    spendControl: spendControlFrom(snapshot.individualLimit),
     additionalRateLimits,
     credits: accountCredits,
     usage: null,

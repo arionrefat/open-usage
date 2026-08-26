@@ -16,7 +16,7 @@ import type { GoServerLimits } from "./opencode-server";
 import type { GoBilling } from "./opencode-usage";
 import { capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
 
-const GO_LIMIT_FOOTNOTE = "model-weighted local estimate - cookie unlocks exact %";
+const GO_LIMIT_FOOTNOTE = "model-weighted local estimate - API key or cookie unlocks exact %";
 const COOKIE_WARNING_MS = 7 * DAY_MS;
 
 export function createGoMeta(): ProviderMeta {
@@ -70,6 +70,10 @@ function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: nu
       detailLabel: "rolling 5h limit",
       percent: Math.round(server.rollingPercent),
       reset: resetText(server.rollingResetAtMs, nowMs),
+      ...(server.rollingUsd !== null && server.rollingUsd !== undefined &&
+        server.rollingCapUsd !== null && server.rollingCapUsd !== undefined
+        ? { detailValueLabel: `${formatUsd(server.rollingUsd)} of ${formatUsd(server.rollingCapUsd)}` }
+        : {}),
     },
   ];
   if (server.weeklyPercent !== null) {
@@ -79,6 +83,10 @@ function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: nu
       detailLabel: "rolling 7d limit",
       percent: Math.round(server.weeklyPercent),
       reset: resetText(server.weeklyResetAtMs, nowMs),
+      ...(server.weeklyUsd !== null && server.weeklyUsd !== undefined &&
+        server.weeklyCapUsd !== null && server.weeklyCapUsd !== undefined
+        ? { detailValueLabel: `${formatUsd(server.weeklyUsd)} of ${formatUsd(server.weeklyCapUsd)}` }
+        : {}),
     });
   } else if (spend) {
     limits.push(spendLimit("weekly", "rolling 7d", "rolling 7d limit", spend.weekly, nowMs));
@@ -90,6 +98,10 @@ function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: nu
       detailLabel: "monthly limit",
       percent: Math.round(server.monthlyPercent),
       reset: resetText(server.monthlyResetAtMs, nowMs),
+      ...(server.monthlyUsd !== null && server.monthlyUsd !== undefined &&
+        server.monthlyCapUsd !== null && server.monthlyCapUsd !== undefined
+        ? { detailValueLabel: `${formatUsd(server.monthlyUsd)} of ${formatUsd(server.monthlyCapUsd)}` }
+        : {}),
     });
   } else if (spend) {
     limits.push(spendLimit("monthly", "trailing 30d", "trailing 30d limit", spend.monthly, nowMs));
@@ -97,13 +109,14 @@ function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: nu
   return limits;
 }
 
-/** The cookie carries percentages only, so an empty chart is expected, not broken. */
+/** Exact limits carry no activity series, so an empty local chart is expected. */
 function sessionsFooter(
   stats: OpencodeSessionStats | undefined,
-  hasServerLimits: boolean,
+  server: GoServerLimits | null,
 ): string | undefined {
   if (!stats || stats.sessions <= 0) {
-    return hasServerLimits ? "no local history ▏ limits from cookie" : undefined;
+    if (!server) return undefined;
+    return `no local history ▏ limits from ${server.source === "api" ? "API" : "dashboard"}`;
   }
   return `sessions 30d ${stats.sessions} ▏ avg per session ${formatTokenCount(stats.tokens / stats.sessions)} ▏ tokens from opencode.db`;
 }
@@ -306,10 +319,13 @@ interface GoProviderResult {
   usesEstimate: boolean;
 }
 
-/** Server limits come off the dashboard, so the stated source must follow them. */
+/** The stated source follows whichever authoritative quota path produced the reading. */
 function goMetaFor(meta: ProviderMeta, server: GoServerLimits | null, usesEstimate: boolean): ProviderMeta {
   if (!server) return meta;
-  const fromServer = { ...meta, source: "opencode.ai dashboard" };
+  const fromServer = {
+    ...meta,
+    source: server.source === "api" ? "opencode go usage API" : "opencode.ai dashboard",
+  };
   return usesEstimate
     ? fromServer
     : { ...fromServer, plan: "Go", planShort: "Go", planDetail: "Go" };
@@ -357,7 +373,7 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
             },
           }
         : {}),
-      detailFooter: sessionsFooter(stats, server !== null),
+      detailFooter: sessionsFooter(stats, server),
     },
   };
 }

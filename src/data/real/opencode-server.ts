@@ -499,13 +499,23 @@ export async function fetchGoUsageRows(
 
 export interface GoServerLimits {
   rollingPercent: number;
-  rollingResetAtMs: number;
+  /** null when the source reports usage without a reset; the row says so. */
+  rollingResetAtMs: number | null;
   weeklyPercent: number | null;
   weeklyResetAtMs: number | null;
   monthlyPercent: number | null;
   monthlyResetAtMs: number | null;
   fetchedAtMs: number;
   useBalance?: boolean | null;
+  /** Exact dollar figures when the API publishes them; the dashboard reports percentages only. */
+  rollingUsd?: number | null;
+  rollingCapUsd?: number | null;
+  weeklyUsd?: number | null;
+  weeklyCapUsd?: number | null;
+  monthlyUsd?: number | null;
+  monthlyCapUsd?: number | null;
+  /** Authoritative quota source, persisted so cached values keep an honest label. */
+  source?: "api" | "dashboard";
   /** Reused by the polling source so later reads can skip workspace discovery. */
   workspaceId?: string;
 }
@@ -570,6 +580,7 @@ export async function fetchGoServerLimits(
     monthlyResetAtMs,
     fetchedAtMs: nowMs,
     useBalance: subscription.useBalance ?? null,
+    source: "dashboard",
     workspaceId,
   };
 }

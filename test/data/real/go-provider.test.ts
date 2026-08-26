@@ -121,7 +121,7 @@ describe("buildGoProvider limits", () => {
 
   test("explains the empty chart when the cookie is the only source", () => {
     expect(build({ server: SERVER }).provider.detailFooter).toBe(
-      "no local history ▏ limits from cookie",
+      "no local history ▏ limits from dashboard",
     );
     expect(build().provider.detailFooter).toBeUndefined();
   });

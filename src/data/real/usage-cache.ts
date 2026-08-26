@@ -7,6 +7,7 @@ import type {
   CodexAccountLimits,
   CodexAdditionalRateLimit,
   CodexCredits,
+  CodexSpendControl,
   CodexUsageHistory,
   CodexUsageSummary,
   CodexWindow,
@@ -83,6 +84,18 @@ function codexCredits(value: unknown): CodexCredits | null {
   return { balance, unlimited: raw.unlimited };
 }
 
+function codexSpendControl(value: unknown): CodexSpendControl | null {
+  const raw = record(value);
+  if (!raw) return null;
+  const limit = finite(raw.limit);
+  const used = finite(raw.used);
+  const usedPercent = finite(raw.usedPercent);
+  const resetsAtMs = nullableFinite(raw.resetsAtMs);
+  if (limit === null || used === null || usedPercent === null) return null;
+  if (raw.resetsAtMs !== null && resetsAtMs === null) return null;
+  return { limit, used, usedPercent, resetsAtMs };
+}
+
 function codexSummary(value: unknown): CodexUsageSummary | null {
   const raw = record(value);
   if (!raw) return null;
@@ -148,6 +161,11 @@ function codex(value: unknown): CodexAccountLimits | null {
   const rawExpireAtMs = raw.resetCreditsExpireAtMs ?? null;
   const expireAtMs = rawExpireAtMs === null ? null : finite(rawExpireAtMs);
   if (rawExpireAtMs !== null && expireAtMs === null) return null;
+  const rawReachedType = raw.rateLimitReachedType ?? null;
+  if (rawReachedType !== null && typeof rawReachedType !== "string") return null;
+  const rawSpendControl = raw.spendControl ?? null;
+  const spendControl = rawSpendControl === null ? null : codexSpendControl(rawSpendControl);
+  if (rawSpendControl !== null && spendControl === null) return null;
   return {
     session,
     weekly,
@@ -155,6 +173,8 @@ function codex(value: unknown): CodexAccountLimits | null {
     resetCredits,
     resetCreditsExpireAtMs: expireAtMs,
     isSpendControlReached: raw.isSpendControlReached === true,
+    rateLimitReachedType: rawReachedType,
+    spendControl,
     additionalRateLimits,
     credits,
     usage,
@@ -165,22 +185,36 @@ function codex(value: unknown): CodexAccountLimits | null {
 function go(value: unknown): GoServerLimits | null {
   const raw = record(value);
   const rollingPercent = finite(raw?.rollingPercent);
-  const rollingResetAtMs = finite(raw?.rollingResetAtMs);
+  const rollingResetAtMs = nullableFinite(raw?.rollingResetAtMs);
   const weeklyPercent = nullableFinite(raw?.weeklyPercent);
   const weeklyResetAtMs = nullableFinite(raw?.weeklyResetAtMs);
   const monthlyPercent = nullableFinite(raw?.monthlyPercent);
   const monthlyResetAtMs = nullableFinite(raw?.monthlyResetAtMs);
   const fetchedAtMs = finite(raw?.fetchedAtMs);
   const useBalance = raw?.useBalance;
+  const source = raw?.source;
+  const rollingUsd = nullableFinite(raw?.rollingUsd);
+  const rollingCapUsd = nullableFinite(raw?.rollingCapUsd);
+  const weeklyUsd = nullableFinite(raw?.weeklyUsd);
+  const weeklyCapUsd = nullableFinite(raw?.weeklyCapUsd);
+  const monthlyUsd = nullableFinite(raw?.monthlyUsd);
+  const monthlyCapUsd = nullableFinite(raw?.monthlyCapUsd);
   if (
     rollingPercent === null ||
-    rollingResetAtMs === null ||
     fetchedAtMs === null ||
+    (raw?.rollingResetAtMs !== null && rollingResetAtMs === null) ||
     (raw?.weeklyPercent !== null && weeklyPercent === null) ||
     (raw?.weeklyResetAtMs !== null && weeklyResetAtMs === null) ||
     (raw?.monthlyPercent !== null && monthlyPercent === null) ||
     (raw?.monthlyResetAtMs !== null && monthlyResetAtMs === null) ||
-    (useBalance !== undefined && useBalance !== null && typeof useBalance !== "boolean")
+    (useBalance !== undefined && useBalance !== null && typeof useBalance !== "boolean") ||
+    (source !== undefined && source !== "api" && source !== "dashboard") ||
+    (raw?.rollingUsd !== undefined && raw.rollingUsd !== null && rollingUsd === null) ||
+    (raw?.rollingCapUsd !== undefined && raw.rollingCapUsd !== null && rollingCapUsd === null) ||
+    (raw?.weeklyUsd !== undefined && raw.weeklyUsd !== null && weeklyUsd === null) ||
+    (raw?.weeklyCapUsd !== undefined && raw.weeklyCapUsd !== null && weeklyCapUsd === null) ||
+    (raw?.monthlyUsd !== undefined && raw.monthlyUsd !== null && monthlyUsd === null) ||
+    (raw?.monthlyCapUsd !== undefined && raw.monthlyCapUsd !== null && monthlyCapUsd === null)
   ) {
     return null;
   }
@@ -193,6 +227,15 @@ function go(value: unknown): GoServerLimits | null {
     monthlyResetAtMs,
     fetchedAtMs,
     useBalance: useBalance ?? null,
+    // Absent dollar figures stay absent, so a decoded entry re-encodes to what
+    // was written rather than growing null keys on every round trip.
+    ...(raw?.rollingUsd !== undefined ? { rollingUsd } : {}),
+    ...(raw?.rollingCapUsd !== undefined ? { rollingCapUsd } : {}),
+    ...(raw?.weeklyUsd !== undefined ? { weeklyUsd } : {}),
+    ...(raw?.weeklyCapUsd !== undefined ? { weeklyCapUsd } : {}),
+    ...(raw?.monthlyUsd !== undefined ? { monthlyUsd } : {}),
+    ...(raw?.monthlyCapUsd !== undefined ? { monthlyCapUsd } : {}),
+    ...(source ? { source } : {}),
   };
 }
 

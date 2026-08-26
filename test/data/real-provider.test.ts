@@ -561,7 +561,7 @@ describe("opencode go spend limits", () => {
       expect(go.scopes.session.percent).toBe(25);
       expect(go.scopes.weekly.percent).toBe(30);
       expect(go.limits[0]?.detailValueLabel).toBe("$3.00 of $12");
-      expect(go.limits[0]?.footnote).toBe("model-weighted local estimate - cookie unlocks exact %");
+      expect(go.limits[0]?.footnote).toBe("model-weighted local estimate - API key or cookie unlocks exact %");
 
       const serverWithoutMonthly = {
         rollingPercent: 17,
@@ -586,7 +586,7 @@ describe("opencode go spend limits", () => {
         (limit) => limit.id === "monthly",
       );
       expect(monthly?.detailValueLabel).toContain("of $60");
-      expect(monthly?.footnote).toBe("model-weighted local estimate - cookie unlocks exact %");
+      expect(monthly?.footnote).toBe("model-weighted local estimate - API key or cookie unlocks exact %");
       expect(serverProvider.readSnapshot().providers.go.meta.planDetail).toContain("estimate");
 
       const expiredProvider = createRealUsageProvider({

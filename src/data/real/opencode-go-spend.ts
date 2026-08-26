@@ -3,6 +3,7 @@ import { statSync } from "node:fs";
 import { DAY_MS, HOUR_MS } from "./aggregate";
 import { isRecord } from "./json";
 import { isMissingFile } from "./fs-errors";
+import { openForReading } from "./opencode-db";
 
 /**
  * Derived from message.cost in opencode.db against the published caps.
@@ -129,6 +130,55 @@ const SPEND_SQL =
   " AND json_type(data,'$.cost') IN ('integer','real')" +
   " AND CAST(COALESCE(json_extract(data,'$.time.created'), time_created) AS INTEGER) >= ?1";
 
+/**
+ * Newer OpenCode databases write one cost per `step-finish` part. Fall back to
+ * message.cost only for messages without those parts, so a transitional row
+ * carrying both shapes is counted once rather than twice.
+ */
+const PART_SPEND_SQL = `
+  WITH provider_messages AS (
+    SELECT
+      id AS messageID,
+      CAST(COALESCE(json_extract(data,'$.time.created'), time_created) AS INTEGER) AS createdMs,
+      CAST(json_extract(data,'$.cost') AS REAL) AS messageCost,
+      json_type(data,'$.cost') IN ('integer','real') AS hasMessageCost,
+      json_extract(data,'$.modelID') AS model
+    FROM message
+    WHERE json_extract(data,'$.providerID') IN ('opencode','opencode-go')
+      AND json_extract(data,'$.role')='assistant'
+      -- Bounded so the CTE does not scan every message ever written. The day of
+      -- slack covers a part timestamped after the message that opened it.
+      AND time_created >= ?1 - ${DAY_MS}
+  )
+  SELECT
+    CAST(COALESCE(json_extract(p.data,'$.time.created'), p.time_created, m.createdMs) AS INTEGER) AS at,
+    CAST(json_extract(p.data,'$.cost') AS REAL) AS usd,
+    m.model AS model
+  FROM part p
+  JOIN provider_messages m ON m.messageID = p.message_id
+  WHERE json_valid(p.data)
+    AND json_extract(p.data,'$.type')='step-finish'
+    AND json_type(p.data,'$.cost') IN ('integer','real')
+    AND CAST(COALESCE(json_extract(p.data,'$.time.created'), p.time_created, m.createdMs) AS INTEGER) >= ?1
+  UNION ALL
+  SELECT createdMs AS at, messageCost AS usd, model
+  FROM provider_messages m
+  WHERE hasMessageCost
+    AND createdMs >= ?1
+    AND NOT EXISTS (
+      SELECT 1 FROM part p
+      WHERE p.message_id=m.messageID
+        AND json_valid(p.data)
+        AND json_extract(p.data,'$.type')='step-finish'
+        AND json_type(p.data,'$.cost') IN ('integer','real')
+    )`;
+
+function hasPartTable(db: Database): boolean {
+  return db.query(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='part' LIMIT 1",
+  ).get() !== null;
+}
+
 /** null only when the DB is absent. */
 export function readGoSpend(dbPath: string, now: Date, caps: GoPlanCaps = GO_PLAN_CAPS): GoSpend | null {
   try {
@@ -139,8 +189,9 @@ export function readGoSpend(dbPath: string, now: Date, caps: GoPlanCaps = GO_PLA
   }
   let db: Database | null = null;
   try {
-    db = new Database(dbPath, { readonly: true });
-    const rows: unknown[] = db.query(SPEND_SQL).all(now.getTime() - QUERY_WINDOW_MS);
+    db = openForReading(dbPath);
+    const sql = hasPartTable(db) ? PART_SPEND_SQL : SPEND_SQL;
+    const rows: unknown[] = db.query(sql).all(now.getTime() - QUERY_WINDOW_MS);
     return goSpendFrom(spendFromRows(rows), now, caps);
   } catch (error) {
     // The provider catches this boundary and marks the source unreadable.

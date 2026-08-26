@@ -105,6 +105,49 @@ describe("buildCodexProvider", () => {
     expect(provider.limits[0]?.alert?.isOnCard).toBe(true);
   });
 
+  test("surfaces a backend workspace block even below the percentage cap", () => {
+    const provider = build(account({
+      rateLimitReachedType: "workspace_member_credits_depleted",
+      weekly: {
+        usedPercent: 40,
+        resetsAtMs: NOW_MS + 2 * HOUR_MS,
+        windowMinutes: 10_080,
+      },
+    }));
+
+    expect(provider.limits[0]?.alert?.text).toBe("▲ workspace credits depleted");
+  });
+
+  test("stays quiet on a classification that does not mean blocked", () => {
+    const provider = build(account({
+      rateLimitReachedType: "none",
+      resetCredits: 2,
+      weekly: { usedPercent: 5, resetsAtMs: NOW_MS + 2 * HOUR_MS, windowMinutes: 10_080 },
+    }));
+
+    expect(provider.limits[0]?.alert?.text).toContain("free reset");
+  });
+
+  test("renders the effective monthly credit limit as a real pressure lane", () => {
+    const provider = build(account({
+      planType: "self_serve_business_usage_based",
+      spendControl: {
+        limit: 50,
+        used: 42.5,
+        usedPercent: 85,
+        resetsAtMs: NOW_MS + 10 * DAY_MS,
+      },
+    }));
+
+    expect(provider.meta.plan).toBe("Business");
+    expect(provider.limits[2]).toMatchObject({
+      id: "monthly-credit",
+      label: "monthly credits",
+      percent: 85,
+      detailValueLabel: "$42.50 of $50.00",
+    });
+  });
+
   test("renders a capless row with the source note when limits are unavailable", () => {
     const provider = build(null);
 

@@ -95,6 +95,10 @@ describe("readOpencodeUsage", () => {
       },
       query() {
         return {
+          get() {
+            expect(inTransaction).toBe(true);
+            return null;
+          },
           all() {
             expect(inTransaction).toBe(true);
             queries += 1;
@@ -141,6 +145,37 @@ describe("readOpencodeUsage", () => {
       input: 1_250, output: 650, reasoning: 200, cacheRead: 3_000, cacheWrite: 100,
     });
     expect(stats?.cost30d).toEqual({ totalUsd: 2.5, peakDayUsd: 2 });
+  });
+
+  test("reads modern step-finish costs once when message rows also carry a fallback", () => {
+    const path = tempDatabase("opencode-db-parts-");
+    const db = new Database(path);
+    db.run("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)");
+    db.run("CREATE TABLE part (id TEXT, message_id TEXT, time_created INTEGER, data TEXT)");
+    const atMs = Date.parse("2026-08-01T12:00:00Z");
+    db.prepare("INSERT INTO message VALUES (?1, ?2, ?3, ?4)").run(
+      "m1",
+      "s1",
+      atMs,
+      JSON.stringify({
+        role: "assistant",
+        providerID: "opencode-go",
+        modelID: "sonnet",
+        tokens: { input: 10, output: 20 },
+        cost: 1,
+      }),
+    );
+    db.prepare("INSERT INTO part VALUES (?1, ?2, ?3, ?4)").run(
+      "p1",
+      "m1",
+      atMs,
+      JSON.stringify({ type: "step-finish", cost: 2 }),
+    );
+    db.close();
+
+    const stats = readOpencodeUsage(path, new Date("2026-08-02T12:00:00Z"))?.stats.get("opencode-go");
+    expect(stats?.tokens).toBe(30);
+    expect(stats?.cost30d).toEqual({ totalUsd: 2, peakDayUsd: 2 });
   });
 
   test("folds cost into local days, so the peak is a day and not a UTC slice", () => {

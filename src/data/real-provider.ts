@@ -19,7 +19,13 @@ import { buildCodexProvider, codexWindowNote, createCodexMeta } from "./real/cod
 import { readCodexSessions } from "./real/codex-sessions";
 import { createCodexLimitsSource, type CodexLimitsSource } from "./real/codex-limits";
 import { buildGoProvider, createGoMeta } from "./real/go-provider";
-import { createGoLimitsSource, readCookie, type GoLimitsSource } from "./real/go-limits-source";
+import {
+  createGoLimitsSource,
+  readApiKey,
+  readCookie,
+  type GoCredentialKind,
+  type GoLimitsSource,
+} from "./real/go-limits-source";
 import { createGoHistorySource, type GoHistorySource } from "./real/go-history-source";
 import { readOpencodeAuth, type OpencodeAuth } from "./real/opencode-auth";
 import { readOpencodeUsage } from "./real/opencode-db";
@@ -134,6 +140,13 @@ export function hasOpencodeCookie(
   return readCookie(paths.configFile, env) !== null;
 }
 
+export function hasOpencodeApiKey(
+  paths: RealProviderPaths,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return readApiKey(paths.configFile, env) !== null;
+}
+
 export function hasRealSources(
   paths: RealProviderPaths,
   env: Record<string, string | undefined> = process.env,
@@ -141,6 +154,7 @@ export function hasRealSources(
   const installations = detectAgentInstallations(paths);
   return (
     PROVIDER_IDS.some((id) => installations[id]) ||
+    hasOpencodeApiKey(paths, env) ||
     hasOpencodeCookie(paths, env) ||
     hasCachedProviderValues(paths.usageCache)
   );
@@ -174,26 +188,35 @@ function claudeConnectionNote(snapshotFile: SnapshotFile | null, hasStatusline: 
 }
 
 const GO_COOKIE_CREDENTIAL = "cookie · opencode.ai";
+const GO_API_CREDENTIAL = "api key · opencode go";
 
-function goCredential(auth: OpencodeAuth, hasCookie: boolean, hasLocalData: boolean): string {
-  // The cookie is what authorizes the figures on screen, so it outranks the
-  // stored api key, which nothing here ever spends.
-  if (hasCookie) return GO_COOKIE_CREDENTIAL;
+function goCredential(
+  auth: OpencodeAuth,
+  remoteKind: GoCredentialKind | null,
+  hasLocalData: boolean,
+): string {
+  if (remoteKind === "api-key") return GO_API_CREDENTIAL;
+  if (remoteKind === "cookie") return GO_COOKIE_CREDENTIAL;
   return auth.opencodeGo?.maskedKey ?? (hasLocalData ? "local · opencode.db" : "");
 }
 
 function goNote(
+  remoteKind: GoCredentialKind | null,
   hasCookie: boolean,
   hasLocalData: boolean,
   status: ConnectionStatus,
 ): string {
-  if (hasCookie) {
-    if (status === "active") return "live limits ▏ workspace history";
-    if (status === "cached") return "cached limits";
-    return hasLocalData ? "cookie ready; local history" : "cookie ready";
+  if (remoteKind) {
+    if (status === "active") {
+      const history = hasCookie ? " ▏ workspace history" : hasLocalData ? " ▏ local history" : "";
+      return `live limits via ${remoteKind === "api-key" ? "API" : "dashboard"}${history}`;
+    }
+    if (status === "cached") return "cached exact limits";
+    const ready = remoteKind === "api-key" ? "API key ready" : "cookie ready";
+    return hasLocalData ? `${ready}; local history` : ready;
   }
   return hasLocalData
-    ? "local estimate; dashboard cookie is optional"
+    ? "local estimate; API key is optional"
     : "opencode found; use Go once to create local usage data";
 }
 
@@ -214,7 +237,8 @@ function goConnection(
   limits: GoLimitsSource,
   hasLocalLimits: boolean,
 ): ProviderConnection {
-  if (!isAgentInstalled && !hasCookie) {
+  const remoteKind = limits.credentialKind?.() ?? (hasCookie ? "cookie" : null);
+  if (!isAgentInstalled && !remoteKind) {
     return {
       isEnabled: false,
       isAgentInstalled: false,
@@ -230,13 +254,13 @@ function goConnection(
     isEnabled: true,
     isAgentInstalled,
     status,
-    credential: goCredential(auth, hasCookie, hasLocalData),
+    credential: goCredential(auth, remoteKind, hasLocalData),
     note:
       status === "expired"
         ? (limits.note() ?? "limits unavailable")
         : status === "local"
           ? "local estimate"
-          : goNote(hasCookie, hasLocalData && hasLocalLimits, status),
+          : goNote(remoteKind, hasCookie, hasLocalData && hasLocalLimits, status),
   };
 }
 
