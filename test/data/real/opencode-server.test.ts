@@ -404,7 +404,7 @@ describe("fetchGoUsageRows", () => {
   function mock(handle: (page: number) => Response) {
     return spyOn(globalThis, "fetch").mockImplementation(
       Object.assign(
-        (input: string | URL | Request, init?: RequestInit | BunFetchRequestInit) => {
+        (_input: string | URL | Request, init?: RequestInit | BunFetchRequestInit) => {
           const body = String((init as RequestInit)?.body ?? "");
           const requested = Number(/"s":(\d+)}\]/.exec(body)?.[1] ?? 0);
           return Promise.resolve(handle(requested));

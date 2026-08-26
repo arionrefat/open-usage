@@ -3,7 +3,6 @@ import {
   parseBilling,
   parseCostReport,
   parseUsageRows,
-  billableInputTokens,
 } from "../../../src/data/real/opencode-usage";
 
 /**
@@ -219,13 +218,5 @@ describe("parseBilling", () => {
 
   test("rejects a payload with no billing record", () => {
     expect(parseBilling("<html>login</html>")).toBeNull();
-  });
-});
-
-describe("billableInputTokens", () => {
-  test("counts cache reads and both cache writes as input, matching the dashboard", () => {
-    const rows = parseUsageRows(USAGE_JS);
-    const row = rows?.[0];
-    expect(row && billableInputTokens(row)).toBe(1200 + 50000 + 900 + 100);
   });
 });

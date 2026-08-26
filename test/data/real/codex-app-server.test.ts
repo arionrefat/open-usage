@@ -2,7 +2,6 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  CodexProbeError,
   parseAccount,
   parseRateLimits,
   parseUsageHistory,

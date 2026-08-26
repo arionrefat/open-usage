@@ -59,13 +59,6 @@ export interface GoUsageRow {
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Cache reads and writes are billed as input, matching the dashboard's own total. */
-export function billableInputTokens(row: GoUsageRow): number {
-  return (
-    row.inputTokens + row.cacheReadTokens + row.cacheWrite5mTokens + row.cacheWrite1hTokens
-  );
-}
-
 function usdFromUnits(units: number): number {
   return units / COST_UNITS_PER_USD;
 }
