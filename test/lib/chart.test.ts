@@ -18,8 +18,13 @@ function rowText(row: ChartRow): string {
 }
 
 describe("chart edge cases", () => {
-  test("renders zero sparkline values on a visible baseline", () => {
-    expect(sparkline([0, 0], 4)).toBe("▁▁▁▁");
+  test("never draws a positive value below the glyph zero gets", () => {
+    // One line means one colour, so zero and a small positive can only differ by
+    // glyph. Rounding alone drew anything under a sixteenth of the peak as blank
+    // while zero kept a visible tick, which read as less activity than none.
+    expect(sparkline([0, 0], 4)).toBe("    ");
+    expect(sparkline([0, 1, 100], 3)).toBe(" ▁█");
+    expect(sparkline([0, 0.01, 100], 3)).toBe(" ▁█");
   });
 
   test("keeps stacked bars at the requested width", () => {

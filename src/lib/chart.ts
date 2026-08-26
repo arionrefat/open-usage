@@ -350,15 +350,22 @@ export function planChart(items: PlanChartItem[]): PlanChart {
   };
 }
 
-/** Single-line sparkline using the eighth-block ramp. */
+/**
+ * Single-line sparkline using the eighth-block ramp.
+ *
+ * A single line has one colour, so zero and the smallest positive value can
+ * only be told apart by glyph: zero takes the blank at the foot of the ramp and
+ * anything positive takes at least one step above it. Rounding alone put small
+ * values below zero's own glyph, which drew real activity as emptier than none.
+ */
 export function sparkline(values: number[], width: number): string {
   const max = Math.max(1, ...values);
   const highestRampIndex = BLOCK_RAMP.length - 1;
   return resampleIntoBuckets(values, width)
     .map((value) => {
-      if (value <= 0) return BLOCK_RAMP[1] ?? "▁";
+      if (value <= 0) return BLOCK_RAMP[0] ?? " ";
       const scaledRampIndex = Math.round((value / max) * highestRampIndex);
-      const rampIndex = Math.max(0, Math.min(highestRampIndex, scaledRampIndex));
+      const rampIndex = Math.max(1, Math.min(highestRampIndex, scaledRampIndex));
       return BLOCK_RAMP[rampIndex];
     })
     .join("");
