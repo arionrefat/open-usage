@@ -5,6 +5,8 @@ export const DAY_MS = 24 * HOUR_MS;
 const MINUTE_MS = 60_000;
 const TOKENS_PER_MILLION = 1_000_000;
 const BURN_WINDOW_HOURS = 3;
+/** Shortest span a rate is reported over, so a fresh hour cannot divide by zero. */
+const MIN_BURN_HOURS = 1 / 12;
 
 /** Token totals bucketed by floor(epochMs / HOUR_MS) - enough for every series. */
 export type HourBuckets = Map<number, number>;
@@ -63,7 +65,14 @@ export function seriesFromBuckets(buckets: HourBuckets, dates: string[], now: Da
   return { daily, hourly };
 }
 
-/** Average tokens/hour over the trailing window, current hour included. */
+/**
+ * Average tokens/hour over the trailing window, current hour included.
+ *
+ * Divided by the time that has actually run rather than by the whole window.
+ * The current hour is only partly elapsed, so charging the total against a full
+ * one understates the rate by up to a third right after the turn of the hour,
+ * and by about a sixth on average - on a figure whose own label is "tok/h".
+ */
 export function tokensPerHour(
   buckets: HourBuckets,
   now: Date,
@@ -74,7 +83,11 @@ export function tokensPerHour(
   for (let hour = currentHour - windowHours + 1; hour <= currentHour; hour++) {
     total += buckets.get(hour) ?? 0;
   }
-  return total / windowHours;
+  const elapsedInCurrentHour = (now.getTime() - currentHour * HOUR_MS) / HOUR_MS;
+  // The floor only bites on a one-hour window read at the top of the hour,
+  // where dividing by the seconds so far would report a wild rate.
+  const elapsedHours = Math.max(MIN_BURN_HOURS, windowHours - 1 + elapsedInCurrentHour);
+  return total / elapsedHours;
 }
 
 export function formatRate(perHour: number): string {

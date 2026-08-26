@@ -65,14 +65,32 @@ describe("series from hour buckets", () => {
 });
 
 describe("burn rate", () => {
-  test("averages the trailing window including the current hour", () => {
+  test("divides by the time that has run, not by the whole window", () => {
+    // NOW is 14:30, so the 3h window has only 2.5h behind it. Charging 9M
+    // against three whole hours reads 3.0M/h for work that ran at 3.6M/h.
     const buckets = bucketsAt([
       [new Date(2026, 6, 30, 14, 10), 3_000_000],
       [new Date(2026, 6, 30, 13, 10), 3_000_000],
       [new Date(2026, 6, 30, 12, 10), 3_000_000],
       [new Date(2026, 6, 30, 8, 0), 50_000_000], // outside the 3h window
     ]);
-    expect(tokensPerHour(buckets, NOW)).toBeCloseTo(3_000_000);
+    expect(tokensPerHour(buckets, NOW)).toBeCloseTo(3_600_000);
+  });
+
+  test("counts a whole window once the current hour has fully run", () => {
+    const endOfHour = new Date(2026, 6, 30, 14, 59, 59, 999);
+    const buckets = bucketsAt([
+      [new Date(2026, 6, 30, 14, 10), 3_000_000],
+      [new Date(2026, 6, 30, 13, 10), 3_000_000],
+      [new Date(2026, 6, 30, 12, 10), 3_000_000],
+    ]);
+    expect(tokensPerHour(buckets, endOfHour)).toBeCloseTo(3_000_000, 0);
+  });
+
+  test("reports a finite rate at the very top of a one-hour window", () => {
+    const topOfHour = new Date(2026, 6, 30, 14, 0, 0, 0);
+    const buckets = bucketsAt([[new Date(2026, 6, 30, 14, 0), 1_000_000]]);
+    expect(Number.isFinite(tokensPerHour(buckets, topOfHour, 1))).toBe(true);
   });
 
   test("is zero without recent activity", () => {
