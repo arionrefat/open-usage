@@ -78,6 +78,12 @@ Codex owns app-server limits, window labels, plan metadata, scopes, and summary 
 OpenCode Go owns server-versus-spend selection, estimate labeling, limit rows, scopes, and footer.
 Touch one of these when changing how that provider's data is presented.
 
+One invariant holds all three together.
+`ProviderUsage.series` is always this device and always the blended basis - fresh input plus output plus cache writes, cache reads excluded - so the overview can put the providers on one axis and mean it.
+A source that only offers a wider population or a cache-inclusive count does not go into `series`; it is reported as its own labelled figure on that provider's detail screen.
+Codex is the case that forced the rule: its app-server reports account-wide daily tokens that count cached input, which ran about 17x its local blended figure and inverted the usage share.
+That number now appears as `account 30d · incl. cached` in the codex records section instead of as bars.
+
 **`real/provider-helpers.ts`**
 Small display helpers shared by at least two provider builders: cap-less rows, reset text, token formatting, and local burn state.
 Touch when a shared provider presentation primitive changes.

@@ -50,6 +50,16 @@ Across 40 transcripts, 3074 assistant rows collapsed to 1312 unique messages, me
 
 `aggregateTranscriptLines` now banks each `message.id` once. Every message in the sample carried an id, so the de-duplication is complete rather than best-effort; messages without one are still counted, since there is no way to tell them apart.
 
+Rows are keyed `messageId:requestId`, not by message id alone.
+On the transcripts measured here the two are identical - 60,047 of 60,066 rows carry a request id and no id maps to more than one - so the pair costs nothing and removes the case where one id is reused across requests.
+CodexBar reached the same key independently, which is some evidence it is the right one.
+
+There is a second copy that per-file de-duplication cannot see.
+Resuming or forking a session writes a new transcript that carries the earlier assistant messages forward, so the same `message.id` appears in two different files and each file banks it once.
+Measured across 538 transcripts: 484 ids in more than one file, **2,003,189 tokens overcounted, or 1.63%**, on top of the 31,883 within-file copies the per-file pass already caught.
+Smaller than the streaming duplication, but it inflated the priced spend estimate too, since `dayModelTokens` feeds the money figure.
+`readClaudeTranscripts` now holds a run-level set of ids across every file, and fills the hour buckets from that de-duplicated stream rather than merging each file's own.
+
 The lesson worth keeping: this was measurable locally in a few minutes and the published claim pointed the wrong direction. Verify token-accounting claims against real files before encoding them.
 
 ### Cache reads are shown, not summed
@@ -67,14 +77,46 @@ Claude Code's own `/usage` never merges them either; it prints the four kinds si
 
 What *was* a real defect: `modelTokens` counted cache reads while the headline did not, so the overview read 68.2M while the detail screen's per-model bars summed to 2.70B off the same events. Both now use the blended figure, and `tokenSplit` still carries all four kinds for the detail screen.
 
+The same defect existed in opencode go and was missed the first time, because it lives in SQL rather than in the aggregation code: `MODEL_ROWS_SQL` added `$.tokens.cache.read` to its sum while `SESSION_ROWS_SQL` did not, so the "models 30d" bars again contradicted the card above them.
+Both queries now share one `TOKENS_SQL` expression, and the test asserts the bars sum to the headline rather than checking a hard-coded figure.
+
 **Excluding them is not the same as hiding them.** A figure this large going unstated on the main screen is its own kind of wrong: a heavy Claude user reads a 10% share and reasonably concludes the tool is undercounting them.
 So `ProviderUsage.cacheRead30d` carries the volume to the overview's usage share, in its own column, held apart from the token figure rather than added to it.
 The field is deliberately optional. Claude and opencode go report a cache split and set it; Codex has no such breakdown, so it stays absent and the column renders `-`.
 That is the honest reading - "this source does not say" is a different fact from "this source measured zero", and the column keeps them apart.
 
-**Unverified.** Whether the server-side `dailyUsageBuckets[].tokens` follows `blended_total` is an assumption, not a measurement - the field is opaque and account-wide, and this machine's local threads cover too little of it to compare (2026-08-03: 25.2K locally against a 201.7M bucket).
-To settle it, run one Codex session on a quiet day and compare the next day's bucket against that session's own `blended_total`.
-Limit percentages and the burn projection are unaffected either way, since those come from the statusline percentages rather than token counts.
+**Settled: it does not.** The server-side `dailyUsageBuckets[].tokens` is cache-inclusive, measured 2026-08-26 by summing local rollouts per local day and comparing them to the same day's bucket.
+
+| Day | Server bucket | Local `total_tokens` | Local `blended_total` |
+| --- | --- | --- | --- |
+| 2026-08-16 | 57,460,283 | 64,014,395 | 3,307,938 |
+| 2026-08-18 | 7,521,756 | 9,842,441 | 620,041 |
+| 2026-08-19 | 16,367,111 | 14,526,677 | 1,100,757 |
+
+The server tracks `total_tokens` within the margin that UTC-versus-local day boundaries and rollout retention explain, and sits roughly 17x above `blended_total`.
+The payload carries no breakdown to correct it with - each bucket is `{startDate, tokens}` and nothing else - so there is no arithmetic that recovers a comparable figure.
+
+Two consequences, one fixed and one accepted.
+
+Fixed: the *local* reader in `codex-sessions.ts` was summing `last_token_usage.total_tokens`, which is cache-inclusive for the same reason.
+On this machine that was 154.5M against a blended 8.7M, a 17.7x overstatement, with `cached_input_tokens` making up 94.3% of the counted figure.
+It now computes `non_cached_input + output`, matching Codex's own convention and the two other providers, and falls back to `total_tokens` only for rollouts predating the breakdown.
+
+Also fixed: `codex-provider.ts` no longer takes the daily series from the server at all.
+
+It had been doing so because the server covers the whole account rather than this device, which is true and is a real advantage.
+The cost was not only that the codex bar could not be compared to the other two.
+`series.hourly` and the burn rate were built from local rollouts the whole time, so pressing `t` to move between 30d and today silently changed what a codex token meant, by a factor of seventeen, inside one provider's own card.
+A field cannot be both the widest available measurement and the comparable one, and `series` is read by the cross-provider charts, so it has to be the comparable one.
+
+`series` is therefore local and blended for every provider, without exception, and that is now stated as an invariant on the type.
+The account-wide figure is not lost: it is reported on the codex detail screen as `account 30d · incl. cached`, beside the lifetime and peak-day records that were already sourced from the same payload.
+Naming the basis in the label is what keeps it honest - the same reasoning that gives cache reads their own column instead of a place in the bar.
+`activityScope` was deleted along with the mismatch, since it existed only to caption a series that could be one of two things.
+
+On this machine the share chart went from `codex 84% / claude 16%` to `claude 93% / codex 7%`, and codex's row picked up the local session count it had been hiding behind the word `account`.
+
+Limit percentages and the burn projection were unaffected throughout, since those come from the statusline percentages rather than token counts.
 
 ### Staleness handling
 
@@ -126,6 +168,13 @@ Fast-mode usage is kept in a separate bucket because it bills at its own rate.
 `cleanupPeriodDays` defaults to 30, and the account block reports only the current window.
 Neither answers "what did last month cost", so `open-usage` keeps its own record in its config directory, written from first run.
 The oldest day on disk is only partly covered, so re-measuring it takes the element-wise maximum against what was already banked rather than replacing it - otherwise Claude's pruning would erase history we had already recorded.
+
+None of that worked until 2026-08-26.
+The store serialised its day map under a `months` key while the parser read `days`, so every run parsed an empty map and re-derived the whole record from whatever transcripts were still on disk.
+The retention constraint the file exists to solve was therefore never solved, and the partial-day maximum above never fired either, since there was never a banked value to compare against.
+The writer now uses `days` and the parser accepts `days ?? months`, so records banked by 0.6.0 and earlier are recovered rather than discarded on upgrade.
+Worth noting how it survived: the store had unit tests, but they exercised the pure fold functions and never wrote a file and read it back.
+A round-trip test through `updateSpendStore` now covers both the current key and the legacy one.
 
 ## codex
 
