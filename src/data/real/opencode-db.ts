@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { statSync } from "node:fs";
-import { DAY_MS, type HourBuckets } from "./aggregate";
+import { DAY_MS, localDateKey, type HourBuckets } from "./aggregate";
 import { finiteNumber, isRecord } from "./json";
 import { isMissingFile } from "./fs-errors";
 
@@ -57,7 +57,9 @@ const SESSION_ROWS_SQL =
 const MODEL_ROWS_SQL =
   "SELECT json_extract(data,'$.providerID') AS provider," +
   " json_extract(data,'$.modelID') AS model," +
-  ` COUNT(*) AS msgs, SUM(${TOKENS_SQL}+coalesce(json_extract(data,'$.tokens.cache.read'),0)) AS tokens` +
+  // Same basis as the headline above, so the per-model bars sum to it rather
+  // than contradicting it by the cache-read volume.
+  ` COUNT(*) AS msgs, SUM(${TOKENS_SQL}) AS tokens` +
   " FROM message" +
   " WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
   " GROUP BY provider, model";
@@ -75,12 +77,24 @@ const DETAIL_ROWS_SQL =
   " FROM message WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
   " GROUP BY provider";
 
+/**
+ * Quarter-hour slots, folded into local days by `localDateKey` in JS.
+ *
+ * Not `time_created/86400000`, which buckets by UTC and moves the peak onto a
+ * different date for anyone off the meridian. Not SQLite's own `'localtime'`
+ * either: that reads the system timezone while every other day bucket in this
+ * app reads the JS one, and a runtime that overrides only the latter would
+ * silently split the two apart. A quarter hour divides every real UTC offset,
+ * so the slot never straddles a local midnight.
+ */
+const COST_SLOT_MS = 900_000;
+
 const DAILY_COST_ROWS_SQL =
   "SELECT json_extract(data,'$.providerID') AS provider," +
-  " CAST(time_created/86400000 AS INTEGER) AS day," +
+  ` CAST(time_created/${COST_SLOT_MS} AS INTEGER) AS slot,` +
   " SUM(coalesce(json_extract(data,'$.cost'),0)) AS usd" +
   " FROM message WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
-  " GROUP BY provider, day";
+  " GROUP BY provider, slot";
 
 /** Picks the model with the most assistant messages per provider. */
 function topModels(modelRows: unknown[]): Map<string, string> {
@@ -146,12 +160,20 @@ export function usageFromRows(
       costCount: finiteNumber(row.costCount) ?? 0,
     });
   }
-  const peakCosts = new Map<string, number>();
+  const dayCosts = new Map<string, Map<string, number>>();
   for (const row of dailyCostRows) {
     if (!isRecord(row) || typeof row.provider !== "string") continue;
+    const slot = finiteNumber(row.slot);
     const usd = finiteNumber(row.usd);
-    if (usd === null) continue;
-    peakCosts.set(row.provider, Math.max(peakCosts.get(row.provider) ?? 0, usd));
+    if (slot === null || usd === null) continue;
+    const day = localDateKey(new Date(slot * COST_SLOT_MS));
+    const byDay = dayCosts.get(row.provider) ?? new Map<string, number>();
+    byDay.set(day, (byDay.get(day) ?? 0) + usd);
+    dayCosts.set(row.provider, byDay);
+  }
+  const peakCosts = new Map<string, number>();
+  for (const [provider, byDay] of dayCosts) {
+    peakCosts.set(provider, Math.max(0, ...byDay.values()));
   }
   const stats = new Map<string, OpencodeSessionStats>();
   let latestMs = 0;

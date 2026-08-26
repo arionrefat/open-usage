@@ -132,11 +132,58 @@ describe("readOpencodeUsage", () => {
     db.close();
 
     const stats = readOpencodeUsage(path, new Date("2026-08-02T12:00:00Z"))?.stats.get("opencode-go");
-    expect(stats?.modelTokens30d).toEqual({ sonnet: 4_900, haiku: 300 });
+    // Per-model bars must sum to the headline; counting cache reads in one and
+    // not the other made the detail screen contradict the card above it.
+    expect(stats?.modelTokens30d).toEqual({ sonnet: 1_900, haiku: 300 });
+    const modelSum = Object.values(stats?.modelTokens30d ?? {}).reduce((a, b) => a + b, 0);
+    expect(modelSum).toBe(stats?.tokens ?? 0);
     expect(stats?.tokenSplit30d).toEqual({
       input: 1_250, output: 650, reasoning: 200, cacheRead: 3_000, cacheWrite: 100,
     });
     expect(stats?.cost30d).toEqual({ totalUsd: 2.5, peakDayUsd: 2 });
+  });
+
+  test("folds cost into local days, so the peak is a day and not a UTC slice", () => {
+    // Two charges an hour apart across local midnight are two local days in
+    // every timezone. Bucketing by `time_created/86400000` merges them wherever
+    // the offset puts local midnight on the far side of 00:00Z, and the peak
+    // then reads as their sum instead of the larger day.
+    const path = tempDatabase("opencode-db-localday-");
+    const db = new Database(path);
+    db.run("CREATE TABLE message (session_id TEXT, time_created INTEGER, data TEXT)");
+    const insert = db.prepare("INSERT INTO message VALUES (?1, ?2, ?3)");
+    const row = (cost: number) => JSON.stringify({
+      role: "assistant", providerID: "opencode-go", modelID: "sonnet",
+      tokens: { input: 10, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
+      cost,
+    });
+    insert.run("s1", new Date(2026, 7, 1, 23, 30).getTime(), row(3));
+    insert.run("s2", new Date(2026, 7, 2, 0, 30).getTime(), row(1));
+    db.close();
+
+    const stats = readOpencodeUsage(path, new Date(2026, 7, 5))?.stats.get("opencode-go");
+
+    expect(stats?.cost30d?.totalUsd).toBeCloseTo(4, 6);
+    expect(stats?.cost30d?.peakDayUsd).toBeCloseTo(3, 6);
+  });
+
+  test("keeps a day whole when its charges land in different quarter-hour slots", () => {
+    const path = tempDatabase("opencode-db-slots-");
+    const db = new Database(path);
+    db.run("CREATE TABLE message (session_id TEXT, time_created INTEGER, data TEXT)");
+    const insert = db.prepare("INSERT INTO message VALUES (?1, ?2, ?3)");
+    const row = (cost: number) => JSON.stringify({
+      role: "assistant", providerID: "opencode-go", modelID: "sonnet", tokens: {}, cost,
+    });
+    insert.run("s1", new Date(2026, 7, 1, 9, 0).getTime(), row(1));
+    insert.run("s2", new Date(2026, 7, 1, 9, 20).getTime(), row(1));
+    insert.run("s3", new Date(2026, 7, 1, 21, 40).getTime(), row(1));
+    db.close();
+
+    const stats = readOpencodeUsage(path, new Date(2026, 7, 5))?.stats.get("opencode-go");
+
+    // Three slots, one day: the peak is the day's total, not a single slot.
+    expect(stats?.cost30d?.peakDayUsd).toBeCloseTo(3, 6);
   });
 
   test("returns null when the db file does not exist", () => {
