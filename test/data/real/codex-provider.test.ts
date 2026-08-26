@@ -131,12 +131,7 @@ describe("buildCodexProvider", () => {
   test("renders the effective monthly credit limit as a real pressure lane", () => {
     const provider = build(account({
       planType: "self_serve_business_usage_based",
-      spendControl: {
-        limit: 50,
-        used: 42.5,
-        usedPercent: 85,
-        resetsAtMs: NOW_MS + 10 * DAY_MS,
-      },
+      spendControl: { usedPercent: 85, resetsAtMs: NOW_MS + 10 * DAY_MS },
     }));
 
     expect(provider.meta.plan).toBe("Business");
@@ -144,8 +139,9 @@ describe("buildCodexProvider", () => {
       id: "monthly-credit",
       label: "monthly credits",
       percent: 85,
-      detailValueLabel: "$42.50 of $50.00",
     });
+    // No dollar label until a real workspace payload settles dollars vs cents.
+    expect(provider.limits[2]?.detailValueLabel).toBeUndefined();
   });
 
   test("renders a capless row with the source note when limits are unavailable", () => {

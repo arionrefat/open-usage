@@ -138,6 +138,28 @@ describe("usage cache", () => {
     });
   });
 
+  test("drops the money from a spend control cached when it still carried one", () => {
+    tempCache((path) => {
+      writeFileSync(path, JSON.stringify({
+        version: 1,
+        claude: null,
+        go: null,
+        codex: {
+          ...cache.codex,
+          usage: { dailyTokens: [["2026-08-15", 1200]], summary: null },
+          spendControl: { limit: 50, used: 12.5, usedPercent: 25, resetsAtMs: null },
+        },
+      }));
+
+      // Rejecting the entry over keys we stopped reading would blank a
+      // connected provider on the first launch after an upgrade.
+      expect(readUsageCache(path).codex?.spendControl).toEqual({
+        usedPercent: 25,
+        resetsAtMs: null,
+      });
+    });
+  });
+
   test("merges provider updates with the latest on-disk cache", () => {
     tempCache((path) => {
       writeUsageCache(path, { claude: null, codex: null, go: null });

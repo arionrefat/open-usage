@@ -151,7 +151,6 @@ function codexLimitLines(limits: CodexAccountLimits, nowMs: number): UsageLimit[
       detailLabel: "monthly workspace credits",
       percent: Math.round(spend.usedPercent),
       reset: resetText(spend.resetsAtMs, nowMs),
-      detailValueLabel: `$${spend.used.toFixed(2)} of $${spend.limit.toFixed(2)}`,
       ...(spend.resetsAtMs !== null
         ? { resetLong: `${resetText(spend.resetsAtMs, nowMs)} · ${formatClock(spend.resetsAtMs)}` }
         : {}),

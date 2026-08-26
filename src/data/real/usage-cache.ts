@@ -87,13 +87,13 @@ function codexCredits(value: unknown): CodexCredits | null {
 function codexSpendControl(value: unknown): CodexSpendControl | null {
   const raw = record(value);
   if (!raw) return null;
-  const limit = finite(raw.limit);
-  const used = finite(raw.used);
   const usedPercent = finite(raw.usedPercent);
   const resetsAtMs = nullableFinite(raw.resetsAtMs);
-  if (limit === null || used === null || usedPercent === null) return null;
+  if (usedPercent === null) return null;
   if (raw.resetsAtMs !== null && resetsAtMs === null) return null;
-  return { limit, used, usedPercent, resetsAtMs };
+  // Entries cached while the dollar figures were still carried decode fine:
+  // the money keys are simply dropped.
+  return { usedPercent, resetsAtMs };
 }
 
 function codexSummary(value: unknown): CodexUsageSummary | null {

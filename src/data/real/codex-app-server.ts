@@ -24,9 +24,14 @@ export interface CodexAdditionalRateLimit extends CodexWindow {
   name: string;
 }
 
+/**
+ * Percentage only, deliberately. `individualLimit` is a workspace-plan field
+ * that no account here can produce, so whether its figures are dollars or cents
+ * is unverified - and a ratio is right either way while "$5000.00" would be
+ * wrong by 100x with nothing on screen looking amiss. Carry the money again
+ * once a real workspace payload settles the unit.
+ */
 export interface CodexSpendControl {
-  limit: number;
-  used: number;
   usedPercent: number;
   resetsAtMs: number | null;
 }
@@ -171,13 +176,15 @@ function spendControlFrom(value: unknown): CodexSpendControl | null {
   // A cap with no consumption figure is not a measurement of zero, and a
   // "$0.00 of $50.00" lane would present the guess as one.
   if (reportedUsed === null && remaining === null) return null;
-  const used = reportedUsed ?? limit * (100 - Math.min(100, Math.max(0, remaining ?? 0))) / 100;
-  const usedPercent = Math.min(100, Math.max(0, (used / limit) * 100));
+  // Both paths are ratios against the same reported cap, so the unit cancels.
+  const usedPercent =
+    reportedUsed !== null
+      ? (reportedUsed / limit) * 100
+      : 100 - Math.min(100, Math.max(0, remaining ?? 0));
   const resetsAt = flexibleNumber(value.resetsAt);
   return {
-    limit,
-    used: Math.max(0, used),
-    usedPercent,
+    usedPercent: Math.min(100, Math.max(0, usedPercent)),
+    // `resetsAt` is seconds on this API, confirmed against a live payload.
     resetsAtMs: resetsAt !== null && resetsAt > 0 ? resetsAt * 1000 : null,
   };
 }

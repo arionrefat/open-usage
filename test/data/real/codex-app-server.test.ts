@@ -355,12 +355,25 @@ describe("parseRateLimits", () => {
     );
 
     expect(limits?.rateLimitReachedType).toBe("workspace_member_credits_depleted");
+    // Percent only: the cap's unit is unverified, so no money reaches the card.
     expect(limits?.spendControl).toEqual({
-      limit: 50,
-      used: 12.5,
       usedPercent: 25,
       resetsAtMs: 1_800_000_000_000,
     });
+  });
+
+  test("scores a spend control off remainingPercent when no used figure comes back", () => {
+    const limits = parseRateLimits(
+      {
+        rateLimits: {
+          primary: { usedPercent: 40, windowDurationMins: 300 },
+          individualLimit: { limit: 50, remainingPercent: 75 },
+        },
+      },
+      NOW_MS,
+    );
+
+    expect(limits?.spendControl).toEqual({ usedPercent: 25, resetsAtMs: null });
   });
 
   test("drops a spend control that reports a cap but no consumption", () => {
