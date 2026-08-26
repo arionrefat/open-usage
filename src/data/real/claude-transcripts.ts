@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { addToBucket, localDateKey, mergeBuckets, type HourBuckets } from "./aggregate";
+import { addToBucket, localDateKey, type HourBuckets } from "./aggregate";
 import { isRecord } from "./json";
 import { emptyTokenUsage, modelUsageKey, type TokenUsage } from "./pricing";
 import { isMissingFile } from "./fs-errors";
@@ -8,7 +8,11 @@ import { isMissingFile } from "./fs-errors";
 export interface TranscriptEvent {
   epochMs: number;
   tokens: number;
-  /** Assistant message id; the same message is logged more than once. */
+  /**
+   * `messageId:requestId` when both are present, the message id alone when only
+   * it is. Null on the rare line carrying neither, which is then never merged
+   * with another - dropping an unidentifiable message is the worse error.
+   */
   id: string | null;
   model: string | null;
   inputTokens: number;
@@ -136,7 +140,12 @@ export function parseTranscriptLine(line: string): TranscriptEvent | null {
   // still measured volume behind `cacheRead30d`. Dropping it here would undercount
   // that figure silently. Callers below hold `tokens === 0` out of the headline.
   if (tokens <= 0 && cacheReadTokens <= 0) return null;
-  const id = typeof message.id === "string" ? message.id : null;
+  const messageId = typeof message.id === "string" ? message.id : null;
+  // Pairing the request id with the message id can only ever split a bucket,
+  // never merge two real calls, so it costs nothing and removes the case where
+  // one message id is reused across requests.
+  const requestId = typeof parsed.requestId === "string" ? parsed.requestId : null;
+  const id = messageId === null ? null : requestId === null ? messageId : `${messageId}:${requestId}`;
   const model = typeof message.model === "string" ? message.model : null;
 
   const cacheCreation = usage.cache_creation;
@@ -166,16 +175,14 @@ export function parseTranscriptLine(line: string): TranscriptEvent | null {
 
 export interface PerFileEvents {
   events: TranscriptEvent[];
-  buckets: HourBuckets;
   latestMs: number;
 }
 
-/** Deduplicates by message id (Claude re-logs as it streams) and stores per-file events so the 30d cutoff is applied at merge time rather than frozen into cached aggregates. */
+/** Deduplicates by message id (Claude re-logs as it streams) and stores per-file events so both the 30d cutoff and cross-file dedup are applied at merge time rather than frozen into cached aggregates. */
 export function aggregateTranscriptLines(
   lines: Iterable<string>,
 ): PerFileEvents {
   const events: TranscriptEvent[] = [];
-  const buckets: HourBuckets = new Map();
   const seen = new Set<string>();
   let latestMs = 0;
   for (const line of lines) {
@@ -185,13 +192,10 @@ export function aggregateTranscriptLines(
       if (seen.has(event.id)) continue;
       seen.add(event.id);
     }
-    // Cache-only events carry no blended tokens, so they stay out of the activity
-    // histogram and the burn rate; `tokenSplit` still banks their reads.
-    if (event.tokens > 0) addToBucket(buckets, event.epochMs, event.tokens);
     events.push(event);
     latestMs = Math.max(latestMs, event.epochMs);
   }
-  return { events, buckets, latestMs };
+  return { events, latestMs };
 }
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
@@ -250,6 +254,10 @@ export function readClaudeTranscripts(
   }
 
   const seen = new Set<string>();
+  // Resuming or forking a session copies earlier assistant messages into a new
+  // transcript, so the same message id turns up in more than one file. Per-file
+  // dedup cannot see that; only a run-level set can.
+  const seenMessageIds = new Set<string>();
   let unreadable: unknown;
   for (const relative of entries) {
     if (!relative.endsWith(".jsonl")) continue;
@@ -269,8 +277,14 @@ export function readClaudeTranscripts(
               ...aggregateTranscriptLines(readFileSync(path, "utf8").split("\n")),
             };
       if (!cacheMatchesFile) fileCache.set(path, entry);
-      mergeBuckets(combined, entry.buckets);
       for (const event of entry.events) {
+        if (event.id !== null) {
+          if (seenMessageIds.has(event.id)) continue;
+          seenMessageIds.add(event.id);
+        }
+        // Cache-only events carry no blended tokens, so they stay out of the
+        // activity histogram and the burn rate; `tokenSplit` still banks reads.
+        if (event.tokens > 0) addToBucket(combined, event.epochMs, event.tokens);
         // Month buckets take everything on disk, not just the 30-day window, so
         // a month can be banked before Claude prunes the transcripts behind it.
         accumulateDay(dayModelTokens, event);

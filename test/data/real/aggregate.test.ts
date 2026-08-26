@@ -5,7 +5,6 @@ import {
   formatCountdown,
   formatRate,
   localDateKey,
-  mergeBuckets,
   seriesFromBuckets,
   tokensPerHour,
   type HourBuckets,
@@ -105,12 +104,6 @@ describe("bucket plumbing", () => {
     expect(buckets.size).toBe(0);
   });
 
-  test("mergeBuckets sums overlapping hours", () => {
-    const target: HourBuckets = new Map([[100, 5]]);
-    mergeBuckets(target, new Map([[100, 7], [101, 2]]));
-    expect(target.get(100)).toBe(12);
-    expect(target.get(101)).toBe(2);
-  });
 });
 
 describe("local date key", () => {

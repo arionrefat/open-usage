@@ -19,10 +19,6 @@ export function addToBucket(buckets: HourBuckets, epochMs: number, tokens: numbe
   buckets.set(hour, (buckets.get(hour) ?? 0) + tokens);
 }
 
-export function mergeBuckets(target: HourBuckets, source: HourBuckets): void {
-  for (const [hour, tokens] of source) target.set(hour, (target.get(hour) ?? 0) + tokens);
-}
-
 function pad2(value: number): string {
   return String(value).padStart(2, "0");
 }

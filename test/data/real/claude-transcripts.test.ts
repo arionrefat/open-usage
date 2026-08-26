@@ -111,15 +111,14 @@ describe("aggregateTranscriptLines", () => {
       timestamp: "2026-07-30T10:45:00.000Z",
       message: { usage: { input_tokens: 90, output_tokens: 700 } },
     });
-    const { buckets, latestMs } = aggregateTranscriptLines([ASSISTANT_LINE, second, "garbage"]);
-    expect(buckets.size).toBe(1); // both fall in the 10:00 UTC hour
-    expect([...buckets.values()][0]).toBe(4_000); // 3,210 + 790
+    const { events, latestMs } = aggregateTranscriptLines([ASSISTANT_LINE, second, "garbage"]);
+    expect(events.map((event) => event.tokens)).toEqual([3_210, 790]);
     expect(latestMs).toBe(Date.parse("2026-07-30T10:45:00.000Z"));
   });
 
   test("returns an empty aggregate for empty input", () => {
-    const { buckets, latestMs } = aggregateTranscriptLines([]);
-    expect(buckets.size).toBe(0);
+    const { events, latestMs } = aggregateTranscriptLines([]);
+    expect(events.length).toBe(0);
     expect(latestMs).toBe(0);
   });
 
@@ -131,24 +130,21 @@ describe("aggregateTranscriptLines", () => {
         message: { id, usage: { output_tokens: tokens } },
       });
 
-    const { events, buckets } = aggregateTranscriptLines([
+    const { events } = aggregateTranscriptLines([
       line("msg_1", 100),
       line("msg_1", 100),
       line("msg_1", 100),
       line("msg_2", 50),
     ]);
-    expect([...buckets.values()][0]).toBe(150);
-    expect(events.length).toBe(2);
+    expect(events.map((event) => event.tokens)).toEqual([100, 50]);
   });
 
-  test("keeps a cache-only event out of the histogram while banking its reads", () => {
-    const { events, buckets } = aggregateTranscriptLines([ASSISTANT_LINE, CACHE_ONLY_LINE]);
+  test("keeps a cache-only event while marking it as carrying no blended tokens", () => {
+    const { events } = aggregateTranscriptLines([ASSISTANT_LINE, CACHE_ONLY_LINE]);
 
     // Both events survive the parse, but only the blended one moves the chart
     // and the burn rate - a zero-token bucket would flatten neither honestly.
-    expect(events.length).toBe(2);
-    expect(buckets.size).toBe(1);
-    expect([...buckets.values()][0]).toBe(3_210);
+    expect(events.map((event) => event.tokens)).toEqual([3_210, 0]);
     expect(events.map((event) => event.cacheReadTokens)).toEqual([900_000, 40_000]);
   });
 
@@ -187,8 +183,8 @@ describe("aggregateTranscriptLines", () => {
   });
 
   test("still counts messages that carry no id", () => {
-    const { buckets } = aggregateTranscriptLines([ASSISTANT_LINE, ASSISTANT_LINE]);
-    expect([...buckets.values()][0]).toBe(6_420); // 3,210 counted twice
+    const { events } = aggregateTranscriptLines([ASSISTANT_LINE, ASSISTANT_LINE]);
+    expect(events.map((event) => event.tokens)).toEqual([3_210, 3_210]);
   });
 });
 
@@ -229,6 +225,38 @@ describe("readClaudeTranscripts", () => {
     writeFileSync(path, line(333));
     utimesSync(path, fixedTime, fixedTime);
     expect(readClaudeTranscripts(projects, new Date("2026-08-15T12:00:00Z")).tokenSplit.output).toBe(333);
+  });
+
+  test("counts a message shared by two session files once", () => {
+    // Resuming or forking a session copies earlier assistant messages into a new
+    // transcript. Deduplicating per file leaves those copies to be summed twice.
+    const now = new Date("2026-07-30T12:00:00.000Z");
+    const line = (id: string) =>
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-07-30T10:15:00.000Z",
+        message: {
+          id,
+          model: "claude-opus-5",
+          usage: {
+            input_tokens: 10,
+            output_tokens: 90,
+            cache_creation_input_tokens: 100,
+            cache_read_input_tokens: 5_000,
+          },
+        },
+      });
+    const dir = tempRoot("open-usage-transcripts-fork-");
+    writeFileSync(join(dir, "original.jsonl"), line("msg_shared"));
+    writeFileSync(join(dir, "resumed.jsonl"), [line("msg_shared"), line("msg_new")].join("\n"));
+
+    const { buckets, modelTokens, tokenSplit, dayModelTokens } = readClaudeTranscripts(dir, now);
+    const bucketSum = [...buckets.values()].reduce((a, b) => a + b, 0);
+
+    expect(bucketSum).toBe(400); // two distinct messages at 200 blended each
+    expect(modelTokens.get("claude-opus-5")).toBe(400);
+    expect(tokenSplit.cacheRead).toBe(10_000);
+    expect(dayModelTokens.get("2026-07-30")?.get("claude-opus-5")?.output).toBe(180);
   });
 
   test("per-model totals sum to the headline total", () => {
