@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stubCodexLimitsSource } from "../../src/data/real/codex-limits";
-import { dormantGoLimitsSource } from "../../src/data/real/go-limits-source";
+import { createGoLimitsSource, dormantGoLimitsSource } from "../../src/data/real/go-limits-source";
 import { dormantClaudeLimitsSource } from "../../src/data/real/claude-usage";
 import { dormantClaudeAuthSource } from "../../src/data/real/claude-auth";
 import {
@@ -151,6 +151,48 @@ describe("opencode remote credentials as a go source", () => {
         note: "local estimate",
       });
     });
+  });
+
+  // The cookie is meant to be sufficient on its own: no opencode, no local
+  // database, every figure fetched from the dashboard.
+  test("serves exact limits from the website with opencode uninstalled", async () => {
+    const root = mkdtempSync(join(tmpdir(), "open-usage-cookie-"));
+    try {
+      mkdirSync(join(root, "open-usage"), { recursive: true });
+      const paths = pathsIn(root);
+      writeCookieConfig(paths, COOKIE);
+      const now = new Date();
+      const goLimits = createGoLimitsSource(paths.configFile, NO_ENV, (_cookie, at) =>
+        Promise.resolve({
+          rollingPercent: 17,
+          rollingResetAtMs: at.getTime() + 3_600_000,
+          weeklyPercent: 42,
+          weeklyResetAtMs: at.getTime() + 86_400_000,
+          monthlyPercent: 55,
+          monthlyResetAtMs: at.getTime() + 5 * 86_400_000,
+          fetchedAtMs: at.getTime(),
+          source: "dashboard" as const,
+        }));
+      await goLimits.poll(now);
+
+      const provider = createRealUsageProvider({ paths, env: NO_ENV, ...OFFLINE, goLimits });
+
+      expect(provider.initialConnections().go).toMatchObject({
+        isEnabled: true,
+        isAgentInstalled: false,
+        status: "active",
+        credential: "cookie · opencode.ai",
+      });
+
+      const go = provider.readSnapshot().providers.go;
+      expect(go.meta.source).toBe("opencode.ai dashboard");
+      expect(go.meta.plan).toBe("Go");
+      expect(go.limits.map((limit) => limit.percent)).toEqual([17, 42, 55]);
+      // No opencode.db means no token chart, and the card has to say so.
+      expect(go.detailFooter).toBe("no local history ▏ limits from dashboard");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("still reports go as missing with neither a cookie nor an install", () => {
