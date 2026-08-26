@@ -8,6 +8,7 @@ import type {
   UsageLimit,
 } from "../types";
 import { DAY_MS, formatCountdown, seriesFromBuckets, toMillions, tokensPerHour, type HourBuckets } from "./aggregate";
+import type { GoActivity } from "./go-activity";
 import type { GoLimitsSource } from "./go-limits-source";
 import type { OpencodeSessionStats } from "./opencode-db";
 import type { GoSpend, SpendWindow } from "./opencode-go-spend";
@@ -295,6 +296,8 @@ interface GoProviderInput {
   now: Date;
   /** Server-side month history; absent without a cookie or on a failed read. */
   history?: SpendSummary | null;
+  /** Workspace-wide activity from the dashboard; outranks the local buckets. */
+  activity?: GoActivity | null;
   billing?: GoBilling | null;
 }
 
@@ -313,8 +316,14 @@ function goMetaFor(meta: ProviderMeta, server: GoServerLimits | null, usesEstima
 }
 
 export function buildGoProvider(input: GoProviderInput): GoProviderResult {
-  const { meta, buckets, stats, spend, limitsSource, dates, now, history, billing } = input;
+  const { meta, spend, limitsSource, dates, now, history, billing } = input;
   const nowMs = now.getTime();
+  // The dashboard sees every device on the workspace, opencode.db only this one,
+  // and both report each token kind, so the wider source wins outright rather
+  // than being merged - summing the two would count shared sessions twice.
+  const workspace = input.activity ?? null;
+  const buckets = workspace?.buckets ?? input.buckets;
+  const stats = workspace?.stats ?? input.stats;
   const server = limitsSource.read(now);
   const note = displayedSourceNote(limitsSource.note(now), server, spend);
   const noticeText = goNoticeText(note, limitsSource.cookieExpiresAtMs(), nowMs);
@@ -326,6 +335,7 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
       id: "go",
       meta: goMetaFor(meta, server, usesEstimate),
       series: seriesFromBuckets(buckets, dates, now),
+      ...(workspace ? { seriesScope: "workspace" as const } : {}),
       // The server keeps its own month history, so a cookie alone is enough.
       hasHistory: stats !== undefined || history != null,
       limits: goLimits(server, spend, note, nowMs),

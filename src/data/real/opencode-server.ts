@@ -1,5 +1,12 @@
 import { discoverServerFunctionRefs } from "./opencode-bundle";
-import { type GoBilling, type GoCostReport, parseBilling, parseCostReport } from "./opencode-usage";
+import {
+  type GoBilling,
+  type GoCostReport,
+  type GoUsageRow,
+  parseBilling,
+  parseCostReport,
+  parseUsageRows,
+} from "./opencode-usage";
 import { finiteNumber, isRecord } from "./json";
 import { numberField, objectAtKey } from "./seroval-text";
 
@@ -428,6 +435,66 @@ export async function fetchGoUsageHistory(
     workspaceId,
     month: `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}`,
   };
+}
+
+/** The dashboard's own page size for the usage table. */
+const USAGE_PAGE_SIZE = 50;
+/**
+ * Backstop only. Paging normally ends the moment a page reaches past the
+ * window, so a light month costs two or three requests rather than this.
+ */
+const MAX_USAGE_PAGES = 24;
+const USAGE_ROWS_TIMEOUT_MS = 45_000;
+
+/**
+ * Pages the per-session usage table back to `sinceMs`.
+ *
+ * This is what lets a cookie alone carry an activity series: `opencode.db` is
+ * the only other source of per-token history, and it does not exist until
+ * opencode has been installed and used. Rows arrive newest first, so a page
+ * that reaches past the window ends the walk.
+ */
+export async function fetchGoUsageRows(
+  cookieHeader: string,
+  workspaceId: string,
+  options: { sinceMs: number; signal?: AbortSignal; timeoutMs?: number; maxPages?: number },
+): Promise<GoUsageRow[]> {
+  const cookie = filterCookieHeader(cookieHeader);
+  if (!cookie) throw new OpencodeServerError("no opencode auth cookie", "credentials");
+
+  const deadline = AbortSignal.timeout(options.timeoutMs ?? USAGE_ROWS_TIMEOUT_MS);
+  const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+  const referer = `https://opencode.ai/workspace/${workspaceId}/usage`;
+  const maxPages = options.maxPages ?? MAX_USAGE_PAGES;
+
+  const rows: GoUsageRow[] = [];
+  for (let page = 0; page < maxPages; page += 1) {
+    let parsed: GoUsageRow[] | null;
+    try {
+      parsed = await callAndParse(
+        "usageList",
+        [workspaceId, page],
+        parseUsageRows,
+        cookie,
+        referer,
+        signal,
+      );
+    } catch (error) {
+      // Pages arrive newest first, so a deadline or a blip part way through
+      // still leaves the most recent window collected. Returning that beats
+      // losing every row, but only once there is something to return - an
+      // empty result would blank a chart the caller could have kept.
+      if (rows.length === 0) throw error;
+      break;
+    }
+    if (parsed === null || parsed.length === 0) break;
+    rows.push(...parsed);
+    if (parsed.some((row) => row.atMs !== null && row.atMs < options.sinceMs)) break;
+    if (parsed.length < USAGE_PAGE_SIZE) break;
+  }
+  // A row with no timestamp cannot be placed in the window, so it is kept only
+  // for the totals rather than being guessed onto a day.
+  return rows.filter((row) => row.atMs === null || row.atMs >= options.sinceMs);
 }
 
 export interface GoServerLimits {

@@ -28,11 +28,14 @@ function build(options: {
   note?: string | null;
   expiresAtMs?: number | null;
   stats?: Parameters<typeof buildGoProvider>[0]["stats"];
+  buckets?: Parameters<typeof buildGoProvider>[0]["buckets"];
+  activity?: Parameters<typeof buildGoProvider>[0]["activity"];
 } = {}) {
   return buildGoProvider({
     meta: META,
-    buckets: new Map(),
+    buckets: options.buckets ?? new Map(),
     stats: options.stats,
+    activity: options.activity ?? null,
     spend: options.spend ?? null,
     limitsSource: limitsSource(options),
     dates: ["2026-01-15"],
@@ -186,5 +189,48 @@ describe("buildGoProvider cookie notices", () => {
     expect(cachedServer.provider.notice?.segments[0]?.text).toBe(
       "opencode unreachable - showing cached server limits",
     );
+  });
+});
+
+describe("source precedence", () => {
+  const hour = Math.floor(NOW_MS / HOUR_MS);
+
+  test("prefers the dashboard's workspace activity over this device's buckets", () => {
+    // The dashboard sees every device on the workspace; opencode.db sees one.
+    // They overlap, so the wider source replaces rather than adds to it.
+    const { provider } = build({
+      buckets: new Map([[hour, 1_000_000]]),
+      stats: { sessions: 2, tokens: 1_000_000, latestMs: NOW_MS, topModel: "local" },
+      activity: {
+        buckets: new Map([[hour, 4_000_000]]),
+        stats: { sessions: 9, tokens: 4_000_000, latestMs: NOW_MS, topModel: "kimi-k3" },
+      },
+    });
+
+    expect(provider.series.daily).toEqual([4]);
+    expect(provider.sessions30d).toBe(9);
+    expect(provider.seriesScope).toBe("workspace");
+  });
+
+  test("falls back to local buckets, and claims no wider scope for them", () => {
+    const { provider } = build({
+      buckets: new Map([[hour, 1_000_000]]),
+      stats: { sessions: 2, tokens: 1_000_000, latestMs: NOW_MS, topModel: "local" },
+    });
+
+    expect(provider.series.daily).toEqual([1]);
+    expect(provider.seriesScope).toBeUndefined();
+  });
+
+  test("reports history from a cookie alone, with no opencode install behind it", () => {
+    const { provider } = build({
+      activity: {
+        buckets: new Map([[hour, 2_000_000]]),
+        stats: { sessions: 3, tokens: 2_000_000, latestMs: NOW_MS, topModel: "kimi-k3" },
+      },
+    });
+
+    expect(provider.hasHistory).not.toBe(false);
+    expect(provider.series.daily).toEqual([2]);
   });
 });

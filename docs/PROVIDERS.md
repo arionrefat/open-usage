@@ -109,7 +109,9 @@ The cost was not only that the codex bar could not be compared to the other two.
 `series.hourly` and the burn rate were built from local rollouts the whole time, so pressing `t` to move between 30d and today silently changed what a codex token meant, by a factor of seventeen, inside one provider's own card.
 A field cannot be both the widest available measurement and the comparable one, and `series` is read by the cross-provider charts, so it has to be the comparable one.
 
-`series` is therefore local and blended for every provider, without exception, and that is now stated as an invariant on the type.
+`series` is therefore blended for every provider without exception, and that is now stated as an invariant on the type.
+The rule has a second half, which opencode go later forced: a source may cover more than this device only if it reports every token kind separately, so the blended figure can be computed exactly rather than approximated.
+Codex's bucket is a single pre-blended number, so it fails that test; opencode go's usage table passes it.
 The account-wide figure is not lost: it is reported on the codex detail screen as `account 30d · incl. cached`, beside the lifetime and peak-day records that were already sourced from the same payload.
 Naming the basis in the label is what keeps it honest - the same reasoning that gives cache reads their own column instead of a place in the bar.
 `activityScope` was deleted along with the mismatch, since it existed only to caption a series that could be one of two things.
@@ -363,6 +365,18 @@ Absent counts are an explicit `null`, and `timeCreated` arrives as a live `new D
 The dashboard counts cache reads and both cache writes as input: `inputTokens + cacheReadTokens + cacheWrite5mTokens + cacheWrite1hTokens`.
 
 These are parsed by `src/data/real/opencode-usage.ts`, assembled by `go-spend-summary.ts`, and polled by `go-history-source.ts` every 30 minutes for the open month plus two closed ones.
+
+`usage.list` was parsed but never fetched until 2026-08-26, which left the cookie a second-class source: it reported exact limits and per-day cost, and then said "no history" because `opencode.db` was the only thing wired to `series`.
+That database does not exist until opencode has been installed and used, so a cookie-only setup - which the dashboard fully supports - had no activity chart at all.
+`fetchGoUsageRows` now walks the table back over the 30-day window and `go-activity.ts` folds it into the same shape `opencode.db` produces, so one rendering path serves both.
+
+Two properties make this safe to put on the shared axis.
+The table reports every token kind separately, so the blended basis is computed exactly rather than approximated - `input + output + reasoning + cacheWrite5m + cacheWrite1h`, matching the local `TOKENS_SQL` term for term, with cache reads carried in `cacheRead30d` as they are everywhere else.
+And it covers the whole workspace rather than this device, which is a wider population than the other providers report, so the provider sets `seriesScope: "workspace"` and the UI says so rather than leaving the reader to assume.
+
+The dashboard outranks `opencode.db` when both exist, and replaces it rather than adding to it: the two describe overlapping sessions, so summing them would double count.
+Rows arrive newest first, so the walk stops at the first page reaching past the window - two or three requests on a light month, capped at 24 - and a failure part way through returns the pages already collected rather than losing the window, since only an empty first page leaves nothing worth keeping.
+Measured on a live lite account: 152 sessions and 3.84M blended tokens over 12 active days, against 57.8M cache reads held out of that figure.
 
 Two wire details are easy to miss and both silently empty the result: a month with no traffic answers `usage:[]`, which is a valid response rather than a parse failure, and booleans are minified to `!0` / `!1` rather than `true` / `false`.
 

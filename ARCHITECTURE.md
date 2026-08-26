@@ -78,11 +78,15 @@ Codex owns app-server limits, window labels, plan metadata, scopes, and summary 
 OpenCode Go owns server-versus-spend selection, estimate labeling, limit rows, scopes, and footer.
 Touch one of these when changing how that provider's data is presented.
 
-One invariant holds all three together.
-`ProviderUsage.series` is always this device and always the blended basis - fresh input plus output plus cache writes, cache reads excluded - so the overview can put the providers on one axis and mean it.
-A source that only offers a wider population or a cache-inclusive count does not go into `series`; it is reported as its own labelled figure on that provider's detail screen.
-Codex is the case that forced the rule: its app-server reports account-wide daily tokens that count cached input, which ran about 17x its local blended figure and inverted the usage share.
-That number now appears as `account 30d · incl. cached` in the codex records section instead of as bars.
+One invariant holds all three together, in two parts.
+
+**Basis is absolute.** `ProviderUsage.series` is always the blended count - fresh input plus output plus cache writes, cache reads excluded - so the overview can put the providers on one axis and mean it.
+
+**Population may widen only if the source can express that basis exactly.** A source reporting every token kind separately may cover more than this device, and sets `seriesScope` to say so. One that reports a single pre-blended number cannot, and is reported as its own labelled figure on that provider's detail screen instead.
+
+The two cases that forced the rule sit on opposite sides of it.
+Codex's app-server reports account-wide daily tokens as one opaque figure that counts cached input, about 17x its local blended figure, and no breakdown comes with it - so it stays off the axis and appears as `account 30d · incl. cached` in the codex records section.
+OpenCode Go's dashboard reports every kind separately, so its workspace-wide history can be blended exactly and does fill `series`, labelled `workspace`.
 
 **`real/provider-helpers.ts`**
 Small display helpers shared by at least two provider builders: cap-less rows, reset text, token formatting, and local burn state.

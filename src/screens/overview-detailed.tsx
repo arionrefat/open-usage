@@ -367,10 +367,13 @@ function shareRows(state: AppState, derived: DerivedState, snapshot: UsageSnapsh
         share: hasHistory && total > 0 ? (tokens / total) * 100 : hasHistory ? 0 : null,
         tokens: hasHistory ? formatTokens(tokens) : NO_VALUE,
         cache: cacheRead === undefined ? NO_VALUE : formatTokens(cacheRead),
-        meta:
-          !hasHistory || sessions === undefined
-            ? ""
-            : `${sessions} ${sessions === 1 ? "session" : "sessions"}`,
+        meta: !hasHistory
+          ? ""
+          : provider.seriesScope === "workspace"
+            ? "workspace"
+            : sessions === undefined
+              ? ""
+              : `${sessions} ${sessions === 1 ? "session" : "sessions"}`,
         delta: hasHistory ? formatDelta(week?.recent ?? 0, week ? week.prior : null) : null,
       };
     })

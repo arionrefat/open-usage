@@ -5,6 +5,7 @@ import {
   SERVER_FUNCTION_IDS,
   fetchGoServerLimits,
   fetchGoUsageHistory,
+  fetchGoUsageRows,
   filterCookieHeader,
   isSignedOut,
   parseSubscription,
@@ -372,5 +373,92 @@ describe("isSignedOut", () => {
     expect(isSignedOut('actor of type "public"')).toBe(true);
     expect(isSignedOut("redirecting to /auth/authorize")).toBe(true);
     expect(isSignedOut(SUBSCRIPTION_JS)).toBe(false);
+  });
+});
+
+describe("fetchGoUsageRows", () => {
+  const WORKSPACE = "wrk_01ABC";
+  /**
+   * A full page, timestamped so the walk can be steered by the window. Full
+   * because a short page legitimately means the end of the table.
+   */
+  function page(atMs: number, rows = 50): string {
+    return JSON.stringify(
+      Array.from({ length: rows }, (_, index) => ({
+        id: `usg_${index}`,
+        sessionID: "ses_1",
+        timeCreated: new Date(atMs).toISOString(),
+        model: "kimi-k3",
+        inputTokens: 1,
+        outputTokens: 1,
+        reasoningTokens: 0,
+        cacheReadTokens: 0,
+        cacheWrite5mTokens: 0,
+        cacheWrite1hTokens: 0,
+        cost: 0,
+        plan: "lite",
+      })),
+    );
+  }
+
+  function mock(handle: (page: number) => Response) {
+    return spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        (input: string | URL | Request, init?: RequestInit | BunFetchRequestInit) => {
+          const body = String((init as RequestInit)?.body ?? "");
+          const requested = Number(/"s":(\d+)}\]/.exec(body)?.[1] ?? 0);
+          return Promise.resolve(handle(requested));
+        },
+        { preconnect: (_url: string | URL) => undefined },
+      ),
+    );
+  }
+
+  test("stops walking once a page reaches past the window", async () => {
+    const now = Date.parse("2026-08-20T00:00:00Z");
+    const requested: number[] = [];
+    const fetchSpy = mock((requestedPage) => {
+      requested.push(requestedPage);
+      // Page 2 is older than the cutoff, so the walk must end there.
+      const atMs = requestedPage < 2 ? now - 60_000 : now - 10 * 24 * 60 * 60 * 1000;
+      return new Response(page(atMs));
+    });
+    try {
+      await fetchGoUsageRows("auth=secret", WORKSPACE, { sinceMs: now - 24 * 60 * 60 * 1000 });
+      expect(requested).toEqual([0, 1, 2]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("keeps the pages it already walked when a later one fails", async () => {
+    const now = Date.parse("2026-08-20T00:00:00Z");
+    const fetchSpy = mock((requestedPage) =>
+      requestedPage === 0 ? new Response(page(now - 60_000)) : new Response("", { status: 500 }),
+    );
+    try {
+      // Losing a month of history to one bad page would read as no usage.
+      const rows = await fetchGoUsageRows("auth=secret", WORKSPACE, { sinceMs: 0 });
+      expect(rows).toHaveLength(50);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("throws rather than reporting an empty window when the first page fails", async () => {
+    const fetchSpy = mock(() => new Response("", { status: 500 }));
+    try {
+      await expect(
+        fetchGoUsageRows("auth=secret", WORKSPACE, { sinceMs: 0 }),
+      ).rejects.toBeInstanceOf(OpencodeServerError);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("refuses to walk without an auth cookie", async () => {
+    await expect(
+      fetchGoUsageRows("theme=dark", WORKSPACE, { sinceMs: 0 }),
+    ).rejects.toBeInstanceOf(OpencodeServerError);
   });
 });

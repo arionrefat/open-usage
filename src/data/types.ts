@@ -234,6 +234,14 @@ export interface ProviderUsage {
    */
   series: UsageSeries;
   /**
+   * Set when the series covers more than this device. The basis is blended
+   * either way: a source may widen the population only if it reports every
+   * token kind, so the blended figure can be computed exactly rather than
+   * approximated. One that cannot belongs in a labelled figure, not on the
+   * shared axis - see docs/PROVIDERS.md.
+   */
+  seriesScope?: "workspace";
+  /**
    * false when no history source exists at all, which is not the same as a
    * measured zero and must not be rendered as one. Absent means history exists.
    */

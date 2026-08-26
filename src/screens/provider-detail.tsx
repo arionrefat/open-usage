@@ -360,6 +360,7 @@ export function ProviderDetail({
   const isStale = !isProviderLive(state.connections[id]);
   const limits = provider.limits.filter((limit) => !limit.isCardOnly);
   const series = derived.series[id];
+  const chartTokenLabel = provider.seriesScope === "workspace" ? "workspace tokens" : "tokens";
   const chartWidth = Math.max(0, width - 2);
   const chartRows = bars(series, chartWidth, chartHeight, PROVIDER_COLORS[id]).map((row) => ({
     segments: [
@@ -423,7 +424,7 @@ export function ProviderDetail({
           left={[
             { text: "─ ", color: COLORS.borderPanel },
             {
-              text: `tokens ${derived.rangeName} · no activity `,
+              text: `${chartTokenLabel} ${derived.rangeName} · no activity `,
               color: COLORS.textMuted,
               isBold: true,
             },
@@ -438,7 +439,7 @@ export function ProviderDetail({
             left={[
               { text: "┌─ ", color: COLORS.borderPanel },
               {
-                text: `tokens ${derived.rangeName} · ${formatTokens(totalTokens)} total · ${activeDays}/${series.length} active `,
+                text: `${chartTokenLabel} ${derived.rangeName} · ${formatTokens(totalTokens)} total · ${activeDays}/${series.length} active `,
                 color: COLORS.textMuted,
                 isBold: true,
               },

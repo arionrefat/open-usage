@@ -123,9 +123,9 @@ export function detectAgentInstallations(
 }
 
 /**
- * A dashboard cookie is a go source in its own right: it reports exact limits
- * with no opencode install. It never carries history, so it complements
- * opencode.db rather than replacing it.
+ * A dashboard cookie is a go source in its own right, and the fuller of the
+ * two: it reports exact limits plus workspace-wide activity with no opencode
+ * install at all, where opencode.db only ever sees this device.
  */
 export function hasOpencodeCookie(
   paths: RealProviderPaths,
@@ -188,7 +188,7 @@ function goNote(
   status: ConnectionStatus,
 ): string {
   if (hasCookie) {
-    if (status === "active") return "live limits";
+    if (status === "active") return "live limits ▏ workspace history";
     if (status === "cached") return "cached limits";
     return hasLocalData ? "cookie ready; local history" : "cookie ready";
   }
@@ -450,6 +450,7 @@ function buildSnapshot(
     now,
     history: goHistory.read(),
     billing: goHistory.billing(),
+    activity: goHistory.activity(),
   });
   const fetchedAt = latestSourceTimestamp(nowMs, [
     claudeLimits.read()?.fetchedAtMs ?? 0,
