@@ -12,13 +12,21 @@ function turnContext(model: string): string {
   return JSON.stringify({ timestamp: new Date(NOW_MS - HOUR_MS).toISOString(), type: "turn_context", payload: { model } });
 }
 
-function tokenCount(atMs: number, tokens: number): string {
+function tokenCount(atMs: number, tokens: number, usage: Record<string, number> = {}): string {
   return JSON.stringify({
     timestamp: new Date(atMs).toISOString(),
     type: "event_msg",
     payload: {
       type: "token_count",
-      info: { last_token_usage: { total_tokens: tokens } },
+      info: {
+        last_token_usage: {
+          input_tokens: tokens,
+          cached_input_tokens: 0,
+          output_tokens: 0,
+          total_tokens: tokens,
+          ...usage,
+        },
+      },
     },
   });
 }
@@ -131,6 +139,41 @@ describe("readCodexSessions", () => {
 
       const usage = readCodexSessions(home, NOW);
       expect(usage?.tokens).toBe(42);
+    });
+  });
+});
+
+describe("codex token basis", () => {
+  test("counts non-cached input plus output, not codex's cache-inclusive total", () => {
+    // total_tokens counts cached input, which on a long session is ~95% of it.
+    // Charting that against Claude and OpenCode Go, both of which exclude cache
+    // reads, once made codex look an order of magnitude larger than it was.
+    withTempHome((home) => {
+      seedRollout(home, "sessions", "rollout.jsonl", [
+        turnContext("gpt-5.6-sol"),
+        tokenCount(NOW_MS - HOUR_MS, 46_433, {
+          input_tokens: 46_281,
+          cached_input_tokens: 42_752,
+          output_tokens: 152,
+          total_tokens: 46_433,
+        }),
+      ]);
+
+      expect(readCodexSessions(home, NOW)?.tokens).toBe(3_681); // 46,281 - 42,752 + 152
+    });
+  });
+
+  test("falls back to total_tokens when a rollout carries no breakdown", () => {
+    withTempHome((home) => {
+      seedRollout(home, "sessions", "rollout.jsonl", [
+        JSON.stringify({
+          timestamp: new Date(NOW_MS - HOUR_MS).toISOString(),
+          type: "event_msg",
+          payload: { type: "token_count", info: { last_token_usage: { total_tokens: 900 } } },
+        }),
+      ]);
+
+      expect(readCodexSessions(home, NOW)?.tokens).toBe(900);
     });
   });
 });

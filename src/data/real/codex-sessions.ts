@@ -39,6 +39,30 @@ function clearDirectoryCache(directory: string): void {
   for (const path of fileCache.keys()) if (path.startsWith(prefix)) fileCache.delete(path);
 }
 
+function positiveNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/**
+ * Codex's own `blended_total`: non-cached input plus output. Its `total_tokens`
+ * includes cached input, which is ~95% of a long session, so charting that
+ * against Claude and OpenCode Go - both of which exclude cache reads - would
+ * overstate codex by more than an order of magnitude. Rollouts predating the
+ * breakdown fall back to `total_tokens`, the only figure they carry.
+ */
+function blendedTokens(last: Record<string, unknown> | null): number | null {
+  if (!last) return null;
+  const input = positiveNumber(last.input_tokens);
+  const output = positiveNumber(last.output_tokens);
+  if (input === null || output === null) {
+    const total = positiveNumber(last.total_tokens);
+    return total !== null && total > 0 ? total : null;
+  }
+  const cached = positiveNumber(last.cached_input_tokens) ?? 0;
+  const blended = Math.max(0, input - cached) + output;
+  return blended > 0 ? blended : null;
+}
+
 function parseRolloutLines(lines: Iterable<string>): { events: RolloutEvent[]; latestMs: number } {
   const events: RolloutEvent[] = [];
   let latestMs = 0;
@@ -67,8 +91,8 @@ function parseRolloutLines(lines: Iterable<string>): { events: RolloutEvent[]; l
 
     const info = isRecord(payload.info) ? payload.info : null;
     const last = info && isRecord(info.last_token_usage) ? info.last_token_usage : null;
-    const tokens = last?.total_tokens;
-    if (typeof tokens !== "number" || !Number.isFinite(tokens) || tokens <= 0) continue;
+    const tokens = blendedTokens(last);
+    if (tokens === null) continue;
     const epochMs = typeof parsed.timestamp === "string" ? Date.parse(parsed.timestamp) : NaN;
     if (!Number.isFinite(epochMs)) continue;
 
