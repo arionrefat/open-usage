@@ -30,6 +30,16 @@ export interface OpencodeUsage {
 
 const USAGE_WINDOW_DAYS = 30;
 
+/**
+ * opencode renamed the Go provider from `opencode-go` to `opencode`, so a
+ * machine that spans the rename holds rows under both. Folding them to one key
+ * in SQL merges that history instead of showing whichever half the reader
+ * happened to ask for, and keeps every consumer on the name it already uses.
+ */
+const PROVIDER_SQL =
+  "CASE WHEN json_extract(data,'$.providerID') IN ('opencode','opencode-go')" +
+  " THEN 'opencode-go' ELSE json_extract(data,'$.providerID') END";
+
 /** Fresh tokens only - cache reads would dwarf real work by two orders of magnitude. */
 const TOKENS_SQL =
   "coalesce(json_extract(data,'$.tokens.input'),0)" +
@@ -39,14 +49,14 @@ const TOKENS_SQL =
 
 const HOUR_ROWS_SQL =
   "SELECT CAST(time_created/3600000 AS INTEGER) AS hour," +
-  " json_extract(data,'$.providerID') AS provider," +
+  ` ${PROVIDER_SQL} AS provider,` +
   ` SUM(${TOKENS_SQL}) AS tokens` +
   " FROM message" +
   " WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
   " GROUP BY hour, provider";
 
 const SESSION_ROWS_SQL =
-  "SELECT json_extract(data,'$.providerID') AS provider," +
+  `SELECT ${PROVIDER_SQL} AS provider,` +
   " COUNT(DISTINCT session_id) AS sessions," +
   ` SUM(${TOKENS_SQL}) AS tokens,` +
   " MAX(time_created) AS latest" +
@@ -55,7 +65,7 @@ const SESSION_ROWS_SQL =
   " GROUP BY provider";
 
 const MODEL_ROWS_SQL =
-  "SELECT json_extract(data,'$.providerID') AS provider," +
+  `SELECT ${PROVIDER_SQL} AS provider,` +
   " json_extract(data,'$.modelID') AS model," +
   // Same basis as the headline above, so the per-model bars sum to it rather
   // than contradicting it by the cache-read volume.
@@ -65,7 +75,7 @@ const MODEL_ROWS_SQL =
   " GROUP BY provider, model";
 
 const DETAIL_ROWS_SQL =
-  "SELECT json_extract(data,'$.providerID') AS provider," +
+  `SELECT ${PROVIDER_SQL} AS provider,` +
   " SUM(coalesce(json_extract(data,'$.tokens.input'),0)) AS input," +
   " SUM(coalesce(json_extract(data,'$.tokens.output'),0)) AS output," +
   " SUM(coalesce(json_extract(data,'$.tokens.reasoning'),0)) AS reasoning," +
@@ -90,7 +100,7 @@ const DETAIL_ROWS_SQL =
 const COST_SLOT_MS = 900_000;
 
 const DAILY_COST_ROWS_SQL =
-  "SELECT json_extract(data,'$.providerID') AS provider," +
+  `SELECT ${PROVIDER_SQL} AS provider,` +
   ` CAST(time_created/${COST_SLOT_MS} AS INTEGER) AS slot,` +
   " SUM(coalesce(json_extract(data,'$.cost'),0)) AS usd" +
   " FROM message WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
@@ -217,6 +227,34 @@ export function aggregateRowsFromDatabase(db: Database, sinceMs: number): unknow
   ])();
 }
 
+/**
+ * Read-only first, then read-write without create.
+ *
+ * SQLite cannot open a WAL database read-only unless the `-shm` file already
+ * exists, and it needs write access to the directory to make one. A clean
+ * shutdown removes it, so an installed-but-idle opencode is exactly the case
+ * that fails - which is every machine that has the data but is not running.
+ *
+ * The fallback still only ever runs SELECTs. `create: false` matters: without
+ * it a database that vanished after the stat above would be conjured empty and
+ * read back as a real measurement of zero.
+ */
+function openForReading(dbPath: string): Database {
+  // bun:sqlite connects lazily, so a handle that cannot reach the file is only
+  // rejected on first use. Probing here is what makes the fallback reachable.
+  let readonlyDb: Database | null = null;
+  try {
+    readonlyDb = new Database(dbPath, { readonly: true });
+    readonlyDb.query("SELECT 1").get();
+    return readonlyDb;
+  } catch {
+    readonlyDb?.close();
+  }
+  const db = new Database(dbPath, { readwrite: true, create: false });
+  db.query("SELECT 1").get();
+  return db;
+}
+
 export function readOpencodeUsage(dbPath: string, now: Date): OpencodeUsage | null {
   try {
     statSync(dbPath);
@@ -226,7 +264,7 @@ export function readOpencodeUsage(dbPath: string, now: Date): OpencodeUsage | nu
   }
   let db: Database | null = null;
   try {
-    db = new Database(dbPath, { readonly: true });
+    db = openForReading(dbPath);
     const sinceMs = now.getTime() - USAGE_WINDOW_DAYS * DAY_MS;
     const [hourRows = [], sessionRows = [], modelRows = [], detailRows = [], dailyCostRows = []] =
       aggregateRowsFromDatabase(db, sinceMs);

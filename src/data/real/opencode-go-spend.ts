@@ -122,7 +122,9 @@ const SPEND_SQL =
   " CAST(json_extract(data,'$.cost') AS REAL) AS usd," +
   " json_extract(data,'$.modelID') AS model" +
   " FROM message" +
-  " WHERE json_extract(data,'$.providerID')='opencode-go'" +
+  // Both names, because opencode renamed the Go provider and a machine that
+  // spans the rename holds spend under each.
+  " WHERE json_extract(data,'$.providerID') IN ('opencode','opencode-go')" +
   " AND json_extract(data,'$.role')='assistant'" +
   " AND json_type(data,'$.cost') IN ('integer','real')" +
   " AND CAST(COALESCE(json_extract(data,'$.time.created'), time_created) AS INTEGER) >= ?1";

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -184,6 +184,60 @@ describe("readOpencodeUsage", () => {
 
     // Three slots, one day: the peak is the day's total, not a single slot.
     expect(stats?.cost30d?.peakDayUsd).toBeCloseTo(3, 6);
+  });
+
+  test("reads a WAL database that no process currently has open", () => {
+    // SQLite cannot open a WAL database read-only unless the -shm file already
+    // exists, and it needs write access to make one. A database at rest has no
+    // sidecar files, so a readonly-only open reports every local figure as
+    // unreadable on exactly the machines that have opencode installed and idle.
+    // Reproduced against a real ~/.local/share/opencode/opencode.db before the
+    // fix; copying the file alone is what puts it in that at-rest state.
+    const source = tempDatabase("opencode-db-wal-");
+    const db = new Database(source);
+    db.run("PRAGMA journal_mode=WAL");
+    db.run("CREATE TABLE message (session_id TEXT, time_created INTEGER, data TEXT)");
+    db.prepare("INSERT INTO message VALUES (?1, ?2, ?3)").run(
+      "s1",
+      new Date(2026, 7, 1, 12).getTime(),
+      JSON.stringify({
+        role: "assistant", providerID: "opencode-go", modelID: "sonnet",
+        tokens: { input: 10, output: 20, reasoning: 0, cache: { read: 0, write: 0 } },
+      }),
+    );
+    db.run("PRAGMA wal_checkpoint(TRUNCATE)");
+    db.close();
+    const atRest = tempDatabase("opencode-db-wal-rest-");
+    copyFileSync(source, atRest);
+
+    const stats = readOpencodeUsage(atRest, new Date(2026, 7, 5))?.stats.get("opencode-go");
+
+    expect(stats?.tokens).toBe(30);
+  });
+
+  test("folds the renamed go provider id in with the old one", () => {
+    // opencode 1.18 writes providerID "opencode"; earlier versions wrote
+    // "opencode-go". A machine spanning the rename holds rows under both, and
+    // reading only one name hides half the history - or all of it, on a fresh
+    // install, which is what happens here.
+    const path = tempDatabase("opencode-db-rename-");
+    const db = new Database(path);
+    db.run("CREATE TABLE message (session_id TEXT, time_created INTEGER, data TEXT)");
+    const insert = db.prepare("INSERT INTO message VALUES (?1, ?2, ?3)");
+    const row = (provider: string, output: number) => JSON.stringify({
+      role: "assistant", providerID: provider, modelID: "mimo-v2.5-free",
+      tokens: { input: 0, output, reasoning: 0, cache: { read: 0, write: 0 } },
+    });
+    const atMs = new Date(2026, 7, 1, 12).getTime();
+    insert.run("s1", atMs, row("opencode-go", 100));
+    insert.run("s2", atMs + 1000, row("opencode", 25));
+    db.close();
+
+    const usage = readOpencodeUsage(path, new Date(2026, 7, 5));
+
+    expect(usage?.stats.get("opencode-go")?.tokens).toBe(125);
+    expect(usage?.stats.get("opencode-go")?.sessions).toBe(2);
+    expect(usage?.stats.get("opencode")).toBeUndefined();
   });
 
   test("returns null when the db file does not exist", () => {
