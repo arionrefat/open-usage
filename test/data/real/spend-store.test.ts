@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   emptySpendStore,
   openCycleTotal,
@@ -7,6 +10,7 @@ import {
   recordSpendReading,
   recordsBeganMs,
   sumWindow,
+  updateSpendStore,
   type SpendStore,
 } from "../../../src/data/real/spend-store";
 import type { Money } from "../../../src/data/types";
@@ -164,5 +168,47 @@ describe("parseSpendStore", () => {
   test("an unknown version reads as empty rather than throwing", () => {
     expect(parseSpendStore({ version: 99, days: { x: 1 } })).toEqual(emptySpendStore());
     expect(parseSpendStore("nonsense")).toEqual(emptySpendStore());
+  });
+});
+
+describe("updateSpendStore round trip", () => {
+  const roots: string[] = [];
+  afterAll(() => {
+    for (const root of roots) rmSync(root, { recursive: true, force: true });
+  });
+
+  function storePath(): string {
+    const root = mkdtempSync(join(tmpdir(), "open-usage-spend-store-"));
+    roots.push(root);
+    return join(root, "spend-history.json");
+  }
+
+  test("reads back the day tokens it wrote", () => {
+    // Banking days past Claude's 30-day pruning is the whole point of the file;
+    // a write the reader cannot see silently discards every older day.
+    const path = storePath();
+    const day = { "2026-08-01": { "claude-opus-5": tokens({ output: 500 }) } };
+    updateSpendStore(path, (store) => recordDayTokens(store, day, T0));
+
+    const reloaded = updateSpendStore(path, (store) => store);
+
+    expect(reloaded.days["2026-08-01"]?.models["claude-opus-5"]?.output).toBe(500);
+  });
+
+  test("recovers day tokens banked under the older `months` key", () => {
+    const path = storePath();
+    Bun.write(
+      path,
+      JSON.stringify({
+        version: 1,
+        openCycle: null,
+        completedCycles: [],
+        months: { "2026-07-04": { models: { "claude-opus-5": tokens({ output: 900 }) } } },
+      }),
+    );
+
+    const reloaded = updateSpendStore(path, (store) => store);
+
+    expect(reloaded.days["2026-07-04"]?.models["claude-opus-5"]?.output).toBe(900);
   });
 });

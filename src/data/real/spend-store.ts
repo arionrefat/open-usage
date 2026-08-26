@@ -122,8 +122,11 @@ export function parseSpendStore(value: unknown): SpendStore {
   }
 
   const days: Record<string, DayTokens> = {};
-  if (isRecord(value.days)) {
-    for (const [day, raw] of Object.entries(value.days)) {
+  // `months` is what 0.6.0 and earlier wrote under, before the store moved to
+  // day granularity in name as well as in fact. Read it so banked days survive.
+  const rawDays = isRecord(value.days) ? value.days : value.months;
+  if (isRecord(rawDays)) {
+    for (const [day, raw] of Object.entries(rawDays)) {
       if (!isRecord(raw) || !isRecord(raw.models)) continue;
       const models: Record<string, TokenUsage> = {};
       for (const [model, usage] of Object.entries(raw.models)) {
@@ -286,7 +289,7 @@ function serializable(store: SpendStore): Record<string, unknown> {
     version: CURRENT_VERSION,
     openCycle: store.openCycle,
     completedCycles: store.completedCycles,
-    months: store.days,
+    days: store.days,
   };
 }
 
