@@ -66,6 +66,15 @@ export function createPolledSource<T>(config: PolledSourceConfig<T>): PolledSour
   /** Server-dictated silence (a 429's Retry-After). `r` must not override this. */
   let blockedUntilMs = 0;
   let lastAttemptAtMs = Number.NEGATIVE_INFINITY;
+  /**
+   * When the automatic cadence last had an answer. A reading restored from the
+   * persisted cache counts here, so relaunching the app - or opening it while
+   * the daemon keeps that cache warm - does not fire a request the cache
+   * already answers. It deliberately does not count against `minForcedPollMs`,
+   * which exists to stop a held `r` from flooding an API, not to sit out the
+   * first press.
+   */
+  let lastReadingAtMs = config.initial ? config.fetchedAtMs(config.initial) : Number.NEGATIVE_INFINITY;
   let consecutiveFailures = 0;
   let inFlight: Promise<void> | null = null;
 
@@ -136,7 +145,11 @@ export function createPolledSource<T>(config: PolledSourceConfig<T>): PolledSour
       if (inFlight) return inFlight;
 
       const nowMs = now.getTime();
-      const clockMovedBackward = nowMs < lastAttemptAtMs;
+      const clockMovedBackward = nowMs < lastAttemptAtMs || nowMs < lastReadingAtMs;
+      // `lastAttemptAtMs` heals itself on the next attempt, but a seeded reading
+      // never would: a cache stamped ahead of the clock is debris from a clock
+      // change, not a licence to ignore the schedule for the life of the process.
+      if (nowMs < lastReadingAtMs) lastReadingAtMs = Number.NEGATIVE_INFINITY;
       // `r` overrides our own cadence and our own guess at a backoff, but never
       // a server that answered with an explicit Retry-After.
       if (!clockMovedBackward && nowMs < blockedUntilMs) return Promise.resolve();
@@ -144,7 +157,8 @@ export function createPolledSource<T>(config: PolledSourceConfig<T>): PolledSour
         if (!clockMovedBackward && nowMs - lastAttemptAtMs < config.minForcedPollMs) return Promise.resolve();
       } else {
         if (!clockMovedBackward && nowMs < retryNotBeforeMs) return Promise.resolve();
-        if (!clockMovedBackward && nowMs - lastAttemptAtMs < minPollMs()) return Promise.resolve();
+        const cadenceAnchorMs = Math.max(lastAttemptAtMs, lastReadingAtMs);
+        if (!clockMovedBackward && nowMs - cadenceAnchorMs < minPollMs()) return Promise.resolve();
       }
 
       const skip = config.precheck?.();

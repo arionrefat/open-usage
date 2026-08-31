@@ -4,7 +4,7 @@
 
 ## The 30-second version
 
-1. `index.tsx` reads CLI flags and picks a data source: mock (sample data) or real (your local files).
+1. `index.tsx` reads CLI flags and picks a data source: mock (sample data) or real (your local files). A `daemon` first argument goes to `daemon/` instead and never draws.
 2. Both data sources implement one interface, `UsageProvider`, and hand the UI a `UsageSnapshot`.
 3. A pure reducer holds all UI state; `derive.ts` turns state + snapshot into render-ready values.
 4. `app.tsx` owns the only timers (poll loop, idle watchdog); screens and components just draw.
@@ -30,6 +30,7 @@ flowchart LR
 | `bun run preview` | Headless text frame for reviewing the UI without a terminal session. |
 | `bun run shot` | Headless HTML screenshot for reviewing colors and chart geometry. |
 | `bun test` | Runs the suite under the top-level `test/` directory. |
+| `bun src/index.tsx daemon start` | Starts the background poller against your real config. |
 | `bun run typecheck` | Runs `tsc --noEmit`. |
 
 The main UI entry points accept `--mock`, `--real`, `--no-poll`, `--screen`, `--view`, and `--mode`.
@@ -114,6 +115,33 @@ Every reader takes its file path as a parameter, which is why tests can feed fix
 **`mask.ts`**
 Masks credentials for display: 24 chars or shorter become all bullets, longer keeps first and last 4.
 
+### Daemon layer (`src/daemon/`)
+
+Off unless started. It exists so the persisted usage cache can be current before anyone opens the dashboard.
+
+**`cli.ts`**
+Parses `daemon <start|stop|restart|status|logs|run>`, builds the one `DaemonHost` that touches the real world (spawn, signal, liveness, log rotation), and hosts `run` - the foreground loop a supervisor or the spawned child executes.
+`selfCommand()` is how a run re-invokes the app: a compiled binary is its own runtime, which Bun marks by serving the entry from `/$bunfs`, while a source checkout needs Bun plus the entry path.
+Touch when: adding a subcommand or changing how the daemon is launched.
+
+**`lifecycle.ts`**
+`start`, `stop`, `restart`, `status` as pure logic over an injected `DaemonHost`, which is why none of it spawns or sleeps directly and all of it is tested with fakes.
+The rule that shapes it: a state record only counts while the pid it names is alive, so a crashed daemon leaves debris rather than a lie.
+`start` waits for the child to publish its own record, which is what distinguishes "started" from "died on boot".
+
+**`runtime.ts`**
+The loop: refresh every provider, record the outcome, sleep, repeat until aborted.
+Failures are recorded and slept through - a laptop that spends the night offline should find a working daemon in the morning.
+It stands down if the state record comes to name another pid, so two daemons never poll one account.
+
+**`state.ts`**
+`~/.config/open-usage/daemon.json`: pid, interval, last poll, last success, last error, log path.
+Written through a sibling file under the same `withFileLock` the usage cache uses.
+
+The daemon and the dashboard share one cache, so they must not share the work.
+`polled-source.ts` anchors its automatic cadence on the reading it was seeded with, which means opening the app while the daemon runs costs no extra requests.
+That anchor deliberately does not apply to `r`: the manual floor exists to stop a held key from flooding an API, not to sit out the first press.
+
 ### State layer (`src/state/`)
 
 **`app-state.ts`**
@@ -194,4 +222,5 @@ Any change that adds per-tick state to `App` or the reducer reintroduces the lea
 | Show new data from a local file | `real/` reader + `real-provider.ts` + `types.ts` + matching sample in `mock-provider.ts` |
 | Change colors or thresholds | `theme.ts` |
 | Add a screen | `screens/` + `ViewKey` in `app-state.ts` + render branch in `app.tsx` |
+| Add a daemon subcommand | `daemon/cli.ts` (dispatch + help) + `daemon/lifecycle.ts` (behavior) |
 | Change wording of a limit line | `real-provider.ts` (real) and `mock-provider.ts` (sample) |

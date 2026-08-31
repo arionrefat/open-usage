@@ -3,6 +3,7 @@ import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { App } from "./app";
 import { APP_VERSION } from "./config";
+import { runDaemonCommand } from "./daemon/cli";
 import { checkForUpdate } from "./data/real/update-check";
 import { selectUsageProvider } from "./data/real-provider";
 import {
@@ -16,6 +17,14 @@ import { defaultPreferencesPath, readPreferences, updatePreferences } from "./pr
 import { COLORS } from "./theme";
 
 const argv = process.argv.slice(2);
+
+// The daemon subcommands never draw, so they answer before the renderer exists.
+// They come first because `daemon --help` documents the daemon, not the app.
+if (argv[0] === "daemon") {
+  const result = await runDaemonCommand(argv.slice(1));
+  if (result.message) (result.exitCode === 0 ? console.log : console.error)(result.message);
+  process.exit(result.exitCode);
+}
 
 // Answer before the renderer takes over the terminal.
 if (wantsHelp(argv)) {

@@ -12,8 +12,10 @@ import {
 import { dirname } from "node:path";
 import {
   configPath,
+  DEFAULT_DAEMON_INTERVAL_MINUTES,
   DEFAULT_POLL_INTERVAL_MINUTES,
   DEFAULT_WARN_THRESHOLD,
+  isDaemonIntervalMinutes,
   POLL_INTERVAL_OPTIONS,
   WARN_THRESHOLD_OPTIONS,
 } from "./config";
@@ -26,6 +28,8 @@ export interface AppPreferences {
   defaultOverviewMode: OverviewMode;
   pollIntervalMinutes: number;
   warnThreshold: number;
+  /** Cadence `open-usage daemon start` uses when no --interval is given. */
+  daemonIntervalMinutes: number;
 }
 
 export type AppPreferencePatch = Partial<Omit<AppPreferences, "hasCompletedOnboarding">>;
@@ -35,6 +39,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   defaultOverviewMode: "detailed",
   pollIntervalMinutes: DEFAULT_POLL_INTERVAL_MINUTES,
   warnThreshold: DEFAULT_WARN_THRESHOLD,
+  daemonIntervalMinutes: DEFAULT_DAEMON_INTERVAL_MINUTES,
 };
 
 export function defaultPreferencesPath(): string {
@@ -65,6 +70,9 @@ export function readPreferences(path: string): AppPreferences {
         WARN_THRESHOLD_OPTIONS.includes(parsed.warnThreshold as (typeof WARN_THRESHOLD_OPTIONS)[number])
           ? parsed.warnThreshold
           : DEFAULT_PREFERENCES.warnThreshold,
+      daemonIntervalMinutes: isDaemonIntervalMinutes(parsed.daemonIntervalMinutes)
+        ? parsed.daemonIntervalMinutes
+        : DEFAULT_PREFERENCES.daemonIntervalMinutes,
     };
   } catch {
     return DEFAULT_PREFERENCES;

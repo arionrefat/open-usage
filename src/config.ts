@@ -33,3 +33,27 @@ export const WARN_THRESHOLD_OPTIONS = [80, 85, 90] as const;
 export const DEFAULT_POLL_INTERVAL_MINUTES = 1;
 export const DEFAULT_WARN_THRESHOLD = 85;
 export const COLOR_MODE_LABEL = "per-provider brand";
+
+/**
+ * Daemon cadence. The floor matches the tightest interval the TUI offers, and
+ * the ceiling is a day, past which a "background check" is not one.
+ */
+export const DEFAULT_DAEMON_INTERVAL_MINUTES = 5;
+export const DAEMON_MIN_INTERVAL_MINUTES = 1;
+export const DAEMON_MAX_INTERVAL_MINUTES = 24 * 60;
+
+export function isDaemonIntervalMinutes(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= DAEMON_MIN_INTERVAL_MINUTES &&
+    value <= DAEMON_MAX_INTERVAL_MINUTES
+  );
+}
+
+/** Parses a `--interval` value; null means the caller should report the range. */
+export function parseDaemonIntervalMinutes(raw: string | undefined): number | null {
+  if (raw === undefined || raw.trim() === "") return null;
+  const value = Number(raw);
+  return isDaemonIntervalMinutes(value) ? value : null;
+}

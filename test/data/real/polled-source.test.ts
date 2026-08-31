@@ -83,6 +83,81 @@ describe("createPolledSource", () => {
     expect(source.read()?.value).toBe(2);
   });
 
+  test("a cached reading counts against the automatic cadence", async () => {
+    // The persisted cache - kept warm by the daemon, or written by the previous
+    // run seconds ago - already answers what this poll would ask for.
+    const now = new Date(1_000_000);
+    let calls = 0;
+    const source = createPolledSource(
+      config({
+        initial: { value: 1, fetchedAtMs: now.getTime() - 1_000 },
+        fetch: () => Promise.resolve({ value: ++calls, fetchedAtMs: now.getTime() }),
+      }),
+    );
+
+    await source.poll(now);
+    expect(calls).toBe(0);
+
+    await source.poll(new Date(now.getTime() + 60_000));
+    expect(calls).toBe(1);
+  });
+
+  test("a cached reading older than the cadence still polls at once", async () => {
+    const now = new Date(1_000_000);
+    let calls = 0;
+    const source = createPolledSource(
+      config({
+        initial: { value: 1, fetchedAtMs: now.getTime() - 120_000 },
+        fetch: () => Promise.resolve({ value: ++calls, fetchedAtMs: now.getTime() }),
+      }),
+    );
+
+    await source.poll(now);
+
+    expect(calls).toBe(1);
+  });
+
+  test("a cached reading never delays the first manual refresh", async () => {
+    const now = new Date(1_000_000);
+    let calls = 0;
+    const source = createPolledSource(
+      config({
+        initial: { value: 1, fetchedAtMs: now.getTime() },
+        fetch: () => Promise.resolve({ value: ++calls, fetchedAtMs: now.getTime() }),
+      }),
+    );
+
+    await source.poll(now, { force: true });
+
+    expect(calls).toBe(1);
+  });
+
+  test("a cached reading stamped ahead of the clock still honours a Retry-After", async () => {
+    // The clock moved backward after this reading was cached, so it is stamped
+    // in the future. That must not outlive the one tick it takes to notice.
+    const now = new Date(1_000_000);
+    let calls = 0;
+    const source = createPolledSource(
+      config({
+        initial: { value: 1, fetchedAtMs: now.getTime() + 3_600_000 },
+        fetch: () => {
+          calls += 1;
+          return Promise.reject(new Error("429"));
+        },
+        retryDelayMs: () => 3_600_000,
+      }),
+    );
+
+    await source.poll(now);
+    expect(calls).toBe(1);
+
+    for (let tick = 1; tick <= 5; tick++) {
+      await source.poll(new Date(now.getTime() + tick * 1_000));
+    }
+
+    expect(calls).toBe(1);
+  });
+
   test("a second caller joins the request already in flight", async () => {
     const { fetch, harness } = deferredFetch();
     const source = createPolledSource(config({ fetch }));

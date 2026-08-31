@@ -32,25 +32,17 @@ describe("preferences", () => {
 
   test("persists onboarding completion with restrictive permissions", () => {
     const path = preferencesPath();
-    writePreferences(path, {
+    const saved = {
       hasCompletedOnboarding: true,
       defaultOverviewMode: "simple",
       pollIntervalMinutes: 4,
       warnThreshold: 90,
-    });
+      daemonIntervalMinutes: 15,
+    } as const;
+    writePreferences(path, saved);
 
-    expect(readPreferences(path)).toEqual({
-      hasCompletedOnboarding: true,
-      defaultOverviewMode: "simple",
-      pollIntervalMinutes: 4,
-      warnThreshold: 90,
-    });
-    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
-      hasCompletedOnboarding: true,
-      defaultOverviewMode: "simple",
-      pollIntervalMinutes: 4,
-      warnThreshold: 90,
-    });
+    expect(readPreferences(path)).toEqual(saved);
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(saved);
     expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
@@ -72,8 +64,23 @@ describe("preferences", () => {
       defaultOverviewMode: "wide",
       pollIntervalMinutes: 9,
       warnThreshold: 95,
+      daemonIntervalMinutes: 0,
     }));
     expect(readPreferences(path)).toEqual(DEFAULT_PREFERENCES);
+  });
+
+  test("keeps a daemon interval only inside the range the daemon accepts", () => {
+    const path = preferencesPath();
+
+    writeFileSync(path, JSON.stringify({ daemonIntervalMinutes: 30 }));
+    expect(readPreferences(path).daemonIntervalMinutes).toBe(30);
+
+    for (const value of [0, 1441, 2.5, "30"]) {
+      writeFileSync(path, JSON.stringify({ daemonIntervalMinutes: value }));
+      expect(readPreferences(path).daemonIntervalMinutes).toBe(
+        DEFAULT_PREFERENCES.daemonIntervalMinutes,
+      );
+    }
   });
 
   test("merges patches with changes written by another instance", () => {

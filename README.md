@@ -83,6 +83,36 @@ open-usage --help
 
 Every control is also clickable, and the mouse wheel scrolls views taller than the terminal.
 
+### Background daemon
+
+The dashboard only refreshes while it is open.
+If you would rather have current numbers waiting for you, run a daemon: it polls every provider on its own interval and keeps the same cache the dashboard reads, so the app opens on fresh figures instead of fetching them while you watch.
+
+It is off until you start it.
+
+```bash
+open-usage daemon start --interval 5   # minutes; remembered for next time
+open-usage daemon status
+open-usage daemon logs
+open-usage daemon stop
+```
+
+`status` reports the pid, the interval, how long ago the last poll ran, and the last error if one is standing:
+
+```
+running · pid 4821 · every 5m · last poll 42s ago
+log: ~/.config/open-usage/daemon.log
+```
+
+The interval accepts 1 to 1440 minutes and is saved in `preferences.json`, so a later `daemon start` with no flag reuses it.
+Starting a second daemon is refused while one is running; `daemon restart --interval 10` is how you change the cadence.
+
+A daemon does not double your API traffic.
+The dashboard treats a reading the daemon just cached as one of its own, so opening the app while the daemon runs costs no extra requests.
+
+The daemon does not survive a reboot on its own.
+Start it from your login items, or supervise `open-usage daemon run --interval 5` with launchd or systemd - that form stays in the foreground and logs to stdout, which is what those want.
+
 ### Staying current
 
 When a newer version has been published, the header says so:
@@ -142,6 +172,7 @@ OpenCode Go does not publish per-account limits, so its percentages are local es
 
 Settings live in the app, on the `5` screen.
 They persist to `~/.config/open-usage/preferences.json` (or `$XDG_CONFIG_HOME/open-usage/`).
+The same directory holds the cached limits the app opens on (`usage-cache.json`), the spend record (`spend-history.json`), and, while a daemon runs, its record and log (`daemon.json`, `daemon.log`).
 
 | Variable                     | Purpose                                        |
 | ---------------------------- | ---------------------------------------------- |

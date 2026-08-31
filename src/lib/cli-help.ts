@@ -10,6 +10,7 @@ Unified AI plan usage for Claude Code, Codex, and OpenCode Go.
 
 USAGE
   ${APP_NAME} [options]
+  ${APP_NAME} daemon <start|stop|restart|status|logs> [--interval <min>]
 
 OPTIONS
   --view <name>        open a view: overview, claude, codex, go, settings
@@ -21,6 +22,10 @@ OPTIONS
   --mock               use sample data instead of real provider data
   -h, --help           show this help
   -v, --version        show the version
+
+DAEMON
+  Off unless you start it. Refreshes every provider on its own interval so the
+  dashboard opens on current numbers. \`${APP_NAME} daemon --help\` for details.
 
 KEYS
   1-5 views    tab cycle    j/k providers    enter open    r refresh
