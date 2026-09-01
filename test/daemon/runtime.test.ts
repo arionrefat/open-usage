@@ -305,6 +305,30 @@ describe("daemon runtime", () => {
     expect(lines.at(-1)).toContain("standing down: pid 9999");
   });
 
+  test("stands down when its record has been taken away", async () => {
+    const path = statePath();
+    const controller = new AbortController();
+    const { provider, requests } = scriptedProvider(["ok", "ok"]);
+    const lines: string[] = [];
+    // What `stop` leaves behind on Windows, and what a `status` that judged this
+    // daemon dead leaves anywhere: no record, so nothing can retire it but this.
+    rmSync(path, { force: true });
+
+    await runDaemonLoop({
+      provider,
+      statePath: path,
+      intervalMs: 60_000,
+      signal: controller.signal,
+      ownerPid: OWNER_PID,
+      now: () => new Date(0),
+      log: (line) => lines.push(line),
+      sleep: stopAfter(controller, 5),
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(lines.at(-1)).toContain("standing down: the daemon record is gone");
+  });
+
   test("an abort during a poll ends the run without recording it", async () => {
     const path = statePath();
     const controller = new AbortController();

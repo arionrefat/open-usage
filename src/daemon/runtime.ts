@@ -95,11 +95,16 @@ export async function runDaemonLoop(options: DaemonRuntimeOptions): Promise<void
       log(`${timestamp(at)} poll failed: ${message}`);
     }
 
-    // A record naming someone else means a second daemon took over. Standing
-    // down is the only way both do not poll the same account twice a minute.
+    // The record is this run's lease. Naming someone else means a second daemon
+    // took over, and standing down is the only way both do not poll the same
+    // account twice a minute. Being gone means we were retired - by `stop`, or
+    // by a `status` that judged us dead - and a run nobody holds a record of is
+    // one nobody can stop, so it must not outlive the record either way.
     const owner = readDaemonState(statePath)?.pid;
-    if (owner !== undefined && owner !== ownerPid) {
-      log(`${timestamp(now())} standing down: pid ${owner} owns the daemon record`);
+    if (owner !== ownerPid) {
+      const reason =
+        owner === undefined ? "the daemon record is gone" : `pid ${owner} owns the daemon record`;
+      log(`${timestamp(now())} standing down: ${reason}`);
       return;
     }
 

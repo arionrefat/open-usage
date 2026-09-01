@@ -218,6 +218,78 @@ describe("daemon lifecycle", () => {
     expect(host.terminated).toEqual([]);
   });
 
+  /**
+   * A pid recycled within one boot: the record postdates the boot, so the boot
+   * guard passes it and only the stalled heartbeat gives the stranger away.
+   */
+  function stalledHeartbeatHost(): FakeHost {
+    const host = fakeHost({ nowMs: 3_000_000_000, bootedAtMs: () => 0 });
+    const strangerPid = 4321;
+    writeDaemonState(host.statePath, {
+      pid: strangerPid,
+      startedAtMs: host.nowMs - 7_200_000,
+      intervalMinutes: 5,
+      // Four intervals is 20 minutes; this daemon last wrote an hour ago.
+      lastPollAtMs: host.nowMs - 3_600_000,
+      lastSuccessAtMs: host.nowMs - 3_600_000,
+      lastError: null,
+      logPath: host.logPath,
+    });
+    host.livePids.add(strangerPid);
+    return host;
+  }
+
+  test("stop does not signal a live pid whose heartbeat stopped moving", async () => {
+    const host = stalledHeartbeatHost();
+
+    const result = await stopDaemon(host);
+
+    expect(host.terminated).toEqual([]);
+    expect(result.message).toContain("stale record");
+    expect(readDaemonState(host.statePath)).toBeNull();
+  });
+
+  test("status treats a stalled heartbeat as a record nobody is keeping", () => {
+    const host = stalledHeartbeatHost();
+
+    expect(statusDaemon(host).message).toContain("stale record");
+  });
+
+  test("a daemon polling on time keeps its record however long it has run", () => {
+    // A month of uptime, so only the heartbeat can decide this one.
+    const host = fakeHost({ nowMs: 3_000_000_000, bootedAtMs: () => 0 });
+    const pid = 4321;
+    writeDaemonState(host.statePath, {
+      pid,
+      startedAtMs: host.nowMs - 30 * 24 * 3_600_000,
+      intervalMinutes: 5,
+      lastPollAtMs: host.nowMs - 60_000,
+      lastSuccessAtMs: host.nowMs - 60_000,
+      lastError: null,
+      logPath: host.logPath,
+    });
+    host.livePids.add(pid);
+
+    expect(statusDaemon(host).message).toContain(`running · pid ${pid}`);
+  });
+
+  test("a daemon that has not finished its first poll is not yet stale", () => {
+    const host = fakeHost();
+    const pid = 4321;
+    writeDaemonState(host.statePath, {
+      pid,
+      startedAtMs: host.nowMs,
+      intervalMinutes: 5,
+      lastPollAtMs: null,
+      lastSuccessAtMs: null,
+      lastError: null,
+      logPath: host.logPath,
+    });
+    host.livePids.add(pid);
+
+    expect(statusDaemon(host).message).toContain("last poll never");
+  });
+
   test("uptime rounding does not condemn a daemon started at boot", async () => {
     // The inferred boot time can land slightly after a daemon that booted with it.
     const host = fakeHost({ bootedAtMs: () => 1_030_000 });

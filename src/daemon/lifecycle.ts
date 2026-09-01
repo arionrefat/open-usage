@@ -42,6 +42,16 @@ const WAIT_STEP_MS = 100;
  * moments of the boot it belongs to, so the margin costs us nothing.
  */
 const BOOT_TOLERANCE_MS = 60_000;
+/**
+ * How far behind a heartbeat may fall before the record is debris. A live daemon
+ * rewrites `lastPollAtMs` every interval - a failed poll writes it too - so a
+ * record that has not moved in several intervals is one nobody is keeping, and
+ * whoever holds its pid now inherited the number rather than earned it. The
+ * floor keeps a one-minute cadence from making the window so tight that a single
+ * slow poll reads as death.
+ */
+const STALE_HEARTBEAT_INTERVALS = 4;
+const STALE_HEARTBEAT_FLOOR_MS = 15 * 60_000;
 
 function ageText(nowMs: number, atMs: number | null): string {
   if (atMs === null) return "never";
@@ -65,11 +75,20 @@ export function describeDaemonState(state: DaemonState, nowMs: number): string {
 /**
  * A pid is not an identity. Pids are recycled, so a record left behind by a
  * crash can come to name something else entirely - and `stop` would then signal
- * a stranger. Nothing survives a reboot, so a record claiming to predate the
- * last one is debris however alive its pid now looks.
+ * a stranger. Two things catch that. Nothing survives a reboot, so a record
+ * claiming to predate the last one is debris however alive its pid looks; and a
+ * daemon that were really running would still be writing to its record, so a
+ * heartbeat that stopped moving means the pid outlived the daemon that had it.
  */
 function isLiveDaemon(host: DaemonHost, state: DaemonState): boolean {
   if (state.startedAtMs < host.bootedAtMs() - BOOT_TOLERANCE_MS) return false;
+  // Before the first poll lands there is no heartbeat yet, only a start time.
+  const beatAtMs = state.lastPollAtMs ?? state.startedAtMs;
+  const allowedSilenceMs = Math.max(
+    state.intervalMinutes * 60_000 * STALE_HEARTBEAT_INTERVALS,
+    STALE_HEARTBEAT_FLOOR_MS,
+  );
+  if (host.now().getTime() - beatAtMs > allowedSilenceMs) return false;
   return host.isAlive(state.pid);
 }
 
