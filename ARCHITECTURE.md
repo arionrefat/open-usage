@@ -122,11 +122,13 @@ Off unless started. It exists so the persisted usage cache can be current before
 **`cli.ts`**
 Parses `daemon <start|stop|restart|status|logs|run>`, builds the one `DaemonHost` that touches the real world (spawn, signal, liveness, log rotation), and hosts `run` - the foreground loop a supervisor or the spawned child executes.
 `selfCommand()` is how a run re-invokes the app: a compiled binary is its own runtime, which Bun marks by serving the entry from `/$bunfs`, while a source checkout needs Bun plus the entry path.
+A running daemon rotates its own log by copying it aside and truncating in place, because the stdout fd `start` handed it would follow a rename; a stdout that is not that file - a supervisor's pipe, a shell redirect - is left to whoever owns it.
 Touch when: adding a subcommand or changing how the daemon is launched.
 
 **`lifecycle.ts`**
 `start`, `stop`, `restart`, `status` as pure logic over an injected `DaemonHost`, which is why none of it spawns or sleeps directly and all of it is tested with fakes.
 The rule that shapes it: a state record only counts while the pid it names is alive, so a crashed daemon leaves debris rather than a lie.
+A pid is not an identity though - pids are recycled - so a record that claims to predate the last boot is debris too, which keeps `stop` from signalling a stranger.
 `start` waits for the child to publish its own record, which is what distinguishes "started" from "died on boot".
 
 **`runtime.ts`**

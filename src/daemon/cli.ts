@@ -1,5 +1,16 @@
 import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync } from "node:fs";
+import {
+  closeSync,
+  copyFileSync,
+  fstatSync,
+  ftruncateSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+} from "node:fs";
+import { uptime } from "node:os";
 import { dirname } from "node:path";
 import {
   APP_NAME,
@@ -57,13 +68,39 @@ export function selfCommand(main: string = Bun.main, execPath: string = process.
   return isCompiled ? [execPath] : [execPath, main];
 }
 
-/** Keeps the log from growing without bound across months of running. */
-function rotateLog(path: string): void {
+/** Rotates before handing the log to a new daemon, which is safe: nobody holds it. */
+function rotateLogBeforeStart(path: string): void {
   try {
     if (statSync(path).size < LOG_ROTATE_BYTES) return;
     renameSync(path, `${path}.1`);
   } catch {
     // No log yet, or a home we cannot write: neither is worth failing a run over.
+  }
+}
+
+/**
+ * Rotation from inside the daemon, so a run that lasts months stays bounded
+ * rather than only being trimmed the next time someone restarts it. `start`
+ * points the child's stdout at the log, and that fd follows a rename, so the
+ * only rotation available here is to copy the file aside and truncate it in
+ * place - the fd was opened for append, so the next line lands at the new start.
+ *
+ * Anything that is not our own log file is left alone: under launchd or systemd
+ * stdout is a pipe and rotation belongs to the supervisor, and a shell redirect
+ * is the user's own file to manage.
+ *
+ * `fd` is a test seam; production always rotates the stdout it was handed.
+ */
+export function rotateOwnLog(logPath: string, fd: number = process.stdout.fd): void {
+  try {
+    const out = fstatSync(fd);
+    if (!out.isFile() || out.size < LOG_ROTATE_BYTES) return;
+    const onDisk = statSync(logPath);
+    if (out.dev !== onDisk.dev || out.ino !== onDisk.ino) return;
+    copyFileSync(logPath, `${logPath}.1`);
+    ftruncateSync(fd, 0);
+  } catch {
+    // A log we cannot rotate is not a reason to stop polling.
   }
 }
 
@@ -79,6 +116,8 @@ function createHost(): DaemonHost {
     statePath,
     logPath,
     now: () => new Date(),
+    // Uptime is the only portable way to ask when the machine came up.
+    bootedAtMs: () => Date.now() - uptime() * 1000,
     isAlive: (pid) => {
       try {
         // Signal 0 checks for a process we may signal without sending anything.
@@ -97,7 +136,7 @@ function createHost(): DaemonHost {
       }
     },
     spawn: (intervalMinutes) => {
-      rotateLog(logPath);
+      rotateLogBeforeStart(logPath);
       const fd = openLogFd(logPath);
       try {
         const [command, ...prefix] = selfCommand();
@@ -179,6 +218,10 @@ async function runInForeground(intervalMinutes: number): Promise<DaemonCommandRe
       intervalMs: intervalMinutes * 60_000,
       signal: controller.signal,
       ownerPid: process.pid,
+      log: (line) => {
+        rotateOwnLog(logPath);
+        process.stdout.write(`${line}\n`);
+      },
     });
   } finally {
     clearDaemonState(statePath, process.pid);

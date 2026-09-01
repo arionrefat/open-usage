@@ -43,6 +43,8 @@ function fakeHost(overrides: Partial<FakeHost> = {}): FakeHost {
     isChildHealthy: true,
     nowMs: 1_000_000,
     now: () => new Date(host.nowMs),
+    // Booted long enough ago that every record a test writes belongs to it.
+    bootedAtMs: () => 0,
     isAlive: (pid) => host.livePids.has(pid),
     terminate: (pid) => {
       host.terminated.push(pid);
@@ -167,6 +169,63 @@ describe("daemon lifecycle", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain("did not stop");
+  });
+
+  /** A record from a boot that has already ended, whose pid something else now holds. */
+  function recycledPidHost(): { host: FakeHost; strangerPid: number } {
+    const host = fakeHost({ bootedAtMs: () => 900_000 });
+    const strangerPid = 4321;
+    writeDaemonState(host.statePath, {
+      pid: strangerPid,
+      startedAtMs: 100_000,
+      intervalMinutes: 5,
+      lastPollAtMs: null,
+      lastSuccessAtMs: null,
+      lastError: null,
+      logPath: host.logPath,
+    });
+    host.livePids.add(strangerPid);
+    return { host, strangerPid };
+  }
+
+  test("stop leaves a stranger holding a recycled pid unsignalled", async () => {
+    const { host } = recycledPidHost();
+
+    const result = await stopDaemon(host);
+
+    expect(host.terminated).toEqual([]);
+    expect(result.exitCode).toBe(0);
+    expect(result.message).toContain("stale record");
+    expect(readDaemonState(host.statePath)).toBeNull();
+  });
+
+  test("status does not call a stranger's pid a running daemon", () => {
+    const { host } = recycledPidHost();
+
+    const result = statusDaemon(host);
+
+    expect(result.message).toContain("stale record");
+    expect(readDaemonState(host.statePath)).toBeNull();
+  });
+
+  test("start replaces a record left behind by a previous boot", async () => {
+    const { host } = recycledPidHost();
+
+    const result = await startDaemon(host, 5);
+
+    expect(result.exitCode).toBe(0);
+    expect(host.spawned).toHaveLength(1);
+    expect(host.terminated).toEqual([]);
+  });
+
+  test("uptime rounding does not condemn a daemon started at boot", async () => {
+    // The inferred boot time can land slightly after a daemon that booted with it.
+    const host = fakeHost({ bootedAtMs: () => 1_030_000 });
+    await startDaemon(host, 5);
+
+    const result = statusDaemon(host);
+
+    expect(result.message).toContain("running · pid");
   });
 
   test("status reports the cadence, the last poll, and the log", async () => {

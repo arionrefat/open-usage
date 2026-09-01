@@ -20,6 +20,8 @@ export interface DaemonHost {
   statePath: string;
   logPath: string;
   now(): Date;
+  /** When the machine last booted, which bounds how old a live pid can be. */
+  bootedAtMs(): number;
   /** True while a pid names a live process we are allowed to signal. */
   isAlive(pid: number): boolean;
   /** Asks a pid to shut down; a missing process is not an error. */
@@ -34,6 +36,12 @@ export interface DaemonHost {
 const STARTUP_TIMEOUT_MS = 3_000;
 const STOP_TIMEOUT_MS = 5_000;
 const WAIT_STEP_MS = 100;
+/**
+ * Slack for a boot time we can only infer from uptime, which some platforms
+ * round to whole seconds. A daemon in someone's login items starts within
+ * moments of the boot it belongs to, so the margin costs us nothing.
+ */
+const BOOT_TOLERANCE_MS = 60_000;
 
 function ageText(nowMs: number, atMs: number | null): string {
   if (atMs === null) return "never";
@@ -54,11 +62,22 @@ export function describeDaemonState(state: DaemonState, nowMs: number): string {
   return lines.join("\n");
 }
 
-/** The record only counts while the pid it names is alive; anything else is debris. */
+/**
+ * A pid is not an identity. Pids are recycled, so a record left behind by a
+ * crash can come to name something else entirely - and `stop` would then signal
+ * a stranger. Nothing survives a reboot, so a record claiming to predate the
+ * last one is debris however alive its pid now looks.
+ */
+function isLiveDaemon(host: DaemonHost, state: DaemonState): boolean {
+  if (state.startedAtMs < host.bootedAtMs() - BOOT_TOLERANCE_MS) return false;
+  return host.isAlive(state.pid);
+}
+
+/** The record only counts while it names a live daemon; anything else is debris. */
 function readLiveState(host: DaemonHost): DaemonState | null {
   const state = readDaemonState(host.statePath);
   if (!state) return null;
-  if (host.isAlive(state.pid)) return state;
+  if (isLiveDaemon(host, state)) return state;
   clearDaemonState(host.statePath, state.pid);
   return null;
 }
@@ -123,7 +142,7 @@ export async function startDaemon(
 export async function stopDaemon(host: DaemonHost): Promise<DaemonCommandResult> {
   const state = readDaemonState(host.statePath);
   if (!state) return { exitCode: 0, message: "daemon not running" };
-  if (!host.isAlive(state.pid)) {
+  if (!isLiveDaemon(host, state)) {
     clearDaemonState(host.statePath, state.pid);
     return { exitCode: 0, message: `daemon not running · removed a stale record for pid ${state.pid}` };
   }
@@ -144,7 +163,7 @@ export async function stopDaemon(host: DaemonHost): Promise<DaemonCommandResult>
 export function statusDaemon(host: DaemonHost): DaemonCommandResult {
   const state = readDaemonState(host.statePath);
   if (!state) return { exitCode: 0, message: "daemon not running" };
-  if (!host.isAlive(state.pid)) {
+  if (!isLiveDaemon(host, state)) {
     clearDaemonState(host.statePath, state.pid);
     return {
       exitCode: 0,

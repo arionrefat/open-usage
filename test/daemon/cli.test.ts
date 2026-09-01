@@ -1,5 +1,18 @@
-import { describe, expect, test } from "bun:test";
-import { daemonHelpText, runDaemonCommand, selfCommand } from "../../src/daemon/cli";
+import { afterAll, describe, expect, test } from "bun:test";
+import {
+  closeSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { daemonHelpText, rotateOwnLog, runDaemonCommand, selfCommand } from "../../src/daemon/cli";
 import {
   DAEMON_MAX_INTERVAL_MINUTES,
   DAEMON_MIN_INTERVAL_MINUTES,
@@ -58,5 +71,72 @@ describe("runDaemonCommand", () => {
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain('unknown daemon command "frobnicate"');
     expect(result.message).toContain("COMMANDS");
+  });
+});
+
+const logRoots: string[] = [];
+
+afterAll(() => {
+  for (const root of logRoots) rmSync(root, { recursive: true, force: true });
+});
+
+function logFile(): string {
+  const root = mkdtempSync(join(tmpdir(), "open-usage-log-"));
+  logRoots.push(root);
+  return join(root, "daemon.log");
+}
+
+/** Past the 1 MiB threshold that triggers a rotation. */
+const OVER_LIMIT = `${"x".repeat(1024 * 1024 + 1024)}\n`;
+
+describe("rotateOwnLog", () => {
+  test("copies the log aside and truncates it so the inherited fd keeps writing", () => {
+    const path = logFile();
+    writeFileSync(path, OVER_LIMIT);
+    const fd = openSync(path, "a");
+    try {
+      rotateOwnLog(path, fd);
+
+      expect(statSync(path).size).toBe(0);
+      expect(statSync(`${path}.1`).size).toBe(OVER_LIMIT.length);
+
+      // The daemon holds this fd for months: an append must land at the new
+      // start rather than at the offset the truncated bytes used to occupy.
+      writeSync(fd, "after rotation\n");
+      expect(readFileSync(path, "utf8")).toBe("after rotation\n");
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  test("leaves a log that is still small alone", () => {
+    const path = logFile();
+    writeFileSync(path, "one line\n");
+    const fd = openSync(path, "a");
+    try {
+      rotateOwnLog(path, fd);
+
+      expect(readFileSync(path, "utf8")).toBe("one line\n");
+      expect(existsSync(`${path}.1`)).toBe(false);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  test("leaves a file that is not the daemon's own log alone", () => {
+    // `daemon run > mine.txt`, or a supervisor's pipe: not ours to rotate.
+    const path = logFile();
+    const redirected = join(dirname(path), "mine.txt");
+    writeFileSync(path, "");
+    writeFileSync(redirected, OVER_LIMIT);
+    const fd = openSync(redirected, "a");
+    try {
+      rotateOwnLog(path, fd);
+
+      expect(statSync(redirected).size).toBe(OVER_LIMIT.length);
+      expect(existsSync(`${redirected}.1`)).toBe(false);
+    } finally {
+      closeSync(fd);
+    }
   });
 });
