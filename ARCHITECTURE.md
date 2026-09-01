@@ -132,6 +132,7 @@ The rule that shapes it: a state record only counts while the pid it names is al
 **`runtime.ts`**
 The loop: refresh every provider, record the outcome, sleep, repeat until aborted.
 Failures are recorded and slept through - a laptop that spends the night offline should find a working daemon in the morning.
+A resolved `refresh` is not proof that anything reached a server: the provider swallows a source failure so one dead endpoint cannot sink the local read, so the daemon reads the connection statuses back and reports whichever came out `expired`.
 It stands down if the state record comes to name another pid, so two daemons never poll one account.
 
 **`state.ts`**

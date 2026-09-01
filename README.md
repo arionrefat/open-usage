@@ -104,6 +104,14 @@ running · pid 4821 · every 5m · last poll 42s ago
 log: ~/.config/open-usage/daemon.log
 ```
 
+A provider that stops working - an expired credential, a stale cookie - is named rather than counted as a healthy poll, and `last success` stops advancing until it recovers:
+
+```
+running · pid 4821 · every 5m · last poll 42s ago
+last error: cl: claude live limits unavailable (last success 3h ago)
+log: ~/.config/open-usage/daemon.log
+```
+
 The interval accepts 1 to 1440 minutes and is saved in `preferences.json`, so a later `daemon start` with no flag reuses it.
 Starting a second daemon is refused while one is running; `daemon restart --interval 10` is how you change the cadence.
 

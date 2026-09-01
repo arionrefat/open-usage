@@ -33,6 +33,21 @@ function describeFailure(error: unknown): string {
   return typeof error === "string" ? error : "poll failed";
 }
 
+/**
+ * `refresh` swallows a provider failure on purpose: one dead endpoint must not
+ * sink the local read the dashboard still needs, and the dashboard reports it on
+ * that provider's own card instead. A daemon has no card to draw, so it asks the
+ * connections directly - otherwise an expired credential polls into the void and
+ * still logs `poll ok`. `expired` is a provider that is not working; `none` is
+ * one that is not installed, which is nobody's fault and not worth reporting.
+ */
+function standingFailures(provider: UsageProvider): string[] {
+  const connections = provider.initialConnections();
+  return PROVIDER_IDS.filter((id) => connections[id].status === "expired").map(
+    (id) => `${id}: ${connections[id].note}`,
+  );
+}
+
 /** "2026-08-31T19:04:51.404Z poll ok" - one line per event, parseable by eye or by grep. */
 function defaultLog(line: string): void {
   process.stdout.write(`${line}\n`);
@@ -60,12 +75,19 @@ export async function runDaemonLoop(options: DaemonRuntimeOptions): Promise<void
       await provider.refresh({ reason: "interval", providerIds: PROVIDER_IDS, signal });
       if (signal.aborted) break;
       const atMs = at.getTime();
-      updateDaemonState(statePath, {
-        lastPollAtMs: atMs,
-        lastSuccessAtMs: atMs,
-        lastError: null,
-      });
-      log(`${timestamp(at)} poll ok`);
+      const failures = standingFailures(provider);
+      if (failures.length > 0) {
+        const message = failures.join(" · ");
+        updateDaemonState(statePath, { lastPollAtMs: atMs, lastError: message });
+        log(`${timestamp(at)} poll failed: ${message}`);
+      } else {
+        updateDaemonState(statePath, {
+          lastPollAtMs: atMs,
+          lastSuccessAtMs: atMs,
+          lastError: null,
+        });
+        log(`${timestamp(at)} poll ok`);
+      }
     } catch (error) {
       if (signal.aborted) break;
       const message = describeFailure(error);
