@@ -120,6 +120,9 @@ The dashboard treats a reading the daemon just cached as one of its own, so open
 
 The log is kept to a megabyte while the daemon runs, with the previous stretch left beside it as `daemon.log.1`.
 
+On Windows `daemon stop` terminates the daemon rather than asking it to finish, because Windows does not deliver the signal the other platforms use.
+Nothing is lost by that: every file the daemon writes is written through a sibling and renamed into place, so an interrupted poll leaves the previous record intact.
+
 The daemon does not survive a reboot on its own.
 Start it from your login items, or supervise `open-usage daemon run --interval 5` with launchd or systemd - that form stays in the foreground and logs to stdout, which is what those want.
 

@@ -144,8 +144,9 @@ function createHost(): DaemonHost {
           command!,
           [...prefix, "daemon", "run", "--interval", String(intervalMinutes)],
           // detached puts the daemon in its own session, so closing the terminal
-          // that started it does not take it down with a SIGHUP.
-          { detached: true, stdio: ["ignore", fd, fd] },
+          // that started it does not take it down with a SIGHUP. windowsHide
+          // keeps the same launch from flashing a console window on Windows.
+          { detached: true, stdio: ["ignore", fd, fd], windowsHide: true },
         );
         child.unref();
         if (child.pid === undefined) throw new Error("could not spawn the daemon process");
@@ -198,6 +199,9 @@ async function runInForeground(intervalMinutes: number): Promise<DaemonCommandRe
   const provider = selectUsageProvider("real");
   const controller = new AbortController();
   const stop = () => controller.abort();
+  // Windows delivers none of these to a detached process, so `stop` there is an
+  // abrupt termination. Nothing is lost by that: every write goes through a
+  // sibling file, and `stop` clears the record itself once the pid is gone.
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
   process.on("SIGHUP", stop);
