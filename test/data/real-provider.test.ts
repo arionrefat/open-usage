@@ -7,9 +7,10 @@ import { COLORS } from "../../src/theme";
 import { DAY_MS, HOUR_MS } from "../../src/data/real/aggregate";
 import { createCodexLimitsSource, stubCodexLimitsSource } from "../../src/data/real/codex-limits";
 import { createGoLimitsSource, dormantGoLimitsSource } from "../../src/data/real/go-limits-source";
+import { dormantGoHistorySource, type GoHistorySource } from "../../src/data/real/go-history-source";
 import { createClaudeLimitsSource, dormantClaudeLimitsSource } from "../../src/data/real/claude-usage";
 import { dormantClaudeAuthSource } from "../../src/data/real/claude-auth";
-import { PROVIDER_IDS } from "../../src/data/types";
+import { PROVIDER_IDS, type UsageSnapshot } from "../../src/data/types";
 import {
   createRealUsageProvider,
   defaultRealProviderPaths,
@@ -29,6 +30,7 @@ const MISSING_PATHS: RealProviderPaths = {
   claudeSettings: "/nonexistent/settings.json",
   usageSnapshot: "/nonexistent/usage-snapshot.json",
   usageCache: "/nonexistent/usage-cache.json",
+  goHistoryCache: "/nonexistent/go-history.json",
   claudeConfig: "/nonexistent/.claude.json",
   spendHistory: "/nonexistent/spend-history.json",
   pricingOverrides: "/nonexistent/pricing.json",
@@ -168,6 +170,7 @@ describe("defaultRealProviderPaths", () => {
       claudeHistory: "/sandbox/home/.claude/history.jsonl",
       usageSnapshot: "/sandbox/home/.claude/usage-snapshot.json",
       usageCache: "/sandbox/home/.config/open-usage/usage-cache.json",
+      goHistoryCache: "/sandbox/home/.config/open-usage/go-history.json",
       codexHome: "/sandbox/home/.codex",
       claudeExecutable: null,
       codexExecutable: null,
@@ -799,5 +802,133 @@ describe("selectUsageProvider", () => {
     const paths = { ...MISSING_PATHS, codexHome };
     expect(hasRealSources(paths)).toBe(true);
     expect(selectUsageProvider("real", paths)).not.toBe(mockUsageProvider);
+  });
+});
+
+describe("a refresh publishes the limits before the history", () => {
+  function codexReading(now: Date) {
+    return {
+      session: null,
+      weekly: { usedPercent: 38, resetsAtMs: now.getTime() + DAY_MS, windowMinutes: 10080 },
+      planType: "plus",
+      resetCredits: 0,
+      resetCreditsExpireAtMs: null,
+      isSpendControlReached: false,
+      additionalRateLimits: [],
+      credits: null,
+      usage: null,
+      fetchedAtMs: now.getTime(),
+    };
+  }
+
+  test("hands over a snapshot once the limits land while the history is still walking", async () => {
+    let releaseHistory: () => void = () => {};
+    const walking = new Promise<void>((resolve) => {
+      releaseHistory = resolve;
+    });
+    const goHistory: GoHistorySource = {
+      read: () => null,
+      billing: () => null,
+      activity: () => null,
+      poll: () => walking,
+    };
+    const provider = createRealUsageProvider({
+      paths: { ...MISSING_PATHS, codexExecutable: "/usr/local/bin/codex" },
+      ...OFFLINE,
+      codexLimits: createCodexLimitsSource((now) => Promise.resolve(codexReading(now))),
+      goHistory,
+    });
+    const early: UsageSnapshot[] = [];
+
+    const refresh = provider.refresh({
+      reason: "startup",
+      providerIds: ["cx", "go"],
+      onSnapshot: (snapshot) => early.push(snapshot),
+    });
+    await Bun.sleep(20);
+
+    expect(early).toHaveLength(1);
+    expect(early[0]?.providers.cx.limits[0]?.percent).toBe(38);
+    releaseHistory();
+    const final = await refresh;
+    expect(final.providers.cx.limits[0]?.percent).toBe(38);
+    expect(early).toHaveLength(1);
+  });
+
+  test("does not hand over an intermediate snapshot when nothing slow is in flight", async () => {
+    const provider = createRealUsageProvider({
+      paths: MISSING_PATHS,
+      ...OFFLINE,
+      goHistory: dormantGoHistorySource,
+    });
+    const early: UsageSnapshot[] = [];
+
+    await provider.refresh({
+      reason: "startup",
+      providerIds: ["cl", "cx", "go"],
+      onSnapshot: (snapshot) => early.push(snapshot),
+    });
+
+    expect(early).toHaveLength(0);
+  });
+});
+
+describe("a reading the daemon persisted", () => {
+  test("is adopted by a running dashboard on its next tick instead of being fetched again", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "open-usage-shared-cache-"));
+    const cachePath = join(dir, "usage-cache.json");
+    let fetches = 0;
+    const codexLimits = createCodexLimitsSource(
+      (now) => {
+        fetches += 1;
+        return Promise.resolve({
+          session: null,
+          weekly: { usedPercent: 38, resetsAtMs: now.getTime() + DAY_MS, windowMinutes: 10080 },
+          planType: "plus",
+          resetCredits: 0,
+          resetCreditsExpireAtMs: null,
+          isSpendControlReached: false,
+          additionalRateLimits: [],
+          credits: null,
+          usage: null,
+          fetchedAtMs: now.getTime(),
+        });
+      },
+      { readPersisted: () => readUsageCache(cachePath).codex },
+    );
+    const provider = createRealUsageProvider({
+      paths: { ...MISSING_PATHS, usageCache: cachePath, codexExecutable: "/usr/local/bin/codex" },
+      ...OFFLINE,
+      codexLimits,
+    });
+
+    try {
+      expect(provider.initialConnections().cx.status).toBe("none");
+      // The daemon polls and writes the shared cache while the dashboard is open.
+      writeUsageCache(cachePath, {
+        claude: null,
+        codex: {
+          session: null,
+          weekly: { usedPercent: 71, resetsAtMs: Date.now() + DAY_MS, windowMinutes: 10080 },
+          planType: "plus",
+          resetCredits: 0,
+          resetCreditsExpireAtMs: null,
+          isSpendControlReached: false,
+          additionalRateLimits: [],
+          credits: null,
+          usage: null,
+          fetchedAtMs: Date.now() - 1_000,
+        },
+        go: null,
+      });
+
+      const snapshot = await provider.refresh({ reason: "interval", providerIds: ["cx"] });
+
+      expect(fetches).toBe(0);
+      expect(snapshot.providers.cx.limits[0]?.percent).toBe(71);
+      expect(provider.initialConnections().cx.status).toBe("active");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

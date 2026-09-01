@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { isRecord } from "./json";
+import { matchingLines } from "./jsonl";
 
 export interface HistoryEvent {
   epochMs: number;
@@ -46,7 +47,7 @@ export function historyStatsFromLines(lines: Iterable<string>, sinceMs: number):
 export function readHistoryStats(path: string, sinceMs: number): HistoryStats {
   if (!existsSync(path)) return EMPTY_STATS;
   try {
-    return historyStatsFromLines(readFileSync(path, "utf8").split("\n"), sinceMs);
+    return historyStatsFromLines(matchingLines(path, []), sinceMs);
   } catch {
     return EMPTY_STATS;
   }

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { configPath } from "../config";
@@ -30,6 +30,7 @@ import { createGoHistorySource, type GoHistorySource } from "./real/go-history-s
 import { readOpencodeAuth, type OpencodeAuth } from "./real/opencode-auth";
 import { readOpencodeUsage } from "./real/opencode-db";
 import { readGoSpend } from "./real/opencode-go-spend";
+import { readGoHistoryCache, writeGoHistoryCache } from "./real/go-history-cache";
 import { readUsageCache, updateUsageCache, type UsageCache } from "./real/usage-cache";
 import {
   SNAPSHOT_FRESH_MS,
@@ -59,6 +60,8 @@ export interface RealProviderPaths {
   claudeSettings: string;
   usageSnapshot: string;
   usageCache: string;
+  /** The Go month history and usage table, apart from the limits because of its size. */
+  goHistoryCache: string;
   /** `~/.claude.json` - the only local source of real credit spend. */
   claudeConfig: string;
   /** Our own append-only record of spend and per-day tokens. */
@@ -102,6 +105,7 @@ export function defaultRealProviderPaths(
     claudeSettings: join(home, ".claude", "settings.json"),
     usageSnapshot: join(home, ".claude", "usage-snapshot.json"),
     usageCache: configPath("usage-cache.json", env, home),
+    goHistoryCache: configPath("go-history.json", env, home),
     claudeConfig: join(home, ".claude.json"),
     spendHistory: configPath("spend-history.json", env, home),
     pricingOverrides: configPath("pricing.json", env, home),
@@ -166,6 +170,26 @@ function hasCachedProviderValues(path: string): boolean {
 }
 
 const STATS_WINDOW_DAYS = 30;
+
+/**
+ * Re-reads a file only when its size or mtime has moved. The shared caches are
+ * re-read by every source on every tick, and parsing the same bytes four times
+ * a minute is not the point of a cache.
+ */
+function memoizedByStamp<T>(path: string, read: (path: string) => T): () => T {
+  let memo: { stamp: string; value: T } | null = null;
+  return () => {
+    let stamp: string;
+    try {
+      const stats = statSync(path);
+      stamp = `${stats.mtimeMs}:${stats.size}`;
+    } catch {
+      stamp = "missing";
+    }
+    if (memo?.stamp !== stamp) memo = { stamp, value: read(path) };
+    return memo.value;
+  };
+}
 
 function buildMeta(): Record<ProviderId, ProviderMeta> {
   return {
@@ -515,17 +539,25 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
   const persist = (key: keyof UsageCache, value: UsageCache[typeof key]) => {
     updateUsageCache(paths.usageCache, key, value);
   };
+  // Re-read on every tick: the daemon and the dashboard share these files, and
+  // a reading one of them has just made is one the other need not make again.
+  const readPersistedCache = memoizedByStamp(paths.usageCache, readUsageCache);
+  const persisted = <K extends keyof UsageCache>(key: K) => () => readPersistedCache()[key];
+  const readPersistedHistory = memoizedByStamp(paths.goHistoryCache, readGoHistoryCache);
   const codexLimits = options.codexLimits ?? createCodexLimitsSource(undefined, {
     initial: cached.codex,
     onUpdate: (value) => persist("codex", value),
+    readPersisted: persisted("codex"),
   });
   const goLimits = options.goLimits ?? createGoLimitsSource(paths.configFile, env, undefined, {
     initial: cached.go,
     onUpdate: (value) => persist("go", value),
+    readPersisted: persisted("go"),
   });
   const claudeLimits = options.claudeLimits ?? createClaudeLimitsSource(undefined, {
     initial: cached.claude,
     onUpdate: (value) => persist("claude", value),
+    readPersisted: persisted("claude"),
     // Claude Code writes the statusline snapshot itself, at no cost to the
     // account. While it is fresh it already carries the session and weekly
     // windows, so the CLI only needs to keep the Fable window current.
@@ -536,9 +568,16 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
     },
   });
   const claudeAuth = options.claudeAuth ?? createClaudeAuthSource();
-  // Shares the limits source's cookie: history is dormant without one.
+  // Shares the limits source's cookie and workspace: history is dormant
+  // without the one, and need not rediscover the other.
   const goHistory =
-    options.goHistory ?? createGoHistorySource(() => readCookie(paths.configFile, env));
+    options.goHistory ??
+    createGoHistorySource(() => readCookie(paths.configFile, env), {
+      initial: readGoHistoryCache(paths.goHistoryCache),
+      onUpdate: (value) => writeGoHistoryCache(paths.goHistoryCache, value),
+      readPersisted: readPersistedHistory,
+      knownWorkspaceId: () => goLimits.workspaceId?.(),
+    });
   const trend = createWeeklyTrend();
   const meta = buildMeta();
   let built = buildSnapshot(paths, meta, claudeLimits, codexLimits, goLimits, goHistory, trend, claudeAuth);
@@ -571,22 +610,41 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
       const at = new Date();
       const providerIds = new Set(request.providerIds);
       const pollOptions = { signal, force: request.reason === "manual" };
-      await Promise.all(
+      const settle = (poll: Promise<void> | null) => poll?.catch(() => undefined);
+      const limits = Promise.all(
         [
           providerIds.has("cl") ? claudeLimits.poll(at, pollOptions) : null,
           providerIds.has("cl") ? claudeAuth.poll(at, pollOptions) : null,
           providerIds.has("go") ? goLimits.poll(at, pollOptions) : null,
-          providerIds.has("go") ? goHistory.poll(at, pollOptions) : null,
           providerIds.has("cx") ? codexLimits.poll(at, pollOptions) : null,
-        ].map((poll) => poll?.catch(() => undefined)),
+        ].map(settle),
       );
-      if (signal?.aborted) {
-        throw signal.reason instanceof Error
-          ? signal.reason
-          : new DOMException("Refresh aborted", "AbortError");
-      }
-      built = buildSnapshot(paths, meta, claudeLimits, codexLimits, goLimits, goHistory, trend, claudeAuth);
-      return built.snapshot;
+      // The month history is a walk of thirty-odd requests, and nothing on the
+      // overview waits on it. It runs alongside the limits, and if it is still
+      // out when they land the snapshot goes up without it and again with it.
+      let isHistorySettled = false;
+      const history = Promise.resolve(
+        settle(providerIds.has("go") ? goHistory.poll(at, pollOptions) : null),
+      ).finally(() => {
+        isHistorySettled = true;
+      });
+      const rebuild = () => {
+        if (signal?.aborted) {
+          throw signal.reason instanceof Error
+            ? signal.reason
+            : new DOMException("Refresh aborted", "AbortError");
+        }
+        built = buildSnapshot(paths, meta, claudeLimits, codexLimits, goLimits, goHistory, trend, claudeAuth);
+        return built.snapshot;
+      };
+      await limits;
+      // A history that had nothing to do settled in a microtask; a real walk
+      // is still out. One turn of the event loop tells the two apart, so a
+      // refresh with nothing slow in flight never pays for a second build.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (!isHistorySettled && request.onSnapshot) request.onSnapshot(rebuild());
+      await history;
+      return rebuild();
     },
   };
 }

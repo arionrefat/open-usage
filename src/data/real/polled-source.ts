@@ -37,7 +37,7 @@ export interface PolledSourceConfig<T> extends PolledSourceSchedule {
   describeFailure(error: unknown): string;
   staleNote?(ageMs: number): string;
   /** Runs before each request; a returned value skips it. */
-  precheck?(): PolledSourceSkip | null;
+  precheck?(now: Date): PolledSourceSkip | null;
   /** Lets a source drop derived state - a cached workspace id - after a failure. */
   onFailure?(error: unknown): void;
   /**
@@ -47,6 +47,13 @@ export interface PolledSourceConfig<T> extends PolledSourceSchedule {
   retryDelayMs?(error: unknown): number | null;
   initial?: T | null;
   onUpdate?(value: T): void;
+  /**
+   * A reading persisted by another process - the daemon, or a second dashboard
+   * - re-read on every tick. One newer than what this source holds is adopted
+   * as its own, so two processes sharing a cache never both ask the API for
+   * what one of them has already fetched.
+   */
+  readPersisted?(): T | null;
 }
 
 export interface PolledSource<T> {
@@ -85,6 +92,31 @@ export function createPolledSource<T>(config: PolledSourceConfig<T>): PolledSour
   function backoffMsFor(failures: number): number {
     const widened = config.backoffMs * 2 ** (failures - 1);
     return Math.min(config.maxBackoffMs, Number.isFinite(widened) ? widened : config.maxBackoffMs);
+  }
+
+  /**
+   * Takes over a reading another process persisted since the last tick. It
+   * counts as a reading of our own for the automatic cadence, and as a live
+   * one for status: the other process fetched it from the provider moments
+   * ago, and calling that "cached" would show a working daemon as a stale
+   * dashboard. Like the seeded reading, it does not count against the manual
+   * floor - that floor exists to stop a held key, not to sit out a press.
+   */
+  function adoptPersisted(nowMs: number): void {
+    const persisted = config.readPersisted?.() ?? null;
+    if (!persisted) return;
+    const persistedAtMs = config.fetchedAtMs(persisted);
+    // Stamped ahead of the clock is debris from a clock change, not news.
+    if (persistedAtMs > nowMs) return;
+    if (cached && persistedAtMs <= config.fetchedAtMs(cached)) return;
+    cached = persisted;
+    lastReadingAtMs = persistedAtMs;
+    note = null;
+    status = "active";
+    // Someone just reached the provider, so whatever we were backing off from
+    // has cleared. A server's own Retry-After is not ours to lift, though.
+    consecutiveFailures = 0;
+    retryNotBeforeMs = 0;
   }
 
   function isStale(now: Date = new Date()): boolean {
@@ -145,6 +177,7 @@ export function createPolledSource<T>(config: PolledSourceConfig<T>): PolledSour
       if (inFlight) return inFlight;
 
       const nowMs = now.getTime();
+      adoptPersisted(nowMs);
       const clockMovedBackward = nowMs < lastAttemptAtMs || nowMs < lastReadingAtMs;
       // `lastAttemptAtMs` heals itself on the next attempt, but a seeded reading
       // never would: a cache stamped ahead of the clock is debris from a clock
@@ -161,7 +194,7 @@ export function createPolledSource<T>(config: PolledSourceConfig<T>): PolledSour
         if (!clockMovedBackward && nowMs - cadenceAnchorMs < minPollMs()) return Promise.resolve();
       }
 
-      const skip = config.precheck?.();
+      const skip = config.precheck?.(now);
       if (skip) {
         note = skip.note;
         status = skip.note ? "expired" : "none";

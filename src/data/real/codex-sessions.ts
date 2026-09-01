@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DAY_MS, addToBucket, type HourBuckets } from "./aggregate";
 import { isRecord } from "./json";
+import { matchingLines } from "./jsonl";
 import { isMissingFile } from "./fs-errors";
 
 /** Token usage summed from rollout files under codex sessions and archives. */
@@ -158,7 +159,11 @@ export function readCodexSessions(codexHome: string, now: Date = new Date()): Co
         cached !== undefined && cached.size === stats.size && cached.mtimeMs === stats.mtimeMs;
       let entry = cacheMatchesFile ? cached : null;
       if (!entry) {
-        const parsed = parseRolloutLines(readFileSync(path, "utf8").split("\n"));
+        // Scanned for its two record types rather than read whole: a rollout
+        // is mostly tool output and a live one can pass 60 MB.
+        const parsed = parseRolloutLines(
+          matchingLines(path, [TOKEN_COUNT_MARKER, TURN_CONTEXT_MARKER]),
+        );
         entry = { size: stats.size, mtimeMs: stats.mtimeMs, ...parsed };
         fileCache.set(path, entry);
       }

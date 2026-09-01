@@ -419,13 +419,49 @@ describe("fetchGoUsageRows", () => {
     const requested: number[] = [];
     const fetchSpy = mock((requestedPage) => {
       requested.push(requestedPage);
-      // Page 2 is older than the cutoff, so the walk must end there.
-      const atMs = requestedPage < 2 ? now - 60_000 : now - 10 * 24 * 60 * 60 * 1000;
+      // Page 6 is older than the cutoff, so the walk must end there.
+      const atMs = requestedPage < 6 ? now - 60_000 : now - 10 * 24 * 60 * 60 * 1000;
       return new Response(page(atMs));
     });
     try {
-      await fetchGoUsageRows("auth=secret", WORKSPACE, { sinceMs: now - 24 * 60 * 60 * 1000 });
-      expect(requested).toEqual([0, 1, 2]);
+      const rows = await fetchGoUsageRows("auth=secret", WORKSPACE, {
+        sinceMs: now - 24 * 60 * 60 * 1000,
+      });
+      // The first page goes alone, then four at a time: the batch holding page
+      // 6 is the last, and nothing beyond it is asked for.
+      expect(requested).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+      expect(rows).toHaveLength(6 * 50);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("a light month costs one request", async () => {
+    const now = Date.parse("2026-08-20T00:00:00Z");
+    const requested: number[] = [];
+    const fetchSpy = mock((requestedPage) => {
+      requested.push(requestedPage);
+      return new Response(page(now - 60_000, 12));
+    });
+    try {
+      const rows = await fetchGoUsageRows("auth=secret", WORKSPACE, { sinceMs: 0 });
+      expect(requested).toEqual([0]);
+      expect(rows).toHaveLength(12);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("a failed page inside a batch keeps the pages before it and drops the rest", async () => {
+    const now = Date.parse("2026-08-20T00:00:00Z");
+    const fetchSpy = mock((requestedPage) =>
+      requestedPage === 2 ? new Response("", { status: 500 }) : new Response(page(now - 60_000)),
+    );
+    try {
+      // Pages 3 and 4 came back fine, but the rows between them and page 1
+      // were never seen, so keeping them would leave a hole in the series.
+      const rows = await fetchGoUsageRows("auth=secret", WORKSPACE, { sinceMs: 0, maxPages: 5 });
+      expect(rows).toHaveLength(2 * 50);
     } finally {
       fetchSpy.mockRestore();
     }

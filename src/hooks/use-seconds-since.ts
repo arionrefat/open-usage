@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 
 const SECOND_MS = 1000;
+export const FINE_STEP_SECONDS = 5;
+const FINE_STEP_MS = FINE_STEP_SECONDS * SECOND_MS;
 const COARSE_AFTER_SECONDS = 60;
 const COARSE_STEP_MS = 10 * SECOND_MS;
 
@@ -23,9 +25,13 @@ function elapsedSeconds(timestamp: number, scheduler: SecondsSinceScheduler): nu
 }
 
 /**
- * Seconds elapsed since `timestamp`, ticking every second for the first minute
- * and every 10s after. Keep consumers small: Bun leaks native memory on every
- * React commit (oven-sh/bun#27514), so idle commits must stay rare and cheap.
+ * Seconds elapsed since `timestamp`, ticking every five seconds for the first
+ * minute and every ten after. Keep consumers small: Bun leaks native memory on
+ * every React commit (oven-sh/bun#27514), so idle commits must stay rare and
+ * cheap. Five rather than one because with polling on the timestamp moves
+ * every minute, which makes the fine cadence the permanent one - and a commit
+ * a second for the life of the session cost about a percent of a core for
+ * a label nobody reads to the second.
  */
 export function useSecondsSince(
   timestamp: number,
@@ -38,7 +44,7 @@ export function useSecondsSince(
     let timer: unknown;
     const schedule = () => {
       const delay = elapsedSeconds(timestamp, scheduler) < COARSE_AFTER_SECONDS
-        ? SECOND_MS
+        ? FINE_STEP_MS
         : COARSE_STEP_MS;
       timer = scheduler.setTimeout(() => {
         setSeconds(elapsedSeconds(timestamp, scheduler));

@@ -23,6 +23,7 @@ export interface CodexLimitsSource {
 export interface CodexLimitsSourceOptions {
   initial?: CodexAccountLimits | null;
   onUpdate?: (value: CodexAccountLimits) => void;
+  readPersisted?: () => CodexAccountLimits | null;
 }
 
 const MIN_POLL_MS = 60_000;
@@ -71,5 +72,6 @@ export function createCodexLimitsSource(
     maxBackoffMs: MAX_BACKOFF_MS,
     initial: sourceOptions.initial ?? null,
     onUpdate: sourceOptions.onUpdate,
+    readPersisted: sourceOptions.readPersisted,
   });
 }

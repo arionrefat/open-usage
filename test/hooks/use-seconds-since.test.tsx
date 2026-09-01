@@ -50,7 +50,7 @@ function Clock({ timestamp, scheduler }: { timestamp: number; scheduler: Seconds
 }
 
 describe("useSecondsSince", () => {
-  test("ticks every second initially, then coarsens to ten seconds", async () => {
+  test("ticks every five seconds initially, then coarsens to ten", async () => {
     const scheduler = new ControlledScheduler(100_000);
     const setup = await testRender(
       <Clock timestamp={100_000} scheduler={scheduler} />,
@@ -59,13 +59,13 @@ describe("useSecondsSince", () => {
     try {
       await setup.flush();
       expect(setup.captureCharFrame()).toContain("0");
-      expect(scheduler.delays).toEqual([1_000]);
+      expect(scheduler.delays).toEqual([5_000]);
 
-      scheduler.nowMs = 101_000;
+      scheduler.nowMs = 105_000;
       act(() => scheduler.runNext());
       await setup.flush();
-      expect(setup.captureCharFrame()).toContain("1");
-      expect(scheduler.delays.at(-1)).toBe(1_000);
+      expect(setup.captureCharFrame()).toContain("5");
+      expect(scheduler.delays.at(-1)).toBe(5_000);
 
       scheduler.nowMs = 161_000;
       act(() => scheduler.runNext());

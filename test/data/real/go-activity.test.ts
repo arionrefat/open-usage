@@ -5,6 +5,7 @@ import type { GoUsageRow } from "../../../src/data/real/opencode-usage";
 function row(partial: Partial<GoUsageRow> = {}): GoUsageRow {
   return {
     sessionId: "ses_1",
+    id: null,
     keyId: null,
     atMs: new Date(2026, 7, 20, 10, 0).getTime(),
     model: "deepseek-v4-flash",

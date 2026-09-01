@@ -42,6 +42,8 @@ export interface GoCostReport {
 }
 
 export interface GoUsageRow {
+  /** The server's own row id, which is what lets a re-read of the table merge with the rows already held. */
+  id: string | null;
   sessionId: string | null;
   keyId: string | null;
   atMs: number | null;
@@ -160,6 +162,7 @@ function usageRowFromRecord(value: unknown): GoUsageRow | null {
   const enrichment = isRecord(value.enrichment) ? value.enrichment : {};
   const keyId = value.keyID ?? value.keyId;
   return {
+    id: typeof value.id === "string" ? value.id : null,
     sessionId: typeof value.sessionID === "string" ? value.sessionID : null,
     keyId: typeof keyId === "string" ? keyId : null,
     atMs: timestampMs(value.timeCreated),
@@ -182,6 +185,7 @@ function usageRowFromBlock(block: string): GoUsageRow | null {
   const outputTokens = numberField(block, "outputTokens");
   if (model === null || inputTokens === null || outputTokens === null) return null;
   return {
+    id: stringField(block, "id"),
     sessionId: stringField(block, "sessionID"),
     keyId: stringField(block, "keyID") ?? stringField(block, "keyId"),
     atMs: timestampField(block, "timeCreated"),

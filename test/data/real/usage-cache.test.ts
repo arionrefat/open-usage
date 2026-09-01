@@ -170,3 +170,13 @@ describe("usage cache", () => {
     });
   });
 });
+
+describe("go workspace", () => {
+  test("round-trips the workspace a limits reading came from", () => {
+    tempCache((path) => {
+      const withWorkspace: UsageCache = { ...cache, go: { ...cache.go!, workspaceId: "wrk_1" } };
+      writeUsageCache(path, withWorkspace);
+      expect(readUsageCache(path)).toEqual(withWorkspace);
+    });
+  });
+});

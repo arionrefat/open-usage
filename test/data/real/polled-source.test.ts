@@ -494,3 +494,99 @@ describe("createPolledSource", () => {
     expect(source.note()).toBe("unavailable");
   });
 });
+
+describe("readings persisted by another process", () => {
+  test("adopts a newer persisted reading and counts it against the cadence", async () => {
+    const now = 1_000_000;
+    let persisted: Reading | null = null;
+    let calls = 0;
+    const source = createPolledSource(
+      config({
+        initial: { value: 1, fetchedAtMs: now - 120_000 },
+        readPersisted: () => persisted,
+        fetch: () => Promise.resolve({ value: 10 + ++calls, fetchedAtMs: now }),
+      }),
+    );
+
+    // The daemon polled a second ago, so there is nothing to ask the API for.
+    persisted = { value: 7, fetchedAtMs: now - 1_000 };
+    await source.poll(new Date(now));
+    expect(calls).toBe(0);
+    expect(source.read()?.value).toBe(7);
+    expect(source.status()).toBe("active");
+
+    // The cadence is anchored on the adopted reading, not on the stale seed.
+    await source.poll(new Date(now + 30_000));
+    expect(calls).toBe(0);
+    await source.poll(new Date(now + 60_000));
+    expect(calls).toBe(1);
+  });
+
+  test("ignores a persisted reading no newer than its own", async () => {
+    const now = 1_000_000;
+    const source = createPolledSource(
+      config({
+        initial: { value: 1, fetchedAtMs: now - 1_000 },
+        readPersisted: () => ({ value: 9, fetchedAtMs: now - 5_000 }),
+      }),
+    );
+
+    await source.poll(new Date(now));
+
+    expect(source.read()?.value).toBe(1);
+    expect(source.status()).toBe("cached");
+  });
+
+  test("ignores a persisted reading stamped ahead of the clock", async () => {
+    const now = 1_000_000;
+    let calls = 0;
+    const source = createPolledSource(
+      config({
+        readPersisted: () => ({ value: 9, fetchedAtMs: now + 3_600_000 }),
+        fetch: () => Promise.resolve({ value: ++calls, fetchedAtMs: now }),
+      }),
+    );
+
+    await source.poll(new Date(now));
+
+    expect(calls).toBe(1);
+    expect(source.read()?.value).toBe(1);
+  });
+
+  test("a manual refresh still asks the provider despite a fresh persisted reading", async () => {
+    const now = 1_000_000;
+    let calls = 0;
+    const source = createPolledSource(
+      config({
+        readPersisted: () => ({ value: 9, fetchedAtMs: now - 1_000 }),
+        fetch: () => Promise.resolve({ value: ++calls, fetchedAtMs: now }),
+      }),
+    );
+
+    await source.poll(new Date(now), { force: true });
+
+    expect(calls).toBe(1);
+  });
+
+  test("an adopted reading clears a standing failure", async () => {
+    const now = 1_000_000;
+    let persisted: Reading | null = null;
+    const source = createPolledSource(
+      config({
+        readPersisted: () => persisted,
+        fetch: () => Promise.reject(new Error("down")),
+      }),
+    );
+    await source.poll(new Date(now));
+    expect(source.status()).toBe("expired");
+    expect(source.note()).toBe("unavailable");
+
+    // Someone else reached the provider, so the failure no longer stands.
+    persisted = { value: 3, fetchedAtMs: now + 10_000 };
+    await source.poll(new Date(now + 20_000));
+
+    expect(source.status()).toBe("active");
+    expect(source.note()).toBeNull();
+    expect(source.read()?.value).toBe(3);
+  });
+});

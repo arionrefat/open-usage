@@ -279,6 +279,14 @@ export interface RefreshRequest {
   reason: RefreshReason;
   providerIds: readonly ProviderId[];
   signal?: AbortSignal;
+  /**
+   * Receives a snapshot as soon as the quick sources - local files and the
+   * limits - have landed while slower supplementary ones are still in flight,
+   * so the numbers people open the app for never wait on a month of history.
+   * The promise still resolves with the final snapshot; a provider with nothing
+   * slow in flight simply never calls this.
+   */
+  onSnapshot?(snapshot: UsageSnapshot): void;
 }
 
 export interface PollOptions {

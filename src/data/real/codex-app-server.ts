@@ -343,6 +343,10 @@ function spawnAppServer(options: RunRequestsOptions) {
 }
 
 const MAX_DIAGNOSTIC_CHARS = 160;
+// The line is rendered verbatim in a notice and written to the daemon log, so
+// an escape sequence or control character in it must not reach either.
+const ANSI_SEQUENCE = new RegExp("\\u001b\\[[0-9;?]*[ -/]*[@-~]", "g");
+const CONTROL_CHARS = new RegExp("[\\u0000-\\u001F\\u007F]", "g");
 
 /**
  * Drained concurrently so a chatty child never stalls on a full stderr pipe.
@@ -357,7 +361,11 @@ async function readDiagnostic(stderr: ReadableStream<Uint8Array>): Promise<strin
   }
   const line = text.split("\n").find((candidate) => candidate.trim().length > 0);
   if (!line) return null;
-  const cleaned = line.trim().replace(/^error:\s*/i, "");
+  const cleaned = line
+    .replace(ANSI_SEQUENCE, "")
+    .replace(CONTROL_CHARS, " ")
+    .trim()
+    .replace(/^error:\s*/i, "");
   return cleaned.length > MAX_DIAGNOSTIC_CHARS
     ? `${cleaned.slice(0, MAX_DIAGNOSTIC_CHARS - 1)}…`
     : cleaned;

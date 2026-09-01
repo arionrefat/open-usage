@@ -116,7 +116,8 @@ The interval accepts 1 to 1440 minutes and is saved in `preferences.json`, so a 
 Starting a second daemon is refused while one is running; `daemon restart --interval 10` is how you change the cadence.
 
 A daemon does not double your API traffic.
-The dashboard treats a reading the daemon just cached as one of its own, so opening the app while the daemon runs costs no extra requests.
+The dashboard treats a reading the daemon has cached as one of its own - at launch, and on every tick after - so a dashboard open beside a running daemon polls nothing the daemon has already fetched.
+That includes the OpenCode dashboard's month history and usage table, which is the expensive part of a Go refresh: the daemon walks it, and the dashboard reads the result.
 
 The log is kept to a megabyte while the daemon runs, with the previous stretch left beside it as `daemon.log.1`.
 
@@ -185,7 +186,7 @@ OpenCode Go does not publish per-account limits, so its percentages are local es
 
 Settings live in the app, on the `5` screen.
 They persist to `~/.config/open-usage/preferences.json` (or `$XDG_CONFIG_HOME/open-usage/`).
-The same directory holds the cached limits the app opens on (`usage-cache.json`), the spend record (`spend-history.json`), and, while a daemon runs, its record and log (`daemon.json`, `daemon.log`).
+The same directory holds the cached limits the app opens on (`usage-cache.json`), the cached Go history (`go-history.json`, about a megabyte for a busy workspace), the spend record (`spend-history.json`), and, while a daemon runs, its record and log (`daemon.json`, `daemon.log`).
 
 | Variable                     | Purpose                                        |
 | ---------------------------- | ---------------------------------------------- |
@@ -218,6 +219,9 @@ Hand `open-usage` that session cookie and the Go card swaps its local estimate f
 
 The config file is re-read on every poll, so a cookie pasted there lands within a minute - press `r` to skip the wait.
 The environment variable is read once at launch, so exporting it means restarting the app.
+
+The exact limits are two requests; the month history and the 30-day activity chart behind the Go screen are many more, so they are read every half hour rather than every poll, and `r` leaves them alone while the last reading is under five minutes old.
+The first read walks the whole usage table - a busy workspace is several thousand rows - and the numbers on the overview do not wait for it; after that each read pages back only to the rows already held.
 
 The cookie is optional, and it is also sufficient on its own.
 Without it the Go card still works, on the local estimate; with it, OpenCode need not be installed at all, though a machine with no `opencode.db` has no token history to chart and the card says so.

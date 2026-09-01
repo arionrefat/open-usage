@@ -22,7 +22,7 @@ const OPENCODE_SERVER_URL = "https://opencode.ai/_server";
 export const SERVER_FUNCTION_IDS = {
   workspaces: "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f",
   liteSubscription: "c7389bd0e731f80f49593e5ee53835475f4e28594dd6bd83eb229bab753498cd",
-  /** Per-session usage table, 50 rows a page. */
+  /** Usage table, one row per request, 50 rows a page. */
   usageList: "bfd684bfc2e4eed05cd0b518f5e4eafd3f3376e3938abb9e536e7c03df831e5c",
   /** Per-day, per-model cost chart. */
   usageCosts: "15702f3a12ff8bff357f8c2aa154a17e65b746d5f6b96adc9002c86ee0c15205",
@@ -383,7 +383,17 @@ export function timezoneOffsetLabel(now: Date): string {
 export async function fetchGoUsageHistory(
   cookieHeader: string,
   now: Date,
-  options: { workspaceId?: string; signal?: AbortSignal; timeoutMs?: number; monthsAgo?: number } = {},
+  options: {
+    workspaceId?: string;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    monthsAgo?: number;
+    /**
+     * The billing record is one per workspace, not one per month, so a caller
+     * reading several months asks for it once and leaves it off the rest.
+     */
+    withBilling?: boolean;
+  } = {},
 ): Promise<GoUsageHistory> {
   const cookie = filterCookieHeader(cookieHeader);
   if (!cookie) throw new OpencodeServerError("no opencode auth cookie", "credentials");
@@ -420,14 +430,17 @@ export async function fetchGoUsageHistory(
 
   // Billing is supplementary: without it the allowance figures still stand, so a
   // failure here must not lose the month that was already read.
-  const billing = await callAndParse(
-    "billing",
-    [workspaceId],
-    parseBilling,
-    cookie,
-    `https://opencode.ai/workspace/${workspaceId}/billing`,
-    signal,
-  ).catch(() => null);
+  const billing =
+    options.withBilling === false
+      ? null
+      : await callAndParse(
+          "billing",
+          [workspaceId],
+          parseBilling,
+          cookie,
+          `https://opencode.ai/workspace/${workspaceId}/billing`,
+          signal,
+        ).catch(() => null);
 
   return {
     costs,
@@ -441,9 +454,19 @@ export async function fetchGoUsageHistory(
 const USAGE_PAGE_SIZE = 50;
 /**
  * Backstop only. Paging normally ends the moment a page reaches past the
- * window, so a light month costs two or three requests rather than this.
+ * window, so a light month costs one or two requests rather than this. Sized
+ * for a hundred sessions a day: a month that outgrows it is truncated rather
+ * than walked indefinitely.
  */
-const MAX_USAGE_PAGES = 24;
+const MAX_USAGE_PAGES = 60;
+/**
+ * Pages requested at once after the first. The first page goes alone because
+ * it settles whether there is a second at all; after that, waiting on each
+ * page before asking for the next turned a month of activity into thirty
+ * round trips in series. A batch may overshoot the window by a few pages,
+ * which is cheaper than the serial wait it replaces.
+ */
+const USAGE_PAGE_CONCURRENCY = 4;
 const USAGE_ROWS_TIMEOUT_MS = 45_000;
 
 /**
@@ -466,31 +489,51 @@ export async function fetchGoUsageRows(
   const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
   const referer = `https://opencode.ai/workspace/${workspaceId}/usage`;
   const maxPages = options.maxPages ?? MAX_USAGE_PAGES;
+  const fetchPage = (page: number) =>
+    callAndParse("usageList", [workspaceId, page], parseUsageRows, cookie, referer, signal);
 
   const rows: GoUsageRow[] = [];
-  for (let page = 0; page < maxPages; page += 1) {
-    let parsed: GoUsageRow[] | null;
-    try {
-      parsed = await callAndParse(
-        "usageList",
-        [workspaceId, page],
-        parseUsageRows,
-        cookie,
-        referer,
-        signal,
-      );
-    } catch (error) {
-      // Pages arrive newest first, so a deadline or a blip part way through
-      // still leaves the most recent window collected. Returning that beats
-      // losing every row, but only once there is something to return - an
-      // empty result would blank a chart the caller could have kept.
-      if (rows.length === 0) throw error;
-      break;
+  let nextPage = 0;
+  while (nextPage < maxPages) {
+    const batchSize = nextPage === 0 ? 1 : USAGE_PAGE_CONCURRENCY;
+    const pages = Array.from(
+      { length: Math.min(batchSize, maxPages - nextPage) },
+      (_, offset) => nextPage + offset,
+    );
+    nextPage += pages.length;
+    const settled = await Promise.allSettled(pages.map(fetchPage));
+
+    // Pages are folded in order, and the walk ends at the first that ends it:
+    // a failure, an empty or short page, or one that reaches past the window.
+    // Anything a later page in the batch returned past that point is dropped,
+    // since the rows before it were never seen.
+    let isDone = false;
+    for (const outcome of settled) {
+      if (outcome.status === "rejected") {
+        // Pages arrive newest first, so a deadline or a blip part way through
+        // still leaves the most recent window collected. Returning that beats
+        // losing every row, but only once there is something to return - an
+        // empty result would blank a chart the caller could have kept.
+        if (rows.length === 0) throw outcome.reason;
+        isDone = true;
+        break;
+      }
+      const parsed = outcome.value;
+      if (parsed === null || parsed.length === 0) {
+        isDone = true;
+        break;
+      }
+      rows.push(...parsed);
+      if (parsed.some((row) => row.atMs !== null && row.atMs < options.sinceMs)) {
+        isDone = true;
+        break;
+      }
+      if (parsed.length < USAGE_PAGE_SIZE) {
+        isDone = true;
+        break;
+      }
     }
-    if (parsed === null || parsed.length === 0) break;
-    rows.push(...parsed);
-    if (parsed.some((row) => row.atMs !== null && row.atMs < options.sinceMs)) break;
-    if (parsed.length < USAGE_PAGE_SIZE) break;
+    if (isDone) break;
   }
   // A row with no timestamp cannot be placed in the window, so it is kept only
   // for the totals rather than being guessed onto a day.

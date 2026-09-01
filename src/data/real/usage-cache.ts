@@ -193,6 +193,7 @@ function go(value: unknown): GoServerLimits | null {
   const fetchedAtMs = finite(raw?.fetchedAtMs);
   const useBalance = raw?.useBalance;
   const source = raw?.source;
+  const workspaceId = raw?.workspaceId;
   const rollingUsd = nullableFinite(raw?.rollingUsd);
   const rollingCapUsd = nullableFinite(raw?.rollingCapUsd);
   const weeklyUsd = nullableFinite(raw?.weeklyUsd);
@@ -209,6 +210,7 @@ function go(value: unknown): GoServerLimits | null {
     (raw?.monthlyResetAtMs !== null && monthlyResetAtMs === null) ||
     (useBalance !== undefined && useBalance !== null && typeof useBalance !== "boolean") ||
     (source !== undefined && source !== "api" && source !== "dashboard") ||
+    (workspaceId !== undefined && typeof workspaceId !== "string") ||
     (raw?.rollingUsd !== undefined && raw.rollingUsd !== null && rollingUsd === null) ||
     (raw?.rollingCapUsd !== undefined && raw.rollingCapUsd !== null && rollingCapUsd === null) ||
     (raw?.weeklyUsd !== undefined && raw.weeklyUsd !== null && weeklyUsd === null) ||
@@ -236,6 +238,7 @@ function go(value: unknown): GoServerLimits | null {
     ...(raw?.monthlyUsd !== undefined ? { monthlyUsd } : {}),
     ...(raw?.monthlyCapUsd !== undefined ? { monthlyCapUsd } : {}),
     ...(source ? { source } : {}),
+    ...(typeof workspaceId === "string" ? { workspaceId } : {}),
   };
 }
 
@@ -287,7 +290,7 @@ function writeUsageCacheFile(path: string, cache: UsageCache): void {
 /** Writes through a sibling file so an interrupted refresh cannot corrupt the cache. */
 export function writeUsageCache(path: string, cache: UsageCache): void {
   try {
-    mkdirSync(dirname(path), { recursive: true });
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     withFileLock(path, () => writeUsageCacheFile(path, cache));
   } catch {
     // Cached values are an enhancement; a read-only home must not break usage polling.
@@ -300,7 +303,7 @@ export function updateUsageCache<K extends keyof UsageCache>(
   value: UsageCache[K],
 ): void {
   try {
-    mkdirSync(dirname(path), { recursive: true });
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     withFileLock(path, () => {
       const cache = { ...readUsageCache(path), [key]: value };
       writeUsageCacheFile(path, cache);

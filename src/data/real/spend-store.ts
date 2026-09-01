@@ -316,7 +316,7 @@ export function updateSpendStore(
   update: (store: SpendStore) => SpendStore,
 ): SpendStore {
   try {
-    mkdirSync(dirname(path), { recursive: true });
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     return withFileLock(path, () => {
       const next = update(readSpendStore(path));
       writeStoreFile(path, next);

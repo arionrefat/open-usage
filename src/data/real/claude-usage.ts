@@ -164,6 +164,7 @@ export interface ClaudeLimitsSource {
 export interface ClaudeLimitsSourceOptions {
   initial?: ClaudeCliUsage | null;
   onUpdate?: (value: ClaudeCliUsage) => void;
+  readPersisted?: () => ClaudeCliUsage | null;
   /**
    * True while a fresh statusline snapshot already carries the session and
    * weekly windows, which leaves the CLI responsible only for Fable. Checked on
@@ -226,5 +227,6 @@ export function createClaudeLimitsSource(
     maxBackoffMs: MAX_BACKOFF_MS,
     initial: sourceOptions.initial ?? null,
     onUpdate: sourceOptions.onUpdate,
+    readPersisted: sourceOptions.readPersisted,
   });
 }

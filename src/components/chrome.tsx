@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useBlink } from "../hooks/use-blink";
-import { useSecondsSince } from "../hooks/use-seconds-since";
+import { FINE_STEP_SECONDS, useSecondsSince } from "../hooks/use-seconds-since";
 import { columnWidth } from "../lib/text";
 import { COLORS, SPINNER_FRAMES } from "../theme";
+import { PROVIDER_IDS } from "../data/types";
 import { VIEW_KEYS, type ViewKey } from "../state/app-state";
 import type { AppActions } from "../state/actions";
 import { Line, Rule, SplitLine, keyHint, segmentsWidth, type Segment } from "./primitives";
@@ -20,6 +21,21 @@ interface HeaderProps {
 
 const SPINNER_INTERVAL_MS = 80;
 
+/**
+ * "just now", then "5s ago" in the steps the header ticks in, then "4m ago",
+ * "2h 10m ago": a count of seconds stops meaning anything past a minute.
+ */
+export function updatedAgeLabel(seconds: number): string {
+  if (seconds < FINE_STEP_SECONDS) return "just now";
+  if (seconds < 60) return `${Math.floor(seconds / FINE_STEP_SECONDS) * FINE_STEP_SECONDS}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  if (days > 0) return `${days}d ${hours % 24}h ago`;
+  if (hours > 0) return `${hours}h ${minutes % 60}m ago`;
+  return `${minutes}m ago`;
+}
+
 export function Header({
   width,
   providerCount,
@@ -30,7 +46,7 @@ export function Header({
   updateVersion = null,
 }: HeaderProps) {
   const secondsSinceUpdate = useSecondsSince(fetchedAt);
-  const updatedLabel = isRefreshing ? "now" : `${secondsSinceUpdate}s ago`;
+  const updatedLabel = isRefreshing ? "now" : updatedAgeLabel(secondsSinceUpdate);
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   useEffect(() => {
     if (!isRefreshing) return;
@@ -202,7 +218,7 @@ export function FilterBar({ width, query, matchCount }: FilterBarProps) {
         ]}
         right={[
           {
-            text: `${matchCount} of 3 providers · enter to keep · esc to clear`,
+            text: `${matchCount} of ${PROVIDER_IDS.length} providers · enter to keep · esc to clear`,
             color: COLORS.textGhost,
           },
         ]}

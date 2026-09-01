@@ -102,7 +102,9 @@ Touch when a shared provider presentation primitive changes.
 | `claude-transcripts.ts` | `~/.claude/projects/` | Claude token counts bucketed by hour |
 | `claude-history.ts` | `~/.claude/history.jsonl` | Prompt and session counts, last 30 days |
 | `statusline-snapshot.ts` | `~/.claude/usage-snapshot.json` | The actual limit percentages (5h and 7d windows) plus a trend tracker |
-| `usage-cache.ts` | `~/.config/open-usage/usage-cache.json` | Last successful Claude, Codex, and OpenCode Go limit readings for startup display |
+| `usage-cache.ts` | `~/.config/open-usage/usage-cache.json` | Last successful Claude, Codex, and OpenCode Go limit readings, shared with the daemon |
+| `go-history-cache.ts` | `~/.config/open-usage/go-history.json` | The Go month history and usage table; its own file because it is a megabyte that changes half-hourly, beside limits that change by the minute |
+| `jsonl.ts` | - | `matchingLines`: scans a JSONL file for the lines carrying a marker and decodes only those, so a 65 MB live transcript costs its few hundred token lines rather than the file |
 | `claude-account-usage.ts` | `~/.claude.json` | The account's real credit spend, cap and balance (`cachedUsageUtilization`) |
 | `spend-store.ts` | `~/.config/open-usage/spend-history.json` | Our own record: spend cycles as a high-water mark, tokens per day per model |
 | `pricing.ts` | shipped table + `~/.config/open-usage/pricing.json` | Per-model rates, used only to apportion an exact total or to label an estimate |
@@ -111,6 +113,10 @@ Touch when a shared provider presentation primitive changes.
 | `json.ts` | - | The shared `isRecord` guard for parsing unknown JSON |
 
 Every reader takes its file path as a parameter, which is why tests can feed fixtures and never touch your home directory.
+
+The transcript and rollout readers never read a file whole.
+The live session's file changes every minute and can run to tens of MB, and reading it as one string plus a line array grew the heap by twice the file each time - pages the runtime never gave back, which is how the dashboard came to sit at 400 MB resident for a 2 MB heap.
+They scan bytes for the record types they parse and decode only those lines, which keeps the process near the renderer's own footprint.
 
 **`mask.ts`**
 Masks credentials for display: 24 chars or shorter become all bullets, longer keeps first and last 4.
@@ -142,8 +148,14 @@ It stands down if the state record comes to name another pid, so two daemons nev
 Written through a sibling file under the same `withFileLock` the usage cache uses.
 
 The daemon and the dashboard share one cache, so they must not share the work.
-`polled-source.ts` anchors its automatic cadence on the reading it was seeded with, which means opening the app while the daemon runs costs no extra requests.
-That anchor deliberately does not apply to `r`: the manual floor exists to stop a held key from flooding an API, not to sit out the first press.
+`polled-source.ts` anchors its automatic cadence on the reading it was seeded with, and re-reads the cache on every tick through `readPersisted`: a reading another process has persisted since - the daemon's, or a second dashboard's - is adopted as this one's own, reported as live, and counted against the cadence.
+So a dashboard open beside a running daemon never asks a provider for what the daemon fetched a minute ago.
+That anchor deliberately does not apply to `r` for the limits: the manual floor exists to stop a held key from flooding an API, not to sit out the first press.
+The Go history is the exception, because one poll of it is thirty-odd requests: `go-history-source.ts` declines even a press while its reading is under five minutes old.
+
+`go-history-source.ts` is built on the same scheduler and persists the rows the dashboard sent - three months of cost rows and the per-request usage table - rather than the figures derived from them, in `go-history.json`, so the daemon's walk serves a dashboard opened later.
+The usage table is walked incrementally: rows never change once written, so a poll pages back only to the newest row already held and joins by the server's row id, which turns a sixty-page walk into one or two pages.
+Everything independent in that poll goes out together - the closed months alongside the open one, pages four at a time - because the same work done in series was the thirteen seconds a refresh used to take.
 
 ### State layer (`src/state/`)
 
@@ -177,7 +189,7 @@ Touch when: adding a key binding or changing app lifecycle.
 | `overview-detailed.tsx` | Provider cards, summary trio, usage share, daily split; stacks columns on narrow terminals |
 | `provider-detail.tsx` | All limits, token chart, and notices for one provider |
 | `settings.tsx` | Connection rows, credentials, display toggles |
-| `onboarding.tsx` | Three-step wizard: pick providers, paste credential, summary |
+| `onboarding.tsx` | Two-step wizard: pick providers, then a summary of what connected |
 | `help-overlay.tsx` | Modal keymap reference over a dimmed scrim |
 
 **`components/`** - shared building blocks:
@@ -187,7 +199,7 @@ Touch when: adding a key binding or changing app lifecycle.
 `chart.ts` (bars, sparkline, stacked bar, resampling, period-over-period delta), `meter.ts` (fill and severity color), `text.ts` (grapheme-safe width, pad, truncate via `Bun.stringWidth`).
 
 **`hooks/`** - the only per-second re-renders in the app, deliberately quarantined:
-`use-seconds-since.ts` ("updated Xs ago", ticks 1s then coarsens to 10s), `use-blink.ts` (cursor blink).
+`use-seconds-since.ts` ("updated Xs ago", ticks every 5s then every 10s), `use-blink.ts` (cursor blink).
 
 **`theme.ts`**
 Every color, the 70%/85% warn/danger thresholds, spinner frames, chart ramp.
@@ -200,10 +212,13 @@ Both default to mock data.
 ## Trace: what happens when you press `r`
 
 1. `app.tsx` keyboard handler dispatches `refresh()`.
-2. `refresh()` creates an `AbortController`, dispatches `refresh-start` (reducer sets `isRefreshing`), and calls `provider.refresh(signal)`.
-3. Real provider re-reads every local file and builds a fresh `UsageSnapshot`; mock provider waits 1.6s and returns its sample.
-4. On resolve: `setSnapshot(next)` plus `refresh-success`; on failure the header shows "refresh failed"; a quit mid-flight aborts the signal so nothing lands after unmount.
-5. `deriveState` recomputes, screens re-render once.
+2. `refresh()` creates an `AbortController`, dispatches `refresh-start` (reducer sets `isRefreshing`), and calls `provider.refresh({ signal, onSnapshot })`.
+3. Real provider polls the limits sources together, and the Go history alongside them.
+   Once the limits land it re-reads every local file and builds a `UsageSnapshot`; if the history is still walking, that snapshot goes to `onSnapshot` so the numbers people open the app for never wait on a month of history, and a second build follows when the history lands.
+   A refresh with nothing slow in flight builds once.
+   The mock provider waits 1.6s and returns its sample.
+4. On each snapshot: `setSnapshot(next)`; on resolve, `refresh-success` as well; on failure the header shows "refresh failed"; a quit mid-flight aborts the signal so nothing lands after unmount.
+5. `deriveState` recomputes, screens re-render once per snapshot.
 
 The 60s poll loop is just this same `refresh()` on a timer, and `--no-poll` removes the timer, nothing else.
 

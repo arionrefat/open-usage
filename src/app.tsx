@@ -130,7 +130,16 @@ export function App({
     refreshAbortRef.current = controller;
     dispatch({ type: "refresh-start" });
     void Promise.resolve()
-      .then(() => provider.refresh({ reason, providerIds, signal: controller.signal }))
+      .then(() =>
+        provider.refresh({
+          reason,
+          providerIds,
+          signal: controller.signal,
+          onSnapshot: (partial) => {
+            if (!controller.signal.aborted) setSnapshot(partial);
+          },
+        }),
+      )
       .then((nextSnapshot) => {
         if (controller.signal.aborted) return;
         setSnapshot(nextSnapshot);

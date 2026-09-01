@@ -124,6 +124,7 @@ describe("parseUsageRows", () => {
     const rows = parseUsageRows(USAGE_JS);
     expect(rows).toHaveLength(1);
     expect(rows?.[0]).toEqual({
+      id: "usg_01",
       sessionId: "ses_01",
       keyId: "key_01",
       atMs: Date.parse("2026-08-17T13:04:12.000Z"),

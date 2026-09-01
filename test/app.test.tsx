@@ -651,3 +651,40 @@ describe("App interactions", () => {
     }
   });
 });
+
+describe("intermediate snapshots", () => {
+  test("lands the quick sources while the refresh is still running", async () => {
+    let publish: ((snapshot: UsageSnapshot) => void) | undefined;
+    const provider: UsageProvider = {
+      ...mockUsageProvider,
+      readSnapshot: () => snapshotWithReset("INITIAL SNAPSHOT"),
+      refresh: (request) => {
+        publish = request.onSnapshot;
+        return new Promise(() => {});
+      },
+    };
+    const setup = await testRender(
+      <App
+        provider={provider}
+        startup={{ screen: "app", view: "claude", mode: "detailed" }}
+        isPollingEnabled={false}
+      />,
+      { width: 100, height: 40 },
+    );
+    try {
+      act(() => setup.renderer.stdin.emit("data", Buffer.from("r")));
+      await letRefreshAdvance(setup);
+      expect(publish).toBeDefined();
+
+      act(() => publish?.(snapshotWithReset("EARLY SNAPSHOT")));
+      await letRefreshAdvance(setup);
+
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("EARLY SNAPSHOT");
+      // The limits are on screen, and the header still says the refresh is running.
+      expect(frame).toContain("updated now");
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+});

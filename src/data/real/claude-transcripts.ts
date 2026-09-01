@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { addToBucket, localDateKey, type HourBuckets } from "./aggregate";
 import { isRecord } from "./json";
+import { matchingLines } from "./jsonl";
 import { emptyTokenUsage, modelUsageKey, type TokenUsage } from "./pricing";
 import { isMissingFile } from "./fs-errors";
 
@@ -206,7 +207,10 @@ interface FileCacheEntry extends PerFileEvents {
 }
 
 // Per-file aggregates keyed by path; a size/mtime match skips the re-parse
-// so a 60s poll over tens of MB of transcripts stays effectively free.
+// so a 60s poll over tens of MB of transcripts stays effectively free. A file
+// that did change is scanned for its assistant lines alone, never read whole:
+// the live session's transcript changes every minute and can run to tens of
+// MB, most of it tool output this reader has no use for.
 const fileCache = new Map<string, FileCacheEntry>();
 
 function clearProjectCache(projectsDir: string): void {
@@ -274,7 +278,7 @@ export function readClaudeTranscripts(
           : {
               size: stats.size,
               mtimeMs: stats.mtimeMs,
-              ...aggregateTranscriptLines(readFileSync(path, "utf8").split("\n")),
+              ...aggregateTranscriptLines(matchingLines(path, [ASSISTANT_MARKER])),
             };
       if (!cacheMatchesFile) fileCache.set(path, entry);
       for (const event of entry.events) {

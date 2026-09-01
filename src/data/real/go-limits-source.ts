@@ -26,12 +26,15 @@ export interface GoLimitsSource {
   status?(): ConnectionStatus;
   credentialKind?(): GoCredentialKind | null;
   cookieExpiresAtMs(): number | null;
+  /** The dashboard workspace this source has discovered, for sources that would otherwise discover it again. */
+  workspaceId?(): string | undefined;
   poll(now: Date, options?: PollOptions): Promise<void>;
 }
 
 export interface GoLimitsSourceOptions {
   initial?: GoServerLimits | null;
   onUpdate?: (value: GoServerLimits) => void;
+  readPersisted?: () => GoServerLimits | null;
   apiFetcher?: typeof fetchGoApiLimits;
 }
 
@@ -114,6 +117,7 @@ export const dormantGoLimitsSource: GoLimitsSource = {
   status: () => "none",
   credentialKind: () => null,
   cookieExpiresAtMs: () => null,
+  workspaceId: () => undefined,
   poll: () => Promise.resolve(),
 };
 
@@ -140,7 +144,9 @@ export function createGoLimitsSource(
   fetcher: GoLimitsFetcher = fetchGoServerLimits,
   sourceOptions: GoLimitsSourceOptions = {},
 ): GoLimitsSource {
-  let workspaceId: string | undefined;
+  // A persisted reading carries the workspace it was read from, which saves
+  // the discovery round trip on every launch.
+  let workspaceId: string | undefined = sourceOptions.initial?.workspaceId;
   // Read once per attempt and reuse the same value through the request, so a
   // credential rewritten mid-poll cannot make the precheck and fetch disagree.
   let credentialForAttempt: GoCredential | null = null;
@@ -174,7 +180,10 @@ export function createGoLimitsSource(
         workspaceId = undefined;
         return apiFetcher(credentialForAttempt.value, now, { signal });
       }
-      const value = await fetcher(credentialForAttempt.value, now, { workspaceId, signal });
+      const value = await fetcher(credentialForAttempt.value, now, {
+        workspaceId: knownWorkspaceId(),
+        signal,
+      });
       workspaceId = value.workspaceId ?? workspaceId;
       return { ...value, source: value.source ?? "dashboard" };
     },
@@ -196,7 +205,13 @@ export function createGoLimitsSource(
     maxBackoffMs: MAX_BACKOFF_MS,
     initial: sourceOptions.initial ?? null,
     onUpdate: sourceOptions.onUpdate,
+    readPersisted: sourceOptions.readPersisted,
   });
+
+  /** Ours, or the one a reading adopted from another process was made with. */
+  function knownWorkspaceId(): string | undefined {
+    return workspaceId ?? source.read()?.workspaceId;
+  }
 
   return {
     read: (now) => {
@@ -225,6 +240,7 @@ export function createGoLimitsSource(
       return status;
     },
     credentialKind: () => readCredential(configPath, env)?.kind ?? null,
+    workspaceId: knownWorkspaceId,
     poll: source.poll,
     cookieExpiresAtMs: () => {
       // Only warn about the cookie that is actually authorizing the readings.
