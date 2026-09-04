@@ -408,6 +408,16 @@ Discovery runs at runtime, as a recovery path only.
 `callAndParse` tries the shipped id first and re-derives candidates from the bundle only once a response fails to parse, caching the result for the process.
 Credential and rate-limit failures are rethrown rather than treated as drift, since a fresh id cannot fix either.
 
+### No plan attached
+
+A workspace whose subscription has ended answers `lite.subscription.get` with a literal `null` - `((self.$R=self.$R||{})["server-fn:..."]=[],null)` - rather than an error or a changed shape.
+That is an account state the user chose, so it is reported as "no opencode go subscription" instead of the drift note, and the source reads as having nothing to fetch rather than as a failed read.
+A stale id is not confusable with it: an unknown hash answers `HTTP 500 {"status":500,"unhandled":true,"message":"HTTPError"}`, which is classified as a network failure.
+`billing.get` keeps answering through all of this, and is where the balance behind the fuller warning comes from; a cancelled workspace reports `subscription`, `subscriptionID`, `lite` and `liteSubscriptionID` all null.
+
+The API-key path meets the same state as a `401` carrying `{"type":"CreditsError","message":"Insufficient balance..."}`, which is the response opencode gives an agent once a workspace has neither a plan nor credit.
+It shares the status code with a rejected key, so the body is what tells the user to top up rather than to re-paste a key that is fine.
+
 ## Cross-cutting
 
 ### What the user must provide

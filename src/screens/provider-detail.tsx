@@ -81,14 +81,26 @@ function Notice({ notice, width }: { notice: ProviderNotice; width: number }) {
   );
 }
 
-function StaleBanner({ id, state, width }: { id: ProviderId; state: AppState; width: number }) {
+function StaleBanner({
+  id,
+  state,
+  width,
+  hasReadings,
+}: {
+  id: ProviderId;
+  state: AppState;
+  width: number;
+  /** False when every limit below is capless, leaving nothing to call a reading. */
+  hasReadings: boolean;
+}) {
   const connection = state.connections[id];
   const status = STATUS_PRESENTATION[connection.status];
   const label = connection.isEnabled ? status.label : "hidden in settings";
   const color = connection.isEnabled ? status.color : COLORS.textFaint;
+  const kept = hasReadings ? " - figures below are the last values read" : "";
   const note = connection.isEnabled
-    ? `${connection.note} - figures below are the last values read`
-    : "the credential is preserved - figures below are the last values read";
+    ? `${connection.note}${kept}`
+    : `the credential is preserved${kept}`;
   return (
     <box
       flexDirection="column"
@@ -391,7 +403,12 @@ export function ProviderDetail({
       {isStale ? (
         <>
           <Spacer />
-          <StaleBanner id={id} state={state} width={width} />
+          <StaleBanner
+            id={id}
+            state={state}
+            width={width}
+            hasReadings={limits.some((limit) => limit.percent !== null)}
+          />
         </>
       ) : null}
       <Spacer />

@@ -2,6 +2,7 @@ import { isRecord } from "./json";
 import {
   OpencodeRateLimitError,
   OpencodeServerError,
+  isInsufficientBalance,
   retryAfterMs,
   type GoServerLimits,
 } from "./opencode-server";
@@ -210,6 +211,12 @@ export async function fetchGoApiLimits(
   }
 
   if (response.status === 401 || response.status === 403) {
+    // A drained account is refused with the same status as a bad key, so the
+    // body is what separates "top up" from "replace your key".
+    const body = await response.text().catch(() => "");
+    if (isInsufficientBalance(body)) {
+      throw new OpencodeServerError("insufficient opencode balance", "insufficient-balance");
+    }
     throw new OpencodeServerError("opencode API key rejected", "credentials");
   }
   if (response.status === 429) {

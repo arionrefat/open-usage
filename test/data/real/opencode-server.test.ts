@@ -7,6 +7,8 @@ import {
   fetchGoUsageHistory,
   fetchGoUsageRows,
   filterCookieHeader,
+  isInsufficientBalance,
+  isNullPayload,
   isSignedOut,
   parseSubscription,
   parseWorkspaceId,
@@ -27,6 +29,10 @@ const SUBSCRIPTION_JS =
   'weeklyUsage:$R[43]={status:"ok",resetInSec:278201,usagePercent:75},' +
   'monthlyUsage:$R[44]={status:"ok",resetInSec:90061,usagePercent:99},useBalance:true' +
   "});";
+
+/** What `lite.subscription.get` returns once the workspace has no plan. */
+const NULL_SUBSCRIPTION_JS =
+  ';0x00000051;((self.$R=self.$R||{})["server-fn:619751d7-8409-4ded-b5ee-6533a794f8f3"]=[],null)';
 
 describe("parseWorkspaceId", () => {
   test("finds the workspace id in serialized javascript", () => {
@@ -373,6 +379,72 @@ describe("isSignedOut", () => {
     expect(isSignedOut('actor of type "public"')).toBe(true);
     expect(isSignedOut("redirecting to /auth/authorize")).toBe(true);
     expect(isSignedOut(SUBSCRIPTION_JS)).toBe(false);
+  });
+});
+
+describe("isNullPayload", () => {
+  test("recognizes the answer a workspace with no plan returns", () => {
+    expect(isNullPayload(NULL_SUBSCRIPTION_JS)).toBe(true);
+    expect(isNullPayload("null")).toBe(true);
+  });
+
+  test("does not mistake a real reading for an empty one", () => {
+    expect(isNullPayload(SUBSCRIPTION_JS)).toBe(false);
+    expect(isNullPayload(WORKSPACE_JS)).toBe(false);
+    expect(isNullPayload(JSON.stringify({ rollingUsage: null }))).toBe(false);
+  });
+});
+
+describe("isInsufficientBalance", () => {
+  test("recognizes the credits refusal opencode answers 401 with", () => {
+    expect(
+      isInsufficientBalance('{"type":"CreditsError","message":"Insufficient balance."}'),
+    ).toBe(true);
+    expect(isInsufficientBalance('{"message":"Unauthorized"}')).toBe(false);
+  });
+});
+
+describe("fetchGoServerLimits without a subscription", () => {
+  test("reports a lapsed plan rather than blaming the parser", async () => {
+    let call = 0;
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        () => {
+          call += 1;
+          return Promise.resolve(new Response(call === 1 ? WORKSPACE_JS : NULL_SUBSCRIPTION_JS));
+        },
+        { preconnect: (_url: string | URL) => undefined },
+      ),
+    );
+
+    try {
+      await expect(fetchGoServerLimits("auth=tok", new Date())).rejects.toMatchObject({
+        kind: "no-subscription",
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("a body that stopped parsing is still reported as drift", async () => {
+    let call = 0;
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        () => {
+          call += 1;
+          return Promise.resolve(new Response(call === 1 ? WORKSPACE_JS : '{"renamed":{}}'));
+        },
+        { preconnect: (_url: string | URL) => undefined },
+      ),
+    );
+
+    try {
+      await expect(fetchGoServerLimits("auth=tok", new Date())).rejects.toMatchObject({
+        kind: "parse",
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
 

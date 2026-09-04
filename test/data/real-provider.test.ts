@@ -668,6 +668,24 @@ describe("opencode go server limits", () => {
     });
   });
 
+  test("a lapsed plan keeps its reason on the connection instead of reading as a failure", () => {
+    const provider = createRealUsageProvider({
+      paths: MISSING_PATHS,
+      ...OFFLINE,
+      goLimits: {
+        read: () => null,
+        note: () => "no opencode go subscription",
+        status: () => "none",
+        credentialKind: () => "cookie",
+        cookieExpiresAtMs: () => null,
+        poll: () => Promise.resolve(),
+      },
+    });
+    const go = provider.initialConnections().go;
+    expect(go.status).toBe("none");
+    expect(go.note).toBe("no opencode go subscription");
+  });
+
   test("every source degradation becomes a warning notice", () => {
     const notes = [
       "opencode session expired - paste a fresh cookie",

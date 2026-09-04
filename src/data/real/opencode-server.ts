@@ -176,6 +176,29 @@ export function parseSubscription(text: string): OpencodeSubscription | null {
   return subscriptionFromJson(text) ?? subscriptionFromSerializedText(text);
 }
 
+/**
+ * True when the RPC answered with `null` in place of a record. A workspace with
+ * no plan attached answers this way, so it has to be told apart from a response
+ * whose shape drifted: one is an account state the user changed on purpose, the
+ * other is our parser falling behind a redeploy.
+ */
+export function isNullPayload(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed === "null") return true;
+  // The seroval envelope ends `...=[],<value>)`, so a null result is a literal
+  // `null` in the final argument position.
+  return /,\s*null\s*\)\s*;?$/.test(trimmed);
+}
+
+/**
+ * opencode refuses a request from a workspace with no plan and no credit with a
+ * `CreditsError`, which arrives as a 401 and must not be read as a bad key.
+ */
+export function isInsufficientBalance(text: string): boolean {
+  const lowered = text.toLowerCase();
+  return lowered.includes("creditserror") || lowered.includes("insufficient balance");
+}
+
 /** Phrases the dashboard returns instead of data once a session lapses. */
 export function isSignedOut(text: string): boolean {
   const lowered = text.toLowerCase();
@@ -189,7 +212,13 @@ export function isSignedOut(text: string): boolean {
 export class OpencodeServerError extends Error {
   constructor(
     message: string,
-    readonly kind: "credentials" | "network" | "parse" | "rate-limited",
+    readonly kind:
+      | "credentials"
+      | "network"
+      | "parse"
+      | "rate-limited"
+      | "no-subscription"
+      | "insufficient-balance",
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -605,7 +634,15 @@ export async function fetchGoServerLimits(
     signal,
   );
   const subscription = parseSubscription(body);
-  if (!subscription) throw new OpencodeServerError("no usage in response", "parse");
+  if (!subscription) {
+    // The dashboard answers `null` for a workspace whose plan has lapsed. That
+    // is the account's own state, not drift, and reporting it as drift sends the
+    // user hunting a bug in us instead of showing what actually changed.
+    if (isNullPayload(body)) {
+      throw new OpencodeServerError("no opencode go subscription", "no-subscription");
+    }
+    throw new OpencodeServerError("no usage in response", "parse");
+  }
 
   const nowMs = now.getTime();
   const weeklyResetAtMs = subscription.weekly

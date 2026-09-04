@@ -274,18 +274,30 @@ function goConnection(
   const hasLocalData = existsSync(paths.opencodeDb);
   const remoteStatus = limitsStatus(limits);
   const status = remoteStatus === "none" && hasLocalLimits ? "local" : remoteStatus;
+  // A source that reports no remote limits still has a reason worth showing - a
+  // lapsed plan reads as "none" rather than a failure, and "local estimate"
+  // alone would leave the user wondering where the exact figures went.
+  const remoteNote = limits.note();
   return {
     isEnabled: true,
     isAgentInstalled,
     status,
     credential: goCredential(auth, remoteKind, hasLocalData),
-    note:
-      status === "expired"
-        ? (limits.note() ?? "limits unavailable")
-        : status === "local"
-          ? "local estimate"
-          : goNote(remoteKind, hasCookie, hasLocalData && hasLocalLimits, status),
+    note: goConnectionNote(status, remoteNote, () =>
+      goNote(remoteKind, hasCookie, hasLocalData && hasLocalLimits, status),
+    ),
   };
+}
+
+function goConnectionNote(
+  status: ConnectionStatus,
+  remoteNote: string | null,
+  fallback: () => string,
+): string {
+  if (status === "expired") return remoteNote ?? "limits unavailable";
+  if (status === "local") return remoteNote ?? "local estimate";
+  if (status === "none" && remoteNote) return remoteNote;
+  return fallback();
 }
 
 function buildConnections(

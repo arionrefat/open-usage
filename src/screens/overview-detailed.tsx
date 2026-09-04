@@ -156,7 +156,13 @@ function DisconnectedNotice({
         segments={[
           { text: "no limits to read - ", color: COLORS.textGhost, onClick: onOpenSettings },
           { text: "5", color: COLORS.textSoft, onClick: onOpenSettings },
-          { text: " settings to reconnect", color: COLORS.textGhost, onClick: onOpenSettings },
+          // A stored credential is not what is missing, so pointing at settings
+          // to reconnect would send the user to fix something that is fine.
+          {
+            text: connection.credential ? " settings" : " settings to reconnect",
+            color: COLORS.textGhost,
+            onClick: onOpenSettings,
+          },
         ]}
       />
     </box>

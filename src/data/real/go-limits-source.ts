@@ -124,8 +124,17 @@ export const dormantGoLimitsSource: GoLimitsSource = {
 /** Injectable so tests can drive the cache, backoff and staleness rules. */
 type GoLimitsFetcher = typeof fetchGoServerLimits;
 
+/** True when opencode answered that the workspace has no plan left to report on. */
+function isPlanGone(error: unknown): boolean {
+  if (!(error instanceof OpencodeServerError)) return false;
+  return error.kind === "no-subscription" || error.kind === "insufficient-balance";
+}
+
 function describeGoFailure(error: unknown, kind: GoCredentialKind | null): string {
   if (!(error instanceof OpencodeServerError)) return "opencode unreachable";
+  // Kept short: this doubles as the reason printed in place of a percentage.
+  if (error.kind === "no-subscription") return "no opencode go subscription";
+  if (error.kind === "insufficient-balance") return "opencode balance spent - add credit";
   if (error.kind === "credentials") {
     return kind === "api-key"
       ? `opencode API key rejected - update ${API_KEY_ENV_VAR}`
@@ -151,6 +160,9 @@ export function createGoLimitsSource(
   // credential rewritten mid-poll cannot make the precheck and fetch disagree.
   let credentialForAttempt: GoCredential | null = null;
   let failureCredentialKind: GoCredentialKind | null = null;
+  // A lapsed plan is a standing account state, not a request that went wrong,
+  // so it is remembered separately from the schedule's failure count.
+  let isPlanMissing = false;
   const apiFetcher = sourceOptions.apiFetcher ?? fetchGoApiLimits;
 
   const source = createPolledSource<GoServerLimits>({
@@ -190,6 +202,7 @@ export function createGoLimitsSource(
     fetchedAtMs: (value) => value.fetchedAtMs,
     describeFailure: (error) => describeGoFailure(error, failureCredentialKind),
     onFailure: (error) => {
+      isPlanMissing = isPlanGone(error);
       // Both an expired session and a dashboard redeploy invalidate the
       // discovered workspace id. A 429 does not.
       if (!(error instanceof OpencodeServerError) || failureCredentialKind !== "cookie") return;
@@ -204,7 +217,10 @@ export function createGoLimitsSource(
     backoffMs: BACKOFF_MS,
     maxBackoffMs: MAX_BACKOFF_MS,
     initial: sourceOptions.initial ?? null,
-    onUpdate: sourceOptions.onUpdate,
+    onUpdate: (value) => {
+      isPlanMissing = false;
+      sourceOptions.onUpdate?.(value);
+    },
     readPersisted: sourceOptions.readPersisted,
   });
 
@@ -216,7 +232,7 @@ export function createGoLimitsSource(
   return {
     read: (now) => {
       const credential = readCredential(configPath, env);
-      if (!credential || source.isStale(now)) return null;
+      if (!credential || isPlanMissing || source.isStale(now)) return null;
       if (credential.kind === "cookie" && filterCookieHeader(credential.value) === null) return null;
       const reading = source.read();
       return matchesCredential(reading, credential.kind) ? reading : null;
@@ -237,6 +253,10 @@ export function createGoLimitsSource(
       // the card is really showing would be a lie.
       const isClaimingData = status === "active" || status === "cached";
       if (isClaimingData && !matchesCredential(source.read(), credential.kind)) return "none";
+      // A workspace with no plan left has nothing for the credential to fetch.
+      // Calling that a failed read would send the user to re-paste a cookie that
+      // is working perfectly; the note says what actually happened instead.
+      if (status === "expired" && isPlanMissing) return "none";
       return status;
     },
     credentialKind: () => readCredential(configPath, env)?.kind ?? null,

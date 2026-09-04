@@ -30,6 +30,7 @@ function build(options: {
   stats?: Parameters<typeof buildGoProvider>[0]["stats"];
   buckets?: Parameters<typeof buildGoProvider>[0]["buckets"];
   activity?: Parameters<typeof buildGoProvider>[0]["activity"];
+  billing?: Parameters<typeof buildGoProvider>[0]["billing"];
 } = {}) {
   return buildGoProvider({
     meta: META,
@@ -40,8 +41,19 @@ function build(options: {
     limitsSource: limitsSource(options),
     dates: ["2026-01-15"],
     now: NOW,
+    billing: options.billing ?? null,
   });
 }
+
+const UNSUBSCRIBED_BILLING: NonNullable<Parameters<typeof buildGoProvider>[0]["billing"]> = {
+  balanceUsd: 0,
+  monthlyUsageUsd: null,
+  monthlyLimitUsd: null,
+  isAutoReloadOn: false,
+  reloadAmountUsd: null,
+  hasLiteSubscription: false,
+  hasSubscription: false,
+};
 
 const SERVER: GoServerLimits = {
   rollingPercent: 11,
@@ -189,6 +201,48 @@ describe("buildGoProvider cookie notices", () => {
     expect(cachedServer.provider.notice?.segments[0]?.text).toBe(
       "opencode unreachable - showing cached server limits",
     );
+  });
+});
+
+describe("buildGoProvider without a subscription", () => {
+  test("says the plan and the balance are both gone", () => {
+    const result = build({
+      note: "no opencode go subscription",
+      billing: UNSUBSCRIBED_BILLING,
+    });
+    expect(result.provider.notice?.segments[0]?.text).toBe(
+      "no opencode go subscription and no balance - opencode will refuse requests",
+    );
+    expect(result.provider.limits[0]?.reset).toBe("no opencode go subscription");
+  });
+
+  test("says usage is coming out of the balance when there is one", () => {
+    const result = build({
+      note: "no opencode go subscription",
+      billing: { ...UNSUBSCRIBED_BILLING, balanceUsd: 12.5 },
+    });
+    expect(result.provider.notice?.segments[0]?.text).toBe(
+      "no opencode go subscription - paying from $12.50 balance",
+    );
+  });
+
+  test("leaves a working plan's own notices alone", () => {
+    const result = build({
+      server: SERVER,
+      billing: UNSUBSCRIBED_BILLING,
+      expiresAtMs: NOW_MS + 2 * HOUR_MS,
+    });
+    expect(result.provider.notice?.segments[0]?.text).toBe(
+      "opencode cookie expires in 2h 0m - paste a fresh one",
+    );
+  });
+
+  test("stays quiet while a subscription is attached", () => {
+    const result = build({
+      billing: { ...UNSUBSCRIBED_BILLING, hasLiteSubscription: true },
+      note: "opencode unreachable",
+    });
+    expect(result.provider.notice?.segments[0]?.text).toBe("opencode unreachable");
   });
 });
 

@@ -202,6 +202,19 @@ function detailSections(
   return sections.length > 0 ? sections : undefined;
 }
 
+/**
+ * The billing record is the only place a lapsed plan is stated outright, and it
+ * carries the balance that decides whether opencode will still serve a request.
+ * Without a plan and without credit, opencode answers with a 401 rather than
+ * usage, which is worth saying plainly instead of leaving the card blank.
+ */
+function unsubscribedNotice(billing: GoBilling | null): string | null {
+  if (!billing || billing.hasSubscription || billing.hasLiteSubscription) return null;
+  return billing.balanceUsd > 0
+    ? `no opencode go subscription - paying from $${billing.balanceUsd.toFixed(2)} balance`
+    : "no opencode go subscription and no balance - opencode will refuse requests";
+}
+
 function goNoticeText(
   note: string | null,
   cookieExpiresAtMs: number | null,
@@ -342,7 +355,10 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
   const stats = workspace?.stats ?? input.stats;
   const server = limitsSource.read(now);
   const note = displayedSourceNote(limitsSource.note(now), server, spend);
-  const noticeText = goNoticeText(note, limitsSource.cookieExpiresAtMs(), nowMs);
+  // Only when there are no server limits to show: a workspace still reporting
+  // its windows has a plan, whatever a cached billing record says.
+  const planNotice = server ? null : unsubscribedNotice(billing ?? null);
+  const noticeText = planNotice ?? goNoticeText(note, limitsSource.cookieExpiresAtMs(), nowMs);
   const usesEstimate =
     !server || (spend !== null && (server.weeklyPercent === null || server.monthlyPercent === null));
   return {

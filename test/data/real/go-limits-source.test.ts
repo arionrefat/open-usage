@@ -315,6 +315,78 @@ describe("createGoLimitsSource", () => {
     expect(calls).toBe(2);
   });
 
+  test("a lapsed plan names itself instead of blaming the dashboard", async () => {
+    const path = configWithCookie("auth=tok");
+    const source = createGoLimitsSource(path, {}, () =>
+      Promise.reject(new OpencodeServerError("no opencode go subscription", "no-subscription")),
+    );
+    await source.poll(new Date());
+    expect(source.read()).toBeNull();
+    expect(source.note()).toBe("no opencode go subscription");
+    // Nothing failed and nothing needs re-pasting, so the card must not be told
+    // the read broke.
+    expect(source.status?.()).toBe("none");
+  });
+
+  test("a lapsed plan stops exposing limits cached before the plan ended", async () => {
+    const path = configWithCookie("auth=tok");
+    let isSubscribed = true;
+    const source = createGoLimitsSource(path, {}, (_cookie, now) => {
+      if (isSubscribed) return Promise.resolve(reading(now.getTime()));
+      return Promise.reject(
+        new OpencodeServerError("no opencode go subscription", "no-subscription"),
+      );
+    });
+
+    const startMs = Date.now();
+    await source.poll(new Date(startMs));
+    expect(source.read(new Date(startMs))?.rollingPercent).toBe(17);
+
+    isSubscribed = false;
+    const later = new Date(startMs + 60_000);
+    await source.poll(later);
+    expect(source.read(later)).toBeNull();
+    expect(source.note(later)).toBe("no opencode go subscription");
+    expect(source.status?.()).toBe("none");
+  });
+
+  test("an exhausted balance says to top up, not to replace the key", async () => {
+    const path = tempConfigFile(JSON.stringify({ opencodeApiKey: "go_key" }));
+    const source = createGoLimitsSource(path, {}, undefined, {
+      apiFetcher: () =>
+        Promise.reject(
+          new OpencodeServerError("insufficient opencode balance", "insufficient-balance"),
+        ),
+    });
+    await source.poll(new Date());
+    expect(source.note()).toContain("balance spent");
+    expect(source.note()).not.toContain(API_KEY_ENV_VAR);
+    expect(source.status?.()).toBe("none");
+  });
+
+  test("a plan that comes back clears the lapsed state", async () => {
+    const path = configWithCookie("auth=tok");
+    let isSubscribed = false;
+    const source = createGoLimitsSource(path, {}, (_cookie, now) => {
+      if (!isSubscribed) {
+        return Promise.reject(
+          new OpencodeServerError("no opencode go subscription", "no-subscription"),
+        );
+      }
+      return Promise.resolve(reading(now.getTime()));
+    });
+
+    const startMs = Date.now();
+    await source.poll(new Date(startMs));
+    expect(source.status?.()).toBe("none");
+
+    isSubscribed = true;
+    const laterMs = startMs + 60_000;
+    await source.poll(new Date(laterMs), { force: true });
+    expect(source.status?.()).toBe("active");
+    expect(source.note(new Date(laterMs))).toBeNull();
+  });
+
   test("a paste with no auth cookie says so instead of blaming the session", async () => {
     const source = createGoLimitsSource("/nonexistent/config.json", {
       [COOKIE_ENV_VAR]: "_ga=1; ph_session=abc",

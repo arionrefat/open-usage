@@ -133,4 +133,25 @@ describe("fetchGoApiLimits", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test("a drained account is told apart from a rejected key", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              type: "CreditsError",
+              message: "Insufficient balance. Manage your billing here: https://opencode.ai/",
+            }),
+            { status: 401 },
+          ),
+        )) as unknown as typeof fetch;
+      await expect(fetchGoApiLimits("key", NOW)).rejects.toMatchObject({
+        kind: "insufficient-balance",
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
