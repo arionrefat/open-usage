@@ -121,7 +121,9 @@ test("frames the token chart with embedded labels and all three dates", async ()
   expect(bottom).toContain(` ${middle} `);
   // Centred within the footer's own width. Comparing the gaps keeps this from
   // tracking today's date: a 6-character label rounds the other way to a 5.
-  const footer = bottom?.trimEnd() ?? "";
+  // The row is trimmed on both sides because the frame rides the screen's left
+  // padding, and an untrimmed left edge would bias the left gap by that padding.
+  const footer = bottom?.trim() ?? "";
   const gapBefore = footer.indexOf(middle);
   const gapAfter = Bun.stringWidth(footer) - gapBefore - Bun.stringWidth(middle);
   expect(Math.abs(gapBefore - gapAfter)).toBeLessThanOrEqual(1);

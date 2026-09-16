@@ -1,7 +1,7 @@
 import type { KeyEvent } from "@opentui/core";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { FilterBar, Header, StatusBar, Tabs } from "./components/chrome";
+import { FilterBar, Header, StatusBar, Tabs, UpdateBanner } from "./components/chrome";
 import { APP_NAME } from "./config";
 import {
   PROVIDER_IDS,
@@ -30,6 +30,7 @@ import { ProviderDetail } from "./screens/provider-detail";
 import { Settings } from "./screens/settings";
 import { COLORS } from "./theme";
 import type { AppPreferencePatch } from "./preferences";
+import type { UpdateNotice } from "./data/real/update-check";
 
 const HORIZONTAL_PADDING = 2;
 /** Reserved so the scrollbox's gutter never steals a column from the content. */
@@ -61,11 +62,11 @@ export interface AppProps {
   /** false disables the startup refresh and poll timer (--no-poll); r still refreshes. */
   isPollingEnabled?: boolean;
   /**
-   * Resolves to a newer published version, or null when there is nothing to say.
-   * Supplied only by the real entry point, so tests, previews and screenshots
-   * never reach the registry. Absent means the check does not run at all.
+   * Resolves to an update notice, or null when the install is current. Supplied
+   * only by the real entry point, so tests, previews and screenshots never
+   * reach the registry. Absent means the check does not run at all.
    */
-  checkUpdate?: () => Promise<string | null>;
+  checkUpdate?: () => Promise<UpdateNotice | null>;
   onOnboardingFinish?: () => unknown;
   onPreferencesChange?: (patch: AppPreferencePatch) => unknown;
 }
@@ -183,15 +184,15 @@ export function App({
     [],
   );
 
-  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+  const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null);
   useEffect(() => {
     if (!checkUpdate) return;
     let isActive = true;
     // Never awaited by render, and a rejection is swallowed: a courtesy notice
     // must not be able to delay or break the dashboard behind it.
     void checkUpdate()
-      .then((version) => {
-        if (isActive) setUpdateVersion(version);
+      .then((notice) => {
+        if (isActive) setUpdateNotice(notice);
       })
       .catch(() => {});
     return () => {
@@ -501,6 +502,11 @@ export function App({
         paddingRight={HORIZONTAL_PADDING}
         paddingTop={1}
       >
+        {updateNotice?.isCritical ? (
+          <box flexShrink={0}>
+            <UpdateBanner width={contentWidth} version={updateNotice.version} />
+          </box>
+        ) : null}
         <Header
           width={contentWidth}
           providerCount={`${derived.enabledCount} providers`}
@@ -508,7 +514,9 @@ export function App({
           alertColor={state.refreshError ? COLORS.danger : derived.alertColor}
           fetchedAt={snapshot.fetchedAt}
           isRefreshing={state.isRefreshing}
-          updateVersion={updateVersion}
+          // A critical notice renders as the banner above; the corner stays quiet
+          // so the same fact does not appear twice on adjacent lines.
+          updateVersion={updateNotice && !updateNotice.isCritical ? updateNotice.version : null}
         />
         <box height={1} flexShrink={0} />
         <Tabs

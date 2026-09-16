@@ -98,6 +98,27 @@ npm install -g open-usage && open-usage --version
 On a machine with no Bun installed, confirm the binary still runs.
 That is the whole point of the platform-package layout.
 
+## Flagging a critical update
+
+A release everyone must take is marked with npm's `critical` dist-tag, published
+after the release lands:
+
+```bash
+npm dist-tag add open-usage@0.4.1 critical
+```
+
+Every install older than the tagged version shows a full-width red banner above
+the header until it has updated; a merely newer release shows only the dim
+corner notice. The tag is a single request for clients and joins the 24h update
+check cache, so users see the banner within a day of the tag at the latest.
+
+Clear the flag once adoption is high enough, because every outdated install
+keeps nagging while it exists:
+
+```bash
+npm dist-tag rm open-usage critical
+```
+
 ## If a release goes wrong
 
 npm forbids republishing a version, so bump the patch rather than trying to overwrite.

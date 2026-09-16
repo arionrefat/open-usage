@@ -11,13 +11,24 @@ import { isRecord } from "./json";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 /** A slow registry must never become a slow launch, so the window is short and hard. */
 const REQUEST_TIMEOUT_MS = 1500;
-const REGISTRY_URL = "https://registry.npmjs.org/open-usage/latest";
+/** One request answers both: the `latest` tag and any `critical` tag. */
+const REGISTRY_URL = "https://registry.npmjs.org/-/package/open-usage/dist-tags";
+/** npm dist-tag marking a release every installed version must take. */
+const CRITICAL_TAG = "critical";
 /** Set to any non-empty value to stop the check from running at all. */
 const OPT_OUT_ENV = "OPEN_USAGE_NO_UPDATE_CHECK";
 
 export interface UpdateCacheEntry {
   latestVersion: string;
+  criticalVersion: string | null;
   checkedAtMs: number;
+}
+
+export interface UpdateNotice {
+  /** The version to advertise: the critical tag when it applies, latest otherwise. */
+  version: string;
+  /** True when the running version is older than the `critical` dist-tag. */
+  isCritical: boolean;
 }
 
 function defaultUpdateCachePath(): string {
@@ -74,7 +85,10 @@ export function readUpdateCache(path: string): UpdateCacheEntry | null {
     if (!isRecord(parsed)) return null;
     if (typeof parsed.latestVersion !== "string") return null;
     if (typeof parsed.checkedAtMs !== "number" || !Number.isFinite(parsed.checkedAtMs)) return null;
-    return { latestVersion: parsed.latestVersion, checkedAtMs: parsed.checkedAtMs };
+    // Entries written before the critical tag existed simply have no tag recorded.
+    const criticalVersion =
+      typeof parsed.criticalVersion === "string" ? parsed.criticalVersion : null;
+    return { latestVersion: parsed.latestVersion, criticalVersion, checkedAtMs: parsed.checkedAtMs };
   } catch {
     return null;
   }
@@ -118,19 +132,24 @@ function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   });
 }
 
-async function readLatestVersion(fetchImpl: FetchLike): Promise<string | null> {
+async function readRegistryTags(
+  fetchImpl: FetchLike,
+): Promise<{ latestVersion: string; criticalVersion: string | null } | null> {
   const response = await fetchImpl(REGISTRY_URL, {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) return null;
   const body: unknown = await response.json();
-  if (!isRecord(body) || typeof body.version !== "string") return null;
-  return body.version;
+  if (!isRecord(body) || typeof body.latest !== "string") return null;
+  const criticalVersion = typeof body[CRITICAL_TAG] === "string" ? body[CRITICAL_TAG] : null;
+  return { latestVersion: body.latest, criticalVersion };
 }
 
 /** null on any failure: offline, DNS, proxy, timeout, a hang and a bad body are one case here. */
-export async function fetchLatestVersion(fetchImpl: FetchLike = fetch): Promise<string | null> {
-  return withDeadline(readLatestVersion(fetchImpl), REQUEST_TIMEOUT_MS);
+export async function fetchDistTags(
+  fetchImpl: FetchLike = fetch,
+): Promise<{ latestVersion: string; criticalVersion: string | null } | null> {
+  return withDeadline(readRegistryTags(fetchImpl), REQUEST_TIMEOUT_MS);
 }
 
 export interface UpdateCheckOptions {
@@ -142,11 +161,29 @@ export interface UpdateCheckOptions {
 }
 
 /**
- * The version to advertise, or null when there is nothing to say. Never throws
- * and never rejects: the caller renders a dim line, so any failure has to end as
- * silence rather than as an error the user did not ask for.
+ * Turns a registry answer into a notice: nothing to say means null. The critical
+ * tag wins over latest - if the running version predates it, this is an emergency
+ * even when latest has already moved further ahead.
  */
-export async function checkForUpdate(options: UpdateCheckOptions): Promise<string | null> {
+export function noticeFor(
+  tags: { latestVersion: string; criticalVersion: string | null },
+  currentVersion: string,
+): UpdateNotice | null {
+  if (tags.criticalVersion !== null && isNewerVersion(tags.criticalVersion, currentVersion)) {
+    return { version: tags.criticalVersion, isCritical: true };
+  }
+  if (isNewerVersion(tags.latestVersion, currentVersion)) {
+    return { version: tags.latestVersion, isCritical: false };
+  }
+  return null;
+}
+
+/**
+ * The notice to render, or null when there is nothing to say. Never throws and
+ * never rejects: the caller renders a dim corner line, so any failure has to end
+ * as silence rather than as an error the user did not ask for.
+ */
+export async function checkForUpdate(options: UpdateCheckOptions): Promise<UpdateNotice | null> {
   const { currentVersion, env = process.env, fetchImpl = fetch } = options;
   if (isUpdateCheckDisabled(env)) return null;
 
@@ -157,13 +194,12 @@ export async function checkForUpdate(options: UpdateCheckOptions): Promise<strin
   // A future-dated stamp means a clock change, not a fresh answer; re-ask.
   const isCacheFresh =
     cached !== null && nowMs >= cached.checkedAtMs && nowMs - cached.checkedAtMs < CACHE_TTL_MS;
-  if (isCacheFresh) {
-    return isNewerVersion(cached.latestVersion, currentVersion) ? cached.latestVersion : null;
-  }
+  if (isCacheFresh) return noticeFor(cached, currentVersion);
 
-  const latestVersion = await fetchLatestVersion(fetchImpl);
-  if (latestVersion === null) return null;
+  const tags = await fetchDistTags(fetchImpl);
+  if (tags === null) return null;
 
-  writeUpdateCache(path, { latestVersion, checkedAtMs: nowMs });
-  return isNewerVersion(latestVersion, currentVersion) ? latestVersion : null;
+  const entry: UpdateCacheEntry = { ...tags, checkedAtMs: nowMs };
+  writeUpdateCache(path, entry);
+  return noticeFor(entry, currentVersion);
 }

@@ -5,9 +5,10 @@ import { join } from "node:path";
 import {
   checkForUpdate,
   compareVersions,
-  fetchLatestVersion,
+  fetchDistTags,
   isNewerVersion,
   isUpdateCheckDisabled,
+  noticeFor,
   readUpdateCache,
   writeUpdateCache,
   type FetchLike,
@@ -72,8 +73,12 @@ describe("isUpdateCheckDisabled", () => {
 describe("the update cache file", () => {
   test("round-trips an entry", () => {
     const path = cachePath();
-    writeUpdateCache(path, { latestVersion: "0.3.0", checkedAtMs: NOW_MS });
-    expect(readUpdateCache(path)).toEqual({ latestVersion: "0.3.0", checkedAtMs: NOW_MS });
+    writeUpdateCache(path, { latestVersion: "0.3.0", criticalVersion: null, checkedAtMs: NOW_MS });
+    expect(readUpdateCache(path)).toEqual({
+      latestVersion: "0.3.0",
+      criticalVersion: null,
+      checkedAtMs: NOW_MS,
+    });
   });
 
   test("reads a missing, malformed or incomplete file as absent", () => {
@@ -87,18 +92,41 @@ describe("the update cache file", () => {
     writeFileSync(path, JSON.stringify({ checkedAtMs: NOW_MS }));
     expect(readUpdateCache(path)).toBeNull();
   });
+
+  test("reads an entry written before the critical tag as having no tag", () => {
+    const path = cachePath();
+    writeFileSync(
+      path,
+      JSON.stringify({ latestVersion: "0.3.0", checkedAtMs: NOW_MS }),
+    );
+    expect(readUpdateCache(path)).toEqual({
+      latestVersion: "0.3.0",
+      criticalVersion: null,
+      checkedAtMs: NOW_MS,
+    });
+  });
 });
 
-describe("fetchLatestVersion", () => {
-  test("reads the version field", async () => {
-    expect(await fetchLatestVersion(respondWith({ version: "0.3.0" }))).toBe("0.3.0");
+describe("fetchDistTags", () => {
+  test("reads both tags in one answer", async () => {
+    expect(await fetchDistTags(respondWith({ latest: "0.3.0", critical: "0.2.0" }))).toEqual({
+      latestVersion: "0.3.0",
+      criticalVersion: "0.2.0",
+    });
   });
 
   test("answers null for a failed request, a bad status and a bad body", async () => {
     const rejects: FetchLike = () => Promise.reject(new Error("offline"));
-    expect(await fetchLatestVersion(rejects)).toBeNull();
-    expect(await fetchLatestVersion(respondWith({ version: "0.3.0" }, false))).toBeNull();
-    expect(await fetchLatestVersion(respondWith({ nope: true }))).toBeNull();
+    expect(await fetchDistTags(rejects)).toBeNull();
+    expect(await fetchDistTags(respondWith({ latest: "0.3.0" }, false))).toBeNull();
+    expect(await fetchDistTags(respondWith({ nope: true }))).toBeNull();
+  });
+
+  test("a missing critical tag reads as no critical release", async () => {
+    expect(await fetchDistTags(respondWith({ latest: "0.3.0" }))).toEqual({
+      latestVersion: "0.3.0",
+      criticalVersion: null,
+    });
   });
 
   test("gives up on a fetch that never settles, rather than hanging forever", async () => {
@@ -106,7 +134,7 @@ describe("fetchLatestVersion", () => {
     // pending for the life of the process. The deadline has to hold regardless.
     const hangs: FetchLike = () => new Promise(() => {});
     const started = Date.now();
-    expect(await fetchLatestVersion(hangs)).toBeNull();
+    expect(await fetchDistTags(hangs)).toBeNull();
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 
@@ -125,51 +153,128 @@ describe("fetchLatestVersion", () => {
   });
 });
 
+describe("noticeFor", () => {
+  test("a critical tag newer than the install wins over latest", () => {
+    expect(
+      noticeFor({ latestVersion: "0.5.0", criticalVersion: "0.4.0" }, "0.2.0"),
+    ).toEqual({ version: "0.4.0", isCritical: true });
+  });
+
+  test("a critical tag the install already meets leaves the notice routine", () => {
+    expect(
+      noticeFor({ latestVersion: "0.5.0", criticalVersion: "0.2.0" }, "0.2.0"),
+    ).toEqual({ version: "0.5.0", isCritical: false });
+  });
+
+  test("no tags apply means no notice", () => {
+    expect(noticeFor({ latestVersion: "0.2.0", criticalVersion: null }, "0.2.0")).toBeNull();
+  });
+});
+
 describe("checkForUpdate", () => {
   const base = { currentVersion: "0.2.0", now: NOW, env: {} };
 
   test("advertises a newer version and caches the answer", async () => {
     const path = cachePath();
-    expect(await checkForUpdate({ ...base, path, fetchImpl: respondWith({ version: "0.3.0" }) })).toBe(
-      "0.3.0",
-    );
-    expect(readUpdateCache(path)).toEqual({ latestVersion: "0.3.0", checkedAtMs: NOW_MS });
+    expect(
+      await checkForUpdate({ ...base, path, fetchImpl: respondWith({ latest: "0.3.0" }) }),
+    ).toEqual({ version: "0.3.0", isCritical: false });
+    expect(readUpdateCache(path)).toEqual({
+      latestVersion: "0.3.0",
+      criticalVersion: null,
+      checkedAtMs: NOW_MS,
+    });
+  });
+
+  test("a critical tag turns the same answer into an emergency notice", async () => {
+    const path = cachePath();
+    expect(
+      await checkForUpdate({
+        ...base,
+        path,
+        fetchImpl: respondWith({ latest: "0.4.0", critical: "0.3.0" }),
+      }),
+    ).toEqual({ version: "0.3.0", isCritical: true });
+    expect(readUpdateCache(path)).toEqual({
+      latestVersion: "0.4.0",
+      criticalVersion: "0.3.0",
+      checkedAtMs: NOW_MS,
+    });
   });
 
   test("says nothing when the registry matches or trails the running version", async () => {
     expect(
-      await checkForUpdate({ ...base, path: cachePath(), fetchImpl: respondWith({ version: "0.2.0" }) }),
+      await checkForUpdate({ ...base, path: cachePath(), fetchImpl: respondWith({ latest: "0.2.0" }) }),
     ).toBeNull();
     expect(
-      await checkForUpdate({ ...base, path: cachePath(), fetchImpl: respondWith({ version: "0.1.0" }) }),
+      await checkForUpdate({ ...base, path: cachePath(), fetchImpl: respondWith({ latest: "0.1.0" }) }),
     ).toBeNull();
+  });
+
+  test("a critical tag applies even when latest matches the running version", async () => {
+    expect(
+      await checkForUpdate({
+        ...base,
+        path: cachePath(),
+        fetchImpl: respondWith({ latest: "0.2.0", critical: "0.3.0" }),
+      }),
+    ).toEqual({ version: "0.3.0", isCritical: true });
   });
 
   test("serves a fresh cache without touching the network", async () => {
     const path = cachePath();
-    writeUpdateCache(path, { latestVersion: "0.4.0", checkedAtMs: NOW_MS - 60_000 });
+    writeUpdateCache(path, { latestVersion: "0.4.0", criticalVersion: null, checkedAtMs: NOW_MS - 60_000 });
     const explode: FetchLike = () => {
       throw new Error("the network must not be reached");
     };
-    expect(await checkForUpdate({ ...base, path, fetchImpl: explode })).toBe("0.4.0");
+    expect(await checkForUpdate({ ...base, path, fetchImpl: explode })).toEqual({
+      version: "0.4.0",
+      isCritical: false,
+    });
+  });
+
+  test("serves a cached critical tag without touching the network", async () => {
+    const path = cachePath();
+    writeUpdateCache(path, {
+      latestVersion: "0.4.0",
+      criticalVersion: "0.3.0",
+      checkedAtMs: NOW_MS - 60_000,
+    });
+    const explode: FetchLike = () => {
+      throw new Error("the network must not be reached");
+    };
+    expect(await checkForUpdate({ ...base, path, fetchImpl: explode })).toEqual({
+      version: "0.3.0",
+      isCritical: true,
+    });
   });
 
   test("re-asks once the cache ages past a day", async () => {
     const path = cachePath();
-    writeUpdateCache(path, { latestVersion: "0.4.0", checkedAtMs: NOW_MS - DAY_MS - 1 });
-    expect(await checkForUpdate({ ...base, path, fetchImpl: respondWith({ version: "0.5.0" }) })).toBe(
-      "0.5.0",
-    );
+    writeUpdateCache(path, {
+      latestVersion: "0.4.0",
+      criticalVersion: null,
+      checkedAtMs: NOW_MS - DAY_MS - 1,
+    });
+    expect(await checkForUpdate({ ...base, path, fetchImpl: respondWith({ latest: "0.5.0" }) })).toEqual({
+      version: "0.5.0",
+      isCritical: false,
+    });
     expect(readUpdateCache(path)?.latestVersion).toBe("0.5.0");
   });
 
   test("re-asks when the stamp is in the future, rather than trusting it forever", async () => {
     // A clock roll-back would otherwise pin a stale answer until the date caught up.
     const path = cachePath();
-    writeUpdateCache(path, { latestVersion: "0.4.0", checkedAtMs: NOW_MS + DAY_MS });
-    expect(await checkForUpdate({ ...base, path, fetchImpl: respondWith({ version: "0.5.0" }) })).toBe(
-      "0.5.0",
-    );
+    writeUpdateCache(path, {
+      latestVersion: "0.4.0",
+      criticalVersion: null,
+      checkedAtMs: NOW_MS + DAY_MS,
+    });
+    expect(await checkForUpdate({ ...base, path, fetchImpl: respondWith({ latest: "0.5.0" }) })).toEqual({
+      version: "0.5.0",
+      isCritical: false,
+    });
   });
 
   test("stays silent and skips the network when opted out", async () => {
@@ -195,7 +300,7 @@ describe("checkForUpdate", () => {
 
   test("writes the cache with owner-only permissions", () => {
     const path = cachePath();
-    writeUpdateCache(path, { latestVersion: "0.3.0", checkedAtMs: NOW_MS });
+    writeUpdateCache(path, { latestVersion: "0.3.0", criticalVersion: null, checkedAtMs: NOW_MS });
     expect(readFileSync(path, "utf8")).toContain("0.3.0");
     expect(statSync(path).mode & 0o777).toBe(0o600);
   });

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useBlink } from "../hooks/use-blink";
 import { FINE_STEP_SECONDS, useSecondsSince } from "../hooks/use-seconds-since";
 import { columnWidth } from "../lib/text";
+import { APP_NAME } from "../config";
 import { COLORS, SPINNER_FRAMES } from "../theme";
 import { PROVIDER_IDS } from "../data/types";
 import { VIEW_KEYS, type ViewKey } from "../state/app-state";
@@ -79,6 +80,30 @@ export function Header({
         { text: " ▏ ", color: COLORS.rule },
         { text: `updated ${updatedLabel}`, color: COLORS.textFaint },
         { text: ` ${spinner.padEnd(1)}`, color: COLORS.info },
+      ]}
+    />
+  );
+}
+
+interface UpdateBannerProps {
+  width: number;
+  version: string;
+}
+
+/**
+ * Full-width critical notice above the header. There is no dismiss key by
+ * design: the banner persists until the user actually updates, and a static
+ * line costs no re-renders, which a blink timer would.
+ */
+export function UpdateBanner({ width, version }: UpdateBannerProps) {
+  return (
+    <SplitLine
+      width={width}
+      background={COLORS.danger}
+      left={[
+        { text: " ▲ CRITICAL UPDATE ", color: COLORS.bg, isBold: true },
+        { text: `v${version}`, color: COLORS.bg, isBold: true },
+        { text: `  ·  run: npm install -g ${APP_NAME}@latest`, color: COLORS.bg },
       ]}
     />
   );

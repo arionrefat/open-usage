@@ -3,11 +3,14 @@ import { testRender } from "@opentui/react/test-utils";
 import { act } from "react";
 import { App } from "../src/app";
 import { mockUsageProvider } from "../src/data/mock-provider";
+import type { UpdateNotice } from "../src/data/real/update-check";
 
 const WIDTH = 140;
 const HEIGHT = 44;
 
-async function renderFrame(checkUpdate?: () => Promise<string | null>): Promise<string> {
+async function renderFrame(
+  checkUpdate?: () => Promise<UpdateNotice | null>,
+): Promise<string> {
   // The check settles on a microtask after mount, so both the mount and the
   // wait have to happen inside act() for the state update it triggers to be
   // attributed to a scope React knows about.
@@ -38,7 +41,9 @@ async function renderFrame(checkUpdate?: () => Promise<string | null>): Promise<
 }
 
 test("the header announces a newer published version", async () => {
-  const frame = await renderFrame(() => Promise.resolve("0.9.0"));
+  const frame = await renderFrame(() =>
+    Promise.resolve({ version: "0.9.0", isCritical: false }),
+  );
   expect(frame).toContain("v0.9.0 available");
 });
 
@@ -47,10 +52,22 @@ test("the header says nothing when the check reports no newer version", async ()
   expect(frame).not.toContain("available");
 });
 
+test("a critical update renders the banner with the version and the install command", async () => {
+  const frame = await renderFrame(() =>
+    Promise.resolve({ version: "0.12.0", isCritical: true }),
+  );
+  expect(frame).toContain("CRITICAL UPDATE");
+  expect(frame).toContain("v0.12.0");
+  expect(frame).toContain("npm install -g open-usage@latest");
+  // The dim corner notice stays quiet so the fact is not stated twice.
+  expect(frame).not.toContain("v0.12.0 available");
+});
+
 test("a failing check leaves the dashboard untouched rather than surfacing an error", async () => {
   const frame = await renderFrame(() => Promise.reject(new Error("offline")));
 
   expect(frame).not.toContain("available");
+  expect(frame).not.toContain("CRITICAL UPDATE");
   expect(frame).not.toContain("offline");
   // The rest of the header still renders, so a dead registry costs nothing.
   expect(frame).toContain("OPEN USAGE");
@@ -62,5 +79,6 @@ test("no check runs unless one is injected, so tests and previews stay offline",
   // and `shot.tsx` all construct App without supplying `checkUpdate`.
   const frame = await renderFrame();
   expect(frame).not.toContain("available");
+  expect(frame).not.toContain("CRITICAL UPDATE");
   expect(frame).toContain("OPEN USAGE");
 });
