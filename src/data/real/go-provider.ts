@@ -14,7 +14,7 @@ import type { OpencodeSessionStats } from "./opencode-db";
 import type { GoSpend, SpendWindow } from "./opencode-go-spend";
 import type { GoServerLimits } from "./opencode-server";
 import type { GoBilling } from "./opencode-usage";
-import { capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
+import { capLessLimit, formatTokenCount, localBurn, planEndFrom, resetText } from "./provider-helpers";
 
 const GO_LIMIT_FOOTNOTE = "model-weighted local estimate - API key or cookie unlocks exact %";
 const COOKIE_WARNING_MS = 7 * DAY_MS;
@@ -333,11 +333,20 @@ interface GoProviderResult {
 }
 
 /** The stated source follows whichever authoritative quota path produced the reading. */
-function goMetaFor(meta: ProviderMeta, server: GoServerLimits | null, usesEstimate: boolean): ProviderMeta {
+function goMetaFor(
+  meta: ProviderMeta,
+  server: GoServerLimits | null,
+  usesEstimate: boolean,
+  nowMs: number,
+): ProviderMeta {
   if (!server) return meta;
+  // The monthly window covers the billing cycle, so its reset is the day the
+  // paid period turns over. Only the server states it; the estimate guesses.
+  const planEnd = planEndFrom(server.monthlyResetAtMs, nowMs);
   const fromServer = {
     ...meta,
     source: server.source === "api" ? "opencode go usage API" : "opencode.ai dashboard",
+    ...(planEnd ? { planEnd } : {}),
   };
   return usesEstimate
     ? fromServer
@@ -365,7 +374,7 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
     usesEstimate,
     provider: {
       id: "go",
-      meta: goMetaFor(meta, server, usesEstimate),
+      meta: goMetaFor(meta, server, usesEstimate, nowMs),
       series: seriesFromBuckets(buckets, dates, now),
       ...(workspace ? { seriesScope: "workspace" as const } : {}),
       // The server keeps its own month history, so a cookie alone is enough.

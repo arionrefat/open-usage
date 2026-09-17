@@ -178,6 +178,17 @@ The writer now uses `days` and the parser accepts `days ?? months`, so records b
 Worth noting how it survived: the store had unit tests, but they exercised the pure fold functions and never wrote a file and read it back.
 A round-trip test through `updateSpendStore` now covers both the current key and the legacy one.
 
+### Subscription end date: no trustworthy source
+
+Researched 2026-09-18 against Claude Code on a Max account.
+Nothing first-party states when the paid period ends: `claude auth status --json` carries `subscriptionType` only, `/usage` prints limits and no billing date, and `cachedUsageUtilization` has no cycle boundary.
+The one derivable figure is a monthly anniversary of `oauthAccount.subscriptionCreatedAt` in `~/.claude.json`, and it was checked against the account's own billing page before being built.
+It failed twice on the same account: the anniversary fell on the 17th while the billing page said the 18th, and the page said the plan would be *canceled* on that day, which a creation date cannot know.
+The account's invoices were dated the 18th of each month, so the billing anchor is not the creation date at all, most likely because a plan change moved it.
+A scan of the Claude Code 2.1.274 binary for period-end, next-billing, renewal and cancel-at field names found none, so the CLI never receives the date and no future local file can be expected to hold it.
+A header reading "renews Oct 17" beside a plan that ends on Sep 18 is worse than no date, so the claude card states none.
+The billing page itself is behind the web session cookie, which stays off limits for the reasons above.
+
 ## codex
 
 ### Sources, best first
@@ -294,6 +305,16 @@ Fields left unread, and why: `rateLimitsByLimitId`, `individualLimit` and `spend
 That is a one-way account action, and this is a read-only dashboard: every other call it makes can be repeated with no consequence.
 Burning a scarce credit from a background poller - or from a mis-keyed keystroke - is not a failure mode worth introducing for convenience. If it is ever added it should require an explicit confirmation, never a bare keybinding.
 
+### Subscription end date
+
+The app-server reports `planType` but not when the plan runs out.
+The id token in `~/.codex/auth.json` does: its `https://api.openai.com/auth` claim carries `chatgpt_subscription_active_until`, beside `chatgpt_subscription_active_start` and `chatgpt_subscription_last_checked`.
+`codex-subscription.ts` decodes that one claim from the local file and nothing else; the token is never kept, logged or sent, so this adds no credential handling to the RPC path above.
+Checked 2026-09-18 against the ChatGPT billing page, which read "Your plan auto-renews on Oct 5, 2026" while the claim read 2026-10-05.
+The card header shows it as `Plus · until Oct 5`, on the existing header row so no meter moves.
+The wording is "until" rather than "renews" because the claim states when the paid period stops, not whether it will be renewed.
+Codex only rewrites the token when it next refreshes its sign-in, so a date already in the past is a stale reading rather than a lapsed plan, and the header omits it instead of guessing which.
+
 ## opencode go
 
 ### Sources, best first
@@ -390,6 +411,9 @@ The dashboard keeps the three in separate chart stacks for this reason, so any s
 Verified on a Go account whose `billing.get` reports `balance = 0`, `monthlyUsage = null` and `subscription = null` with only `lite` set: every row is `lite`, totalling $40.9177 in July, none of which was billed.
 
 The real-money surface for a go account is `billing.get`: `balance`, `reloadAmount`, `reloadTrigger`, `monthlyLimit`.
+
+The monthly window's reset doubles as the plan's end date: the header reads `Go · until Oct 9`, on the same terms as codex and only when the server reports the window.
+The local estimate never states one, since its cycle anchor is inferred rather than reported.
 
 Do not reconcile a calendar-month cost total against the `lite.subscription.get` monthly percent.
 That percent covers a billing cycle rather than a calendar month, and `GO_QUOTA_WEIGHTS` records that some models burn quota four times faster per raw dollar, so dollars do not map linearly onto percent.

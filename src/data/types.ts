@@ -21,6 +21,13 @@ export type RangeKey = "today" | "7d" | "30d" | "month";
 
 export const RANGE_KEYS: readonly RangeKey[] = ["today", "7d", "30d", "month"] as const;
 
+export interface PlanEnd {
+  /** e.g. "until Oct 5". Says when the paid period stops, not whether it renews. */
+  text: string;
+  /** Close enough that it should stand out from the plan name beside it. */
+  isSoon: boolean;
+}
+
 export interface ProviderMeta {
   id: ProviderId;
   /** Lowercase display name, e.g. "claude code". */
@@ -31,6 +38,8 @@ export interface ProviderMeta {
   planShort: string;
   /** Plan line on the provider detail screen. */
   planDetail: string;
+  /** Absent when the provider states no end date, which is not the same as "never ends". */
+  planEnd?: PlanEnd;
   /** What the user has to supply to connect, shown during onboarding. */
   requirement: string;
   /** Where limits are read from once connected. */

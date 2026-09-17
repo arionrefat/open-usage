@@ -55,6 +55,35 @@ function buildWithStats(sessions: number) {
 }
 
 describe("buildCodexProvider", () => {
+  test("carries the subscription end date beside the plan codex reports", () => {
+    const provider = buildCodexProvider({
+      meta: createCodexMeta(),
+      buckets: new Map(),
+      stats: undefined,
+      limitsSource: source(account()),
+      subscriptionEndsAtMs: NOW_MS + 20 * DAY_MS,
+      dates: [DATE],
+      now: NOW,
+    });
+
+    expect(provider.meta.planShort).toBe("Plus");
+    expect(provider.meta.planEnd).toEqual({ text: "until Feb 4", isSoon: false });
+  });
+
+  test("states no end date without a live plan to attach it to", () => {
+    const provider = buildCodexProvider({
+      meta: createCodexMeta(),
+      buckets: new Map(),
+      stats: undefined,
+      limitsSource: source(null),
+      subscriptionEndsAtMs: NOW_MS + 20 * DAY_MS,
+      dates: [DATE],
+      now: NOW,
+    });
+
+    expect(provider.meta.planEnd).toBeUndefined();
+  });
+
   test("preserves the raw 30-day session count", () => {
     expect(buildWithStats(11).sessions30d).toBe(11);
   });

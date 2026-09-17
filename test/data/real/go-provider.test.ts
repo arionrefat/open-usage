@@ -102,6 +102,12 @@ describe("buildGoProvider details", () => {
     expect(build({}).provider.cacheRead30d).toBeUndefined();
   });
 
+  test("states the day the billing cycle turns over, and only when the server says", () => {
+    expect(build({ server: SERVER }).provider.meta.planEnd).toEqual({ text: "until Jan 15", isSoon: true });
+    expect(build({ server: { ...SERVER, monthlyResetAtMs: null } }).provider.meta.planEnd).toBeUndefined();
+    expect(build({}).provider.meta.planEnd).toBeUndefined();
+  });
+
   test("shows the server balance fallback flag", () => {
     const on = build({ stats, server: { ...SERVER, useBalance: true } }).provider.details;
     const off = build({ stats, server: { ...SERVER, useBalance: false } }).provider.details;

@@ -1,10 +1,10 @@
 import { COLORS } from "../../theme";
-import type { DetailRow, DetailSection, LimitAlert, ProviderMeta, ProviderUsage, UsageLimit } from "../types";
+import type { DetailRow, DetailSection, LimitAlert, PlanEnd, ProviderMeta, ProviderUsage, UsageLimit } from "../types";
 import { formatAge, formatClock, formatCountdown, seriesFromBuckets, tokensPerHour, type HourBuckets } from "./aggregate";
 import type { CodexAccountLimits, CodexWindow } from "./codex-app-server";
 import type { CodexLimitsSource } from "./codex-limits";
 import type { OpencodeSessionStats } from "./opencode-db";
-import { capLessLimit, formatTokenCount, localBurn, resetText } from "./provider-helpers";
+import { capLessLimit, formatTokenCount, localBurn, planEndFrom, resetText } from "./provider-helpers";
 
 const CODEX_NO_LIMITS = "codex limits unavailable";
 /** A limit id can contribute both a short and a long window, so budget two each. */
@@ -95,7 +95,7 @@ function codexDetails(limits: CodexAccountLimits, dates: string[]): DetailSectio
 }
 
 /** Turns the CLI's wire enum into a plan label rather than exposing underscores. */
-function withPlan(meta: ProviderMeta, planType: string): ProviderMeta {
+function withPlan(meta: ProviderMeta, planType: string, planEnd: PlanEnd | undefined): ProviderMeta {
   const known: Record<string, string> = {
     ent26: "Enterprise",
     self_serve_business_prolite: "Business Pro Lite",
@@ -112,7 +112,7 @@ function withPlan(meta: ProviderMeta, planType: string): ProviderMeta {
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
-  return { ...meta, plan, planShort: plan, planDetail: plan };
+  return { ...meta, plan, planShort: plan, planDetail: plan, ...(planEnd ? { planEnd } : {}) };
 }
 
 /** Names a window by the duration codex reports rather than by assumption. */
@@ -207,6 +207,8 @@ interface CodexProviderInput {
   buckets: HourBuckets;
   stats: OpencodeSessionStats | undefined;
   limitsSource: CodexLimitsSource;
+  /** Epoch ms the paid period runs out, or null when auth.json does not say. */
+  subscriptionEndsAtMs?: number | null;
   dates: string[];
   now: Date;
 }
@@ -219,7 +221,9 @@ export function buildCodexProvider(input: CodexProviderInput): ProviderUsage {
   return {
     id: "cx",
     // Codex reports the real plan; the opencode-derived label is only a stand-in.
-    meta: limits?.planType ? withPlan(meta, limits.planType) : meta,
+    meta: limits?.planType
+      ? withPlan(meta, limits.planType, planEndFrom(input.subscriptionEndsAtMs ?? null, nowMs))
+      : meta,
     // Local rollouts, blended, always. The server's own daily history is wider
     // but cache-inclusive, so it cannot share an axis with the other providers
     // or even with this provider's hourly view and burn rate, which are local.

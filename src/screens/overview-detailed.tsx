@@ -6,6 +6,7 @@ import {
   STATUS_PRESENTATION,
   type BurnRate,
   type ProviderId,
+  type ProviderMeta,
   type UsageSnapshot,
 } from "../data/types";
 import { isProviderLive, type AppState } from "../state/app-state";
@@ -18,6 +19,8 @@ const CARD_MAX_WIDTH = 44;
 const CARD_GAP = 2;
 const DAY_LABEL_WIDTH = 9;
 const MIN_COLUMN_WIDTH = 20;
+/** Columns kept clear between a card's name and its plan. */
+const HEADER_GAP = 2;
 const SHARE_GAP = 2;
 /** Fits "100%". */
 const SHARE_PERCENT_WIDTH = 4;
@@ -169,6 +172,20 @@ function DisconnectedNotice({
   );
 }
 
+/**
+ * The end date rides on the header line so it costs no row, which keeps every
+ * meter below at the same height across cards. On a card too narrow for both
+ * it is the date that goes: a clipped date reads as a wrong one.
+ */
+function planSegments(meta: ProviderMeta, width: number): Segment[] {
+  const plan: Segment = { text: meta.planShort, color: COLORS.textGhost };
+  if (!meta.planEnd) return [plan];
+  const end = ` · ${meta.planEnd.text}`;
+  const room = width - columnWidth(`▎${meta.name}`) - HEADER_GAP;
+  if (columnWidth(meta.planShort) + columnWidth(end) > room) return [plan];
+  return [plan, { text: end, color: meta.planEnd.isSoon ? COLORS.warn : COLORS.textGhost }];
+}
+
 function ProviderCard({
   id,
   state,
@@ -201,7 +218,7 @@ function ProviderCard({
           { text: "▎", color: isSelected ? PROVIDER_COLORS[id] : COLORS.markIdle },
           { text: provider.meta.name, color: isSelected ? COLORS.textBright : COLORS.textSoft, isBold: true },
         ]}
-        right={[{ text: provider.meta.planShort, color: COLORS.textGhost }]}
+        right={planSegments(provider.meta, width)}
       />
       <Spacer />
       {isLive ? (

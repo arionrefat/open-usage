@@ -398,6 +398,14 @@ export function ProviderDetail({
           { text: provider.meta.name, color: COLORS.textBright, isBold: true },
           { text: " ▏ ", color: COLORS.rule },
           { text: provider.meta.planDetail, color: COLORS.textFaint },
+          ...(provider.meta.planEnd
+            ? [
+                {
+                  text: ` · ${provider.meta.planEnd.text}`,
+                  color: provider.meta.planEnd.isSoon ? COLORS.warn : COLORS.textFaint,
+                },
+              ]
+            : []),
         ]}
       />
       {isStale ? (

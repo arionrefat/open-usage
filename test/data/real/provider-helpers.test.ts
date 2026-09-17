@@ -4,6 +4,7 @@ import {
   capLessLimit,
   formatTokenCount,
   localBurn,
+  planEndFrom,
   resetText,
 } from "../../../src/data/real/provider-helpers";
 
@@ -57,5 +58,27 @@ describe("localBurn", () => {
       // projection it cannot make, rather than splicing words into a sentence.
       outcome: { kind: "no-cap" },
     });
+  });
+});
+
+describe("planEndFrom", () => {
+  const NOW_MS = new Date(2026, 8, 18, 12).getTime();
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  test("states the local calendar day the paid period stops", () => {
+    expect(planEndFrom(new Date(2026, 9, 5, 21).getTime(), NOW_MS)).toEqual({
+      text: "until Oct 5",
+      isSoon: false,
+    });
+  });
+
+  test("flags an end within three days", () => {
+    expect(planEndFrom(NOW_MS + 2 * DAY_MS, NOW_MS)?.isSoon).toBe(true);
+    expect(planEndFrom(NOW_MS + 4 * DAY_MS, NOW_MS)?.isSoon).toBe(false);
+  });
+
+  test("a date already past is a stale reading, so nothing is claimed", () => {
+    expect(planEndFrom(NOW_MS - DAY_MS, NOW_MS)).toBeUndefined();
+    expect(planEndFrom(null, NOW_MS)).toBeUndefined();
   });
 });

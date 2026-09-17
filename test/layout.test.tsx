@@ -246,6 +246,42 @@ test("a card alert sits below every meter so neighbouring cards stay row-aligned
   expect(alerted.findIndex((row) => row.includes(CARD_ALERT))).toBeGreaterThan(meterRow(alerted));
 });
 
+function withPlanEnd(snapshot: UsageSnapshot): UsageSnapshot {
+  const codex = snapshot.providers.cx;
+  return {
+    ...snapshot,
+    providers: {
+      ...snapshot.providers,
+      cx: { ...codex, meta: { ...codex.meta, planEnd: { text: "until Oct 5", isSoon: false } } },
+    },
+  };
+}
+
+test("a plan end date rides on the card header without moving any row", async () => {
+  const plain = await renderRows(140, "overview", "detailed");
+  const dated = await renderRows(140, "overview", "detailed", withPlanEnd);
+
+  expect(rowContaining(dated, "▎codex")).toContain("Plus · until Oct 5");
+  expect(dated).toHaveLength(plain.length);
+  const header = dated.findIndex((row) => row.includes("until Oct 5"));
+  expect(dated.filter((_, index) => index !== header)).toEqual(
+    plain.filter((_, index) => index !== header),
+  );
+});
+
+test("a card too narrow for both keeps the plan and drops the date whole", async () => {
+  const header = rowContaining(await renderRows(80, "overview", "detailed", withPlanEnd), "▎codex");
+
+  expect(header).toContain("Plus");
+  expect(header).not.toContain("until");
+});
+
+test("the provider screen states the plan end date beside the plan", async () => {
+  const rows = await renderRows(100, "codex", "detailed", withPlanEnd);
+
+  expect(rows.join("\n")).toContain("Plus · until Oct 5");
+});
+
 test("a provider with no cap states its rate instead of projecting against nothing", async () => {
   const rows = await renderRows(140, "overview", "detailed", (snapshot) => ({
     ...snapshot,

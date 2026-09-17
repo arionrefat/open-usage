@@ -17,6 +17,7 @@ import { loadPriceTable } from "./real/pricing";
 import { createClaudeLimitsSource, type ClaudeLimitsSource } from "./real/claude-usage";
 import { buildCodexProvider, codexWindowNote, createCodexMeta } from "./real/codex-provider";
 import { readCodexSessions } from "./real/codex-sessions";
+import { readCodexSubscriptionEnd } from "./real/codex-subscription";
 import { createCodexLimitsSource, type CodexLimitsSource } from "./real/codex-limits";
 import { buildGoProvider, createGoMeta } from "./real/go-provider";
 import {
@@ -481,6 +482,7 @@ function buildSnapshot(
   }
   const cx = buildCodexProvider({
     meta: meta.cx,
+    subscriptionEndsAtMs: readCodexSubscriptionEnd(paths.codexHome),
     buckets: codexLocal?.buckets ?? providerBuckets(opencode, "openai"),
     stats: codexLocal
       ? {
