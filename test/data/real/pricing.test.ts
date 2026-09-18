@@ -46,6 +46,20 @@ describe("priceTokens", () => {
     expect(usd).toBeCloseTo(0.5, 10);
   });
 
+  test("a model with a published cache read rate uses it instead of the tenth-of-input rule", () => {
+    // Fable 5.1 bills cache reads at $0.25 per million, not 10% of its $10 input rate.
+    const { usd } = priceTokens("claude-fable-5-1", tokens({ cacheRead: MILLION }));
+
+    expect(usd).toBeCloseTo(0.25, 10);
+  });
+
+  test("fable 5.1 is priced rather than reported as unpriced", () => {
+    const { usd } = priceTokens("claude-fable-5-1", tokens({ input: MILLION, output: MILLION }));
+
+    expect(usd).toBeCloseTo(60, 10);
+    expect(isPricedModel("claude-fable-5-1")).toBe(true);
+  });
+
   test("cache writes bill at 1.25x for 5m and 2x for 1h", () => {
     const short = priceTokens("claude-opus-5", tokens({ cacheWrite5m: MILLION }));
     const long = priceTokens("claude-opus-5", tokens({ cacheWrite1h: MILLION }));
@@ -116,6 +130,16 @@ describe("loadPriceTable", () => {
 
     expect(table["claude-opus-5"]).toEqual({ input: 4, output: 20 });
     expect(table["claude-sonnet-5"]?.input).toBe(3);
+  });
+
+  test("an override can set a per-model cache read rate", () => {
+    const dir = mkdtempSync(join(tmpdir(), "open-usage-pricing-"));
+    const path = join(dir, "pricing.json");
+    writeFileSync(path, JSON.stringify({ "claude-opus-5": { input: 5, output: 25, cacheRead: 0.3 } }));
+
+    const table = loadPriceTable(path);
+
+    expect(table["claude-opus-5"]).toEqual({ input: 5, output: 25, cacheRead: 0.3 });
   });
 
   test("a malformed entry is skipped rather than breaking every price", () => {

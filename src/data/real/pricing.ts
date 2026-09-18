@@ -5,11 +5,14 @@ import { isRecord } from "./json";
  * Prices are USD per million tokens, as published by Anthropic.
  * Rendered in the UI so a stale table is visible rather than silently wrong.
  */
-export const PRICES_AS_OF = "2026-08-17";
+export const PRICES_AS_OF = "2026-09-18";
 
 const PER_MILLION = 1_000_000;
 
-/** Cache reads bill at 10% of input; writes at 1.25x (5m TTL) or 2x (1h TTL). */
+/**
+ * Cache reads bill at 10% of input unless the model publishes its own rate;
+ * writes at 1.25x (5m TTL) or 2x (1h TTL).
+ */
 const CACHE_READ_MULTIPLIER = 0.1;
 const CACHE_WRITE_5M_MULTIPLIER = 1.25;
 const CACHE_WRITE_1H_MULTIPLIER = 2;
@@ -19,6 +22,8 @@ export interface ModelPrice {
   input: number;
   /** USD per million output tokens. */
   output: number;
+  /** USD per million cache read tokens; absent when the model bills the standard 10% of input. */
+  cacheRead?: number;
   /** Fast mode bills at its own rate; absent when the model has no fast mode. */
   fast?: { input: number; output: number };
 }
@@ -28,6 +33,7 @@ export interface ModelPrice {
  * unpriced rather than priced at zero - see `priceTokens`.
  */
 const BASE_PRICES: Record<string, ModelPrice> = {
+  "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.25 },
   "claude-fable-5": { input: 10, output: 50 },
   "claude-mythos-5": { input: 10, output: 50 },
   "claude-opus-5": { input: 5, output: 25, fast: { input: 10, output: 50 } },
@@ -89,10 +95,11 @@ export function priceTokens(
   if (!price) return { usd: null, model: canonical };
 
   const { input, output } = ratesFor(price, usage.speed);
+  const cacheRead = price.cacheRead ?? input * CACHE_READ_MULTIPLIER;
   const usd =
     (usage.input * input +
       usage.output * output +
-      usage.cacheRead * input * CACHE_READ_MULTIPLIER +
+      usage.cacheRead * cacheRead +
       usage.cacheWrite5m * input * CACHE_WRITE_5M_MULTIPLIER +
       usage.cacheWrite1h * input * CACHE_WRITE_1H_MULTIPLIER) /
     PER_MILLION;
@@ -105,10 +112,15 @@ function parsePrice(value: unknown): ModelPrice | null {
   const output = value.output;
   if (typeof input !== "number" || !Number.isFinite(input) || input < 0) return null;
   if (typeof output !== "number" || !Number.isFinite(output) || output < 0) return null;
+  const cacheRead = value.cacheRead;
+  const base: ModelPrice =
+    typeof cacheRead === "number" && Number.isFinite(cacheRead) && cacheRead >= 0
+      ? { input, output, cacheRead }
+      : { input, output };
   const fastRaw = value.fast;
-  if (fastRaw === undefined) return { input, output };
+  if (fastRaw === undefined) return base;
   const fast = parsePrice(fastRaw);
-  return fast ? { input, output, fast: { input: fast.input, output: fast.output } } : { input, output };
+  return fast ? { ...base, fast: { input: fast.input, output: fast.output } } : base;
 }
 
 /**
