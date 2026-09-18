@@ -115,26 +115,22 @@ function SettingLine({
   label,
   value,
   hint,
+  width,
 }: {
   label: string;
   value: string;
   hint?: string;
+  width: number;
 }) {
   return (
-    <box flexDirection="column" flexShrink={0}>
-      <Line
-        segments={[
-          { text: padEnd(label, SETTING_LABEL_COLUMN), color: COLORS.textFaint },
-          { text: value, color: COLORS.text },
-        ]}
-      />
-      {hint ? (
-        <Line segments={[
-          { text: " ".repeat(SETTING_LABEL_COLUMN), color: COLORS.textGhost },
-          { text: hint, color: COLORS.textMuted },
-        ]} />
-      ) : null}
-    </box>
+    <SplitLine
+      width={width}
+      left={[
+        { text: padEnd(label, SETTING_LABEL_COLUMN), color: COLORS.textFaint },
+        { text: value, color: COLORS.text },
+      ]}
+      right={hint ? [{ text: hint, color: COLORS.textMuted }] : []}
+    />
   );
 }
 
@@ -144,24 +140,24 @@ function SettingOptions<T>({
   current,
   onSelect,
   hint,
+  width,
 }: {
   label: string;
   options: ToggleOption<T>[];
   current: T;
   onSelect: (value: T) => void;
   hint: Segment[];
+  width: number;
 }) {
   return (
-    <box flexDirection="column" flexShrink={0}>
-      <Line segments={[
+    <SplitLine
+      width={width}
+      left={[
         { text: padEnd(label, SETTING_LABEL_COLUMN), color: COLORS.textFaint },
         ...toggleSegments(options, current, onSelect),
-      ]} />
-      <Line segments={[
-        { text: " ".repeat(SETTING_LABEL_COLUMN), color: COLORS.textGhost },
-        ...hint,
-      ]} />
-    </box>
+      ]}
+      right={hint}
+    />
   );
 }
 
@@ -205,7 +201,9 @@ export function Settings(props: SettingsProps) {
           ...modeToggleSegments(state.mode, actions),
         ]}
       />
+      <Spacer />
       <SettingOptions
+        width={width}
         label="poll interval"
         options={POLL_OPTIONS}
         current={state.pollIntervalMinutes}
@@ -217,7 +215,9 @@ export function Settings(props: SettingsProps) {
           { text: " force a refresh", color: COLORS.textMuted },
         ]}
       />
+      <Spacer />
       <SettingOptions
+        width={width}
         label="alert threshold"
         options={WARN_OPTIONS}
         current={state.warnThreshold}
@@ -227,7 +227,9 @@ export function Settings(props: SettingsProps) {
           { text: " cycle options  ·  red at this level", color: COLORS.textMuted },
         ]}
       />
+      <Spacer />
       <SettingLine
+        width={width}
         label="colors"
         value={state.useSeverityColors ? "severity only" : COLOR_MODE_LABEL}
         hint={state.useSeverityColors ? "per-provider brand available" : "severity-only available"}

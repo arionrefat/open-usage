@@ -494,8 +494,8 @@ describe("App interactions", () => {
     try {
       await setup.flush();
       await act(async () => setup.mockMouse.click(28, 25));
-      await act(async () => setup.mockMouse.click(40, 26));
-      await act(async () => setup.mockMouse.click(38, 28));
+      await act(async () => setup.mockMouse.click(40, 27));
+      await act(async () => setup.mockMouse.click(38, 29));
       await setup.flush();
       expect(patches).toEqual([
         { defaultOverviewMode: "simple" },
