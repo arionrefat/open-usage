@@ -221,59 +221,38 @@ describe("checkForUpdate", () => {
     ).toEqual({ version: "0.3.0", isCritical: true });
   });
 
-  test("serves a fresh cache without touching the network", async () => {
+  test("asks the registry on every launch, even with a recent cache", async () => {
+    // A release must show up the next time the dashboard opens, not a day later.
     const path = cachePath();
-    writeUpdateCache(path, { latestVersion: "0.4.0", criticalVersion: null, checkedAtMs: NOW_MS - 60_000 });
-    const explode: FetchLike = () => {
-      throw new Error("the network must not be reached");
-    };
-    expect(await checkForUpdate({ ...base, path, fetchImpl: explode })).toEqual({
+    writeUpdateCache(path, { latestVersion: "0.2.0", criticalVersion: null, checkedAtMs: NOW_MS - 60_000 });
+    expect(await checkForUpdate({ ...base, path, fetchImpl: respondWith({ latest: "0.3.0" }) })).toEqual({
+      version: "0.3.0",
+      isCritical: false,
+    });
+    expect(readUpdateCache(path)?.latestVersion).toBe("0.3.0");
+  });
+
+  test("falls back to the last cached answer when the registry is unreachable", async () => {
+    const rejects: FetchLike = () => Promise.reject(new Error("offline"));
+    const path = cachePath();
+    writeUpdateCache(path, { latestVersion: "0.4.0", criticalVersion: null, checkedAtMs: NOW_MS - DAY_MS });
+    expect(await checkForUpdate({ ...base, path, fetchImpl: rejects })).toEqual({
       version: "0.4.0",
       isCritical: false,
     });
   });
 
-  test("serves a cached critical tag without touching the network", async () => {
+  test("falls back to a cached critical tag when the registry is unreachable", async () => {
+    const rejects: FetchLike = () => Promise.reject(new Error("offline"));
     const path = cachePath();
     writeUpdateCache(path, {
       latestVersion: "0.4.0",
       criticalVersion: "0.3.0",
-      checkedAtMs: NOW_MS - 60_000,
+      checkedAtMs: NOW_MS - DAY_MS,
     });
-    const explode: FetchLike = () => {
-      throw new Error("the network must not be reached");
-    };
-    expect(await checkForUpdate({ ...base, path, fetchImpl: explode })).toEqual({
+    expect(await checkForUpdate({ ...base, path, fetchImpl: rejects })).toEqual({
       version: "0.3.0",
       isCritical: true,
-    });
-  });
-
-  test("re-asks once the cache ages past a day", async () => {
-    const path = cachePath();
-    writeUpdateCache(path, {
-      latestVersion: "0.4.0",
-      criticalVersion: null,
-      checkedAtMs: NOW_MS - DAY_MS - 1,
-    });
-    expect(await checkForUpdate({ ...base, path, fetchImpl: respondWith({ latest: "0.5.0" }) })).toEqual({
-      version: "0.5.0",
-      isCritical: false,
-    });
-    expect(readUpdateCache(path)?.latestVersion).toBe("0.5.0");
-  });
-
-  test("re-asks when the stamp is in the future, rather than trusting it forever", async () => {
-    // A clock roll-back would otherwise pin a stale answer until the date caught up.
-    const path = cachePath();
-    writeUpdateCache(path, {
-      latestVersion: "0.4.0",
-      criticalVersion: null,
-      checkedAtMs: NOW_MS + DAY_MS,
-    });
-    expect(await checkForUpdate({ ...base, path, fetchImpl: respondWith({ latest: "0.5.0" }) })).toEqual({
-      version: "0.5.0",
-      isCritical: false,
     });
   });
 
@@ -290,11 +269,11 @@ describe("checkForUpdate", () => {
     expect(result).toBeNull();
   });
 
-  test("resolves to null rather than rejecting when the network fails", async () => {
+  test("resolves to null rather than rejecting when the network fails with no cache", async () => {
     const rejects: FetchLike = () => Promise.reject(new Error("offline"));
     const path = cachePath();
     expect(await checkForUpdate({ ...base, path, fetchImpl: rejects })).toBeNull();
-    // Nothing cached, so the next launch retries instead of banking a failure.
+    // A failure is never banked, so a later launch has nothing stale to fall back on.
     expect(readUpdateCache(path)).toBeNull();
   });
 

@@ -136,7 +136,7 @@ OPEN USAGE                    v0.4.0 available ▏ 3 providers ▏ ✓ all clear
 ```
 
 Update with the same command that installed it - `bun install -g open-usage@latest`, or the npm, pnpm or yarn equivalent.
-The check runs at most once a day, and [Configuration](#configuration) below covers switching it off.
+The check runs on every launch, and [Configuration](#configuration) below covers switching it off.
 
 ## What it reads
 
@@ -175,7 +175,7 @@ It also reads `~/.claude.json`, but only the `cachedUsageUtilization` block Clau
 Nothing is written outside its own config directory, and there is no telemetry or analytics of any kind.
 It makes two outbound requests of its own accord.
 One is to `opencode.ai`, and only if you opt in by configuring the cookie below.
-The other asks `registry.npmjs.org` whether a newer version has been published, so an installed copy can tell you it is out of date - it sends nothing but the request, caches the answer for a day, gives up after 1.5 seconds, and stays silent on any failure.
+The other asks `registry.npmjs.org` whether a newer version has been published, so an installed copy can tell you it is out of date - it sends nothing but the request, gives up after 1.5 seconds, and stays silent on any failure.
 Set `OPEN_USAGE_NO_UPDATE_CHECK` to switch it off.
 
 OpenCode Go does not publish per-account limits, so its percentages are local estimates and are labelled as such in the UI.

@@ -109,8 +109,8 @@ npm dist-tag add open-usage@0.4.1 critical
 
 Every install older than the tagged version shows a full-width red banner above
 the header until it has updated; a merely newer release shows only the dim
-corner notice. The tag is a single request for clients and joins the 24h update
-check cache, so users see the banner within a day of the tag at the latest.
+corner notice. The tag rides on the same request as the update check, which
+runs on every launch, so users see the banner the next time they open the app.
 
 Clear the flag once adoption is high enough, because every outdated install
 keeps nagging while it exists:

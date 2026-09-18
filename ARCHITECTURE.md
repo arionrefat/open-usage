@@ -122,7 +122,7 @@ They scan bytes for the record types they parse and decode only those lines, whi
 Masks credentials for display: 24 chars or shorter become all bullets, longer keeps first and last 4.
 
 **`update-check.ts`**
-On launch (24h cache, 1.5s deadline, `OPEN_USAGE_NO_UPDATE_CHECK` opts out) reads npm's dist-tags for `open-usage`: a newer `latest` shows the dim corner notice, and a `critical` tag the running version predates shows a persistent full-width banner. Mark a release critical with `npm dist-tag add open-usage@x.y.z critical`; clear it with `npm dist-tag rm`.
+On every launch (1.5s deadline, last answer cached as an offline fallback, `OPEN_USAGE_NO_UPDATE_CHECK` opts out) reads npm's dist-tags for `open-usage`: a newer `latest` shows the dim corner notice, and a `critical` tag the running version predates shows a persistent full-width banner. Mark a release critical with `npm dist-tag add open-usage@x.y.z critical`; clear it with `npm dist-tag rm`.
 Touch when: changing update-check behavior or wording of either notice.
 
 ### Daemon layer (`src/daemon/`)

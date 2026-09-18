@@ -3,12 +3,6 @@ import { dirname } from "node:path";
 import { configPath } from "../../config";
 import { isRecord } from "./json";
 
-/**
- * The registry answer is trusted for a day. This is a courtesy notice, not a
- * security check, and a release nobody hears about for a few hours costs less
- * than a request on every launch.
- */
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 /** A slow registry must never become a slow launch, so the window is short and hard. */
 const REQUEST_TIMEOUT_MS = 1500;
 /** One request answers both: the `latest` tag and any `critical` tag. */
@@ -179,9 +173,12 @@ export function noticeFor(
 }
 
 /**
- * The notice to render, or null when there is nothing to say. Never throws and
- * never rejects: the caller renders a dim corner line, so any failure has to end
- * as silence rather than as an error the user did not ask for.
+ * The notice to render, or null when there is nothing to say. Every launch asks
+ * the registry, so a release shows up the next time the dashboard opens; the
+ * cache only stands in when that request fails, so an install that already
+ * heard about a release keeps saying so while offline. Never throws and never
+ * rejects: the caller renders a dim corner line, so any failure has to end as
+ * silence rather than as an error the user did not ask for.
  */
 export async function checkForUpdate(options: UpdateCheckOptions): Promise<UpdateNotice | null> {
   const { currentVersion, env = process.env, fetchImpl = fetch } = options;
@@ -190,14 +187,11 @@ export async function checkForUpdate(options: UpdateCheckOptions): Promise<Updat
   const path = options.path ?? defaultUpdateCachePath();
   const nowMs = (options.now ?? new Date()).getTime();
 
-  const cached = readUpdateCache(path);
-  // A future-dated stamp means a clock change, not a fresh answer; re-ask.
-  const isCacheFresh =
-    cached !== null && nowMs >= cached.checkedAtMs && nowMs - cached.checkedAtMs < CACHE_TTL_MS;
-  if (isCacheFresh) return noticeFor(cached, currentVersion);
-
   const tags = await fetchDistTags(fetchImpl);
-  if (tags === null) return null;
+  if (tags === null) {
+    const cached = readUpdateCache(path);
+    return cached === null ? null : noticeFor(cached, currentVersion);
+  }
 
   const entry: UpdateCacheEntry = { ...tags, checkedAtMs: nowMs };
   writeUpdateCache(path, entry);
