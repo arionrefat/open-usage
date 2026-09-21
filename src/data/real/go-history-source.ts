@@ -82,7 +82,7 @@ const NOTHING_DERIVED: DerivedHistory = { summary: null, billing: null, activity
 function deriveHistory(reading: GoHistoryReading | null): DerivedHistory {
   if (!reading) return NOTHING_DERIVED;
   return {
-    summary: goSpendSummary(reading.months),
+    summary: goSpendSummary(reading.months, reading.rows),
     billing: reading.months[0]?.billing ?? null,
     activity: reading.rows ? goActivityFromRows(reading.rows) : null,
   };
@@ -154,43 +154,33 @@ export function createGoHistorySource(
       if (!cookie) throw new OpencodeServerError("no opencode auth cookie", "credentials");
       const nowMs = now.getTime();
       const previous = source.read();
-
-      // Discovery is one round trip, skipped whenever any source has already
-      // made it. Without it the open month goes first, alone, to make it.
-      let known = options.knownWorkspaceId?.() ?? workspaceId;
-      let current: GoUsageHistory | null = null;
-      if (!known) {
-        current = await fetchHistory(cookie, now, { monthsAgo: 0, signal, withBilling: true });
-        known = current.workspaceId;
-      }
-      const workspace = known;
-      const remaining = Array.from({ length: MONTHS }, (_, index) => index).filter(
-        (monthsAgo) => monthsAgo > 0 || current === null,
-      );
       const windowStartMs = nowMs - ACTIVITY_WINDOW_DAYS * DAY_MS;
-      // Everything left is independent, so it goes out together: three months
-      // read in series were three round trips where one would do.
-      const [months, rows] = await Promise.all([
-        Promise.all(
-          remaining.map((monthsAgo) =>
-            fetchHistory(cookie, now, {
-              monthsAgo,
-              workspaceId: workspace,
-              signal,
-              // The billing record is per workspace, so the open month carries
-              // it and the closed ones are spared the request.
-              withBilling: monthsAgo === 0,
-            }),
-          ),
-        ),
-        // Supplementary to the money: a failure here leaves the last good rows
-        // in place rather than blanking the chart.
+
+      // Supplementary to the money: a failure here leaves the last good rows in
+      // place rather than blanking the chart.
+      const readRows = (workspace: string) =>
         readRowsSince(previous?.rows ?? null, windowStartMs, (sinceMs) =>
           fetchRows(cookie, workspace, { sinceMs, signal }),
-        ).catch(() => previous?.rows ?? null),
+        ).catch(() => previous?.rows ?? null);
+
+      // Discovery is one round trip, skipped whenever any source has already
+      // made it. Without it the months go first, alone, to make it: the rows
+      // walk cannot start until the workspace is named.
+      const known = options.knownWorkspaceId?.() ?? workspaceId;
+      if (!known) {
+        const months = await fetchHistory(cookie, now, { months: MONTHS, signal });
+        const discovered = months[0]?.workspaceId;
+        if (!discovered) throw new OpencodeServerError("missing workspace id", "parse");
+        workspaceId = discovered;
+        return { months, rows: await readRows(discovered), fetchedAtMs: nowMs };
+      }
+
+      const [months, rows] = await Promise.all([
+        fetchHistory(cookie, now, { months: MONTHS, workspaceId: known, signal }),
+        readRows(known),
       ]);
-      workspaceId = workspace;
-      return { months: current ? [current, ...months] : months, rows, fetchedAtMs: nowMs };
+      workspaceId = known;
+      return { months, rows, fetchedAtMs: nowMs };
     },
     fetchedAtMs: (value) => value.fetchedAtMs,
     describeFailure: () => "opencode history unavailable",

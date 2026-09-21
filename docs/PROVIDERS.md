@@ -10,7 +10,7 @@ Verdict up front: all three providers can show real or near-real limit data, eac
 | --- | --- | --- | --- | --- |
 | claude code | Yes (5h + weekly) | First-party `claude -p "/usage"`, then a fresh statusline snapshot | Claude Code installed and signed in | Shipped |
 | codex | Yes, from the CLI itself | Codex CLI `app-server` JSON-RPC | Codex CLI installed and signed in | Shipped |
-| opencode go | Yes with a cookie, else a spend estimate | `opencode.ai/_server` RPC, falling back to `opencode.db` spend vs caps | Optional session cookie for exact figures | Shipped |
+| opencode go | Yes with a cookie, else a spend estimate | `opencode.ai/console/api` REST, falling back to `opencode.db` spend vs caps | Optional session cookie for exact figures | Shipped |
 
 ## claude code
 
@@ -323,12 +323,12 @@ Codex only rewrites the token when it next refreshes its sign-in, so a date alre
 | --- | --- | --- | --- | --- |
 | `~/.local/share/opencode/opencode.db` | SQLite | none | `session` table: `cost` (USD), `tokens_input/output/reasoning/cache_*`, `model`, `time_created`; `message`/`part` JSON blobs | Official local store, already read by the app; 154MB and active on this machine |
 | Published Go plan caps | docs | none | $12 per 5h, $30 per week, $60 per month (Go plan, 2026 pricing; verify against the dashboard before shipping) | Documented but must be re-checked when plans change |
-| `https://opencode.ai/_server` | Internal server query | browser session cookie | rolling, weekly, and monthly usage percent and reset; per-day per-model cost; per-session token and cost history | Exact dashboard values; server-function ids can change on deploy |
+| `https://opencode.ai/console/api` | Console REST API | browser session cookie | Go meters in dollars with their resets; per-day cost, tokens and requests; per-request usage rows; balance and auto-recharge | Exact console values; the routes are the console's own and can change on deploy |
 | Gateway `x-ratelimit-*` headers | HTTP | API key | undocumented | Unverified; capture opportunistically if we ever proxy a request, do not depend on it |
 
 ### Key finding
 
-OpenCode's internal server query publishes exact percent-of-limit and reset data to an authenticated dashboard session.
+OpenCode's console publishes exact dollars-of-limit and reset data to an authenticated session.
 Without a session cookie, open-usage computes an estimate locally by summing `message.cost` inside each window and dividing by the Go plan cap.
 The UI labels only locally computed windows as estimates.
 There is still no supported public OpenCode Go quota endpoint, CLI command, local server route, or SDK method.
@@ -343,25 +343,33 @@ Both paths now ship, with the server one preferred and the estimate as the alway
 Rolling windows report when the oldest spend in them ages out ("frees up in"), since a rolling window never resets wholesale.
 The monthly window is anchored to the day-of-month of the first spend ever recorded rather than the 1st, because the billing cycle follows the subscription date - without that anchor a cycle that just rolled over reads near-zero while the weekly window reads high.
 
-`src/data/real/opencode-server.ts` sends the dashboard's `GET https://opencode.ai/_server?id=<functionId>&args=<seroval>` query form with the filtered session cookie.
-The workspaces query uses id `def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f` and omits `args`.
-The `queryLiteSubscription_query` query uses id `c7389bd0e731f80f49593e5ee53835475f4e28594dd6bd83eb229bab753498cd` and receives one workspace id in a seroval array envelope.
-The parser reads rolling, weekly, and monthly windows from both JSON and serialized-JavaScript response forms.
+`src/data/real/opencode-server.ts` calls the console's REST API with the filtered session cookie and an `x-org-id` header naming the workspace.
+`GET /console/api/orgs` discovers that id once; `GET /console/api/go/status` returns the plan.
+Its `access.meters` carries `fiveHour`, `week` and `month`, each `{ startsAt, resetsAt, limitMicroCents, usedMicroCents }`, so the percentage is computed from dollars rather than read off the wire.
+The month meter has no `resetsAt` of its own: `access.endsAt`, the plan's renewal, is what clears it, which is what the console's own card shows.
+An unused five-hour window reports `resetsAt: null`, which the card states rather than inventing a reset five hours out.
 `go-limits-source.ts` polls it at most once a minute, backs off five minutes on failure, and degrades to the estimate on any error.
+
+### The September 2026 console migration
+
+The dashboard moved to `opencode.ai/console` and dropped the serialized-JavaScript `_server` RPC entirely.
+Every workspace-scoped function id - `lite.subscription.get`, `usage.list`, `getCosts`, `billing.get` - now answers `302 -> /console/login` regardless of the session, so the content-hash self-healing that recovered rotated ids (`opencode-bundle.ts`, `seroval-text.ts`) had nothing left to recover and was deleted.
+The console authenticates with its own `__Host-console_session` cookie; the older Iron-sealed `auth` cookie still works against the legacy app and is refused by `/console/api/*` with `401 {"_tag":"Unauthorized"}`, which is why an upgrade had to be a re-paste rather than a migration.
+A 400, 404 or 422 from the API is reported as drift rather than a network failure: the console answers a query it no longer understands with `400 {"_tag":"BadRequest"}`, and retrying that on the normal schedule would never recover.
 
 ### Enabling server limits
 
 Server limits currently need an opencode.ai session cookie, which is a full dashboard credential:
 
 ```bash
-# from a logged-in opencode.ai tab: devtools > application > cookies
-echo '{ "opencodeCookie": "auth=<value>" }' > ~/.config/open-usage/config.json
+# from a logged-in opencode.ai/console tab: devtools > application > cookies
+echo '{ "opencodeCookie": "__Host-console_session=<value>" }' > ~/.config/open-usage/config.json
 # or, per-shell:
-export OPEN_USAGE_OPENCODE_COOKIE='auth=<value>'
+export OPEN_USAGE_OPENCODE_COOKIE='__Host-console_session=<value>'
 ```
 
-Only the `auth` / `__Host-auth` cookies are sent; anything else in a pasted header is stripped before the request.
-The cookie's Iron seal carries its own expiry, and the app warns during its final seven days.
+Only the `__Host-console_session` / `console_session` / `auth` / `__Host-auth` cookies are sent; anything else in a pasted header is stripped before the request, so pasting the whole header is safe.
+The console session id carries no expiry, so there is nothing to warn on; a pasted `auth` cookie still has its Iron seal, and the app warns during its final seven days.
 Any session failure produces the same visible warning while the local estimate continues.
 Without a cookie the app shows the local estimate and says so, which is why the cookie is optional rather than a setup step.
 
@@ -375,23 +383,28 @@ Do not request a user's cookie during support, and do not add automatic browser-
 
 ### Usage history
 
-Verified against a live response on 2026-08-18, and cross-checked between the two endpoints below: every fully covered day agrees to the cent.
+Verified against live responses on 2026-09-21.
 
-`getCosts(workspaceID, year, month, tzOffset)` backs the dashboard's Cost chart.
-`month` is zero-based and `tzOffset` is a `+HH:MM` string, which is what decides the calendar day each row lands in.
-It returns `{ usage, keys }`, where a usage row is `{ date: "YYYY-MM-DD", model, totalCost, keyId, plan }` and a key is `{ id, displayName, deleted }`.
-`plan` is `"sub"`, `"lite"`, or absent for pay-as-you-go, and the dashboard stacks the three separately.
+`GET /console/api/usage/cost-by-day?since=<ISO>&bucket=day` backs the console's cost chart.
+A row is `{ date: "YYYY-MM-DD", totalCostMicroCents, totalTokens, totalRequests }`, and one call covers the whole span, so three months of history cost one request rather than three.
+It names no model, which is why a closed month's cost rows carry `model: null` rather than a guess.
 
-`usage.list(workspaceID, page)` backs the Usage History table, 50 rows a page.
-A row is `{ id, workspaceID, timeCreated, timeUpdated, timeDeleted, model, provider, inputTokens, outputTokens, reasoningTokens, cacheReadTokens, cacheWrite5mTokens, cacheWrite1hTokens, cost, keyID, sessionID, byok, enrichment: { plan } }`.
-Absent counts are an explicit `null`, and `timeCreated` arrives as a live `new Date("...")` constructor behind a `$R[n]=` binding rather than a number or a quoted string.
+`GET /console/api/usage/rows?since=<ISO>&pageSize=100&cursor=<cursor>` backs the usage table, 100 rows a page and cursor-paged.
+A row is `{ id, orgId, userId, principalType, serviceUserId, serviceApiKeyId, appReferrer, provider, model, inputTokens, outputTokens, reasoningTokens, cacheReadTokens, cacheWrite5mTokens, cacheWrite1hTokens, billingSource, costMicroCents, createdAt }`.
+`billingSource` is one of `managed-inference`, `free`, `byok`, `go`, `credit`, `seat-credit`; only the money-backed three are reported as spend, and the rest as allowance.
+There is no session id any more, so the workspace card reports tokens and models but not a session count.
+`GET /console/api/usage/models` gives the same totals per model when only a breakdown is wanted.
 
-**Both endpoints report money in hundred-millionths of a dollar.** The client divides by `1e8`; taking `totalCost` at face value overstates by a factor of 100 million.
+`since` takes `YYYY-MM-DDTHH:MM:SSZ` and rejects a value carrying milliseconds; `range` is one of `24h`, `7d`, `30d`; `pageSize` above 100 is refused.
+
+**Money is micro-cents everywhere: `1e8` to the dollar.** Taking `costMicroCents` at face value overstates by a factor of 100 million.
+Token counts and costs both arrive as decimal strings, not numbers.
 The dashboard counts cache reads and both cache writes as input: `inputTokens + cacheReadTokens + cacheWrite5mTokens + cacheWrite1hTokens`.
 
 These are parsed by `src/data/real/opencode-usage.ts`, assembled by `go-spend-summary.ts`, and polled by `go-history-source.ts` every 30 minutes for the open month plus two closed ones.
+Money for every month comes from the day chart, which covers all three; the per-model breakdown comes from the usage rows, which reach back 30 days, so the open month names its models and closed ones report totals alone.
 
-`usage.list` was parsed but never fetched until 2026-08-26, which left the cookie a second-class source: it reported exact limits and per-day cost, and then said "no history" because `opencode.db` was the only thing wired to `series`.
+`usage.list`, the console table's predecessor, was parsed but never fetched until 2026-08-26, which left the cookie a second-class source: it reported exact limits and per-day cost, and then said "no history" because `opencode.db` was the only thing wired to `series`.
 That database does not exist until opencode has been installed and used, so a cookie-only setup - which the dashboard fully supports - had no activity chart at all.
 `fetchGoUsageRows` now walks the table back over the 30-day window and `go-activity.ts` folds it into the same shape `opencode.db` produces, so one rendering path serves both.
 
@@ -410,34 +423,31 @@ Two wire details are easy to miss and both silently empty the result: a month wi
 The dashboard keeps the three in separate chart stacks for this reason, so any summary must keep the split rather than adding them into one "spend" figure.
 Verified on a Go account whose `billing.get` reports `balance = 0`, `monthlyUsage = null` and `subscription = null` with only `lite` set: every row is `lite`, totalling $40.9177 in July, none of which was billed.
 
-The real-money surface for a go account is `billing.get`: `balance`, `reloadAmount`, `reloadTrigger`, `monthlyLimit`.
+The real-money surface for a go account is `GET /console/api/billing/status` (`balanceMicroCents`, `creditLimitMicroCents`) alongside `GET /console/api/billing/auto-recharge` (`enabled`, `thresholdDollars`, `rechargeAmountDollars`).
+The console publishes no metered month total, so the spend view reports the cost rows rather than a figure it was never given.
 
 The monthly window's reset doubles as the plan's end date: the header reads `Go · until Oct 9`, on the same terms as codex and only when the server reports the window.
 The local estimate never states one, since its cycle anchor is inferred rather than reported.
 
-Do not reconcile a calendar-month cost total against the `lite.subscription.get` monthly percent.
+Do not reconcile a calendar-month cost total against the `go/status` monthly meter.
 That percent covers a billing cycle rather than a calendar month, and `GO_QUOTA_WEIGHTS` records that some models burn quota four times faster per raw dollar, so dollars do not map linearly onto percent.
 
 ### Known fragility
 
-The server function ids are content hashes that rotate whenever opencode.ai redeploys.
-When they rotate, the parse fails, the UI falls back to the estimate with a note, and the ids need refreshing from `SERVER_FUNCTION_IDS`.
+The console's routes and response shapes are its own, not a published API, and the September 2026 migration showed how completely they can change.
+When a route moves or a field is renamed, the parse fails, the UI falls back to the estimate with the drift note, and the paths in `opencode-server.ts` need refreshing against a logged-in console tab.
 
-`src/data/real/opencode-bundle.ts` can recover most ids from the public client bundle, which pairs each `createServerReference("<hash>")` with the `query`/`action` key it was registered under - `workspaces`, `lite.subscription.get`, `usage.list`.
-Those keys survive redeploys; the hashes do not.
-Two details make a naive scan wrong: the bundle aliases a reference before registering it (`const getUsageInfo = getUsageInfo_1`), and the same key is registered by more than one route, so `usage.list` has two distinct hashes and callers must try candidates rather than trust the first.
-`getCosts` is the one id with no recovery path, because the bundle calls it directly instead of registering it.
-
-Discovery runs at runtime, as a recovery path only.
-`callAndParse` tries the shipped id first and re-derives candidates from the bundle only once a response fails to parse, caching the result for the process.
-Credential and rate-limit failures are rethrown rather than treated as drift, since a fresh id cannot fix either.
+There is no self-healing here, and deliberately so: the ids that once justified it are gone, and a REST path cannot be re-derived the way a content hash could.
+What the client does instead is keep the three failure classes apart, since only one of them is drift.
+A 401 or 403 is credentials, a 429 carries the console's own `Retry-After`, a 400/404/422 is drift, and anything else is a network failure.
+Credential and rate-limit failures are never retried as drift, because a different query cannot fix either.
 
 ### No plan attached
 
-A workspace whose subscription has ended answers `lite.subscription.get` with a literal `null` - `((self.$R=self.$R||{})["server-fn:..."]=[],null)` - rather than an error or a changed shape.
+A workspace whose subscription has ended answers `GET /console/api/go/status` with `access: null` rather than an error or a changed shape.
 That is an account state the user chose, so it is reported as "no opencode go subscription" instead of the drift note, and the source reads as having nothing to fetch rather than as a failed read.
-A stale id is not confusable with it: an unknown hash answers `HTTP 500 {"status":500,"unhandled":true,"message":"HTTPError"}`, which is classified as a network failure.
-`billing.get` keeps answering through all of this, and is where the balance behind the fuller warning comes from; a cancelled workspace reports `subscription`, `subscriptionID`, `lite` and `liteSubscriptionID` all null.
+Drift is not confusable with it: a payload missing `access` entirely is a parse failure, while `access` present and null is the account state.
+`billing/status` keeps answering through all of this, and is where the balance behind the fuller warning comes from.
 
 The API-key path meets the same state as a `401` carrying `{"type":"CreditsError","message":"Insufficient balance..."}`, which is the response opencode gives an agent once a workspace has neither a plan nor credit.
 It shares the status code with a rejected key, so the body is what tells the user to top up rather than to re-paste a key that is fine.

@@ -119,6 +119,17 @@ describe("cookieExpiryMs", () => {
     );
   });
 
+  test("finds the sealed cookie wherever it sits in a pasted header", () => {
+    const expiryMs = 1_814_553_561_725;
+    const header = `__Host-console_session=st_abc; auth=Fe26.2**macSalt*iv*payload*${expiryMs}*sealSalt*mac`;
+    expect(cookieExpiryMs(header)).toBe(expiryMs);
+  });
+
+  test("the console session alone carries no expiry to warn on", () => {
+    // It is an opaque id, so inventing a date for it would warn at random.
+    expect(cookieExpiryMs("__Host-console_session=st_abc; oc_locale=en")).toBeNull();
+  });
+
   test("rejects malformed or non-auth cookie values", () => {
     expect(cookieExpiryMs("")).toBeNull();
     expect(cookieExpiryMs("ph_session=value")).toBeNull();

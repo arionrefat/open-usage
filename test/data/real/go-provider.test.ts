@@ -144,6 +144,15 @@ describe("buildGoProvider limits", () => {
     expect(build().provider.detailFooter).toBeUndefined();
   });
 
+  test("workspace history counts tokens, since the console reports no sessions", () => {
+    // Calling a chart the reader is looking at "no local history" would be a lie.
+    const footer = build({
+      server: SERVER,
+      stats: { sessions: 0, tokens: 9_668_060, latestMs: NOW_MS, topModel: "glm-5.3" },
+    }).provider.detailFooter;
+    expect(footer).toBe("tokens 30d 9.7M ▏ workspace-wide ▏ tokens from the opencode console");
+  });
+
   test("renders all three local spend rows with estimate footnotes", () => {
     const spend = goSpendFrom([{ atMs: NOW_MS - HOUR_MS, usd: 3 }], NOW);
     const result = build({ spend });

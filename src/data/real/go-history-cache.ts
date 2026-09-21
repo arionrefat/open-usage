@@ -53,12 +53,14 @@ function goPlan(value: unknown): GoPlan | null {
 
 function goCostRow(value: unknown): GoCostRow | null {
   const raw = record(value);
-  if (!raw || typeof raw.date !== "string" || typeof raw.model !== "string") return null;
+  if (!raw || typeof raw.date !== "string") return null;
   const usd = finite(raw.usd);
   const keyId = nullableString(raw.keyId);
+  // A day total names no model, which is the shape the console's chart returns.
+  const model = nullableString(raw.model);
   const plan = goPlan(raw.plan);
-  if (usd === null || keyId === undefined || plan === null) return null;
-  return { date: raw.date, model: raw.model, usd, keyId, plan };
+  if (usd === null || keyId === undefined || model === undefined || plan === null) return null;
+  return { date: raw.date, model, usd, keyId, plan };
 }
 
 function goApiKey(value: unknown): GoApiKey | null {

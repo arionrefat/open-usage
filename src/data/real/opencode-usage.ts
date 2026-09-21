@@ -1,30 +1,24 @@
 import { finiteNumber, isRecord, timestampMs } from "./json";
-import {
-  booleanField,
-  hasValue,
-  isEmptyArrayAtKey,
-  numberField,
-  objectLiterals,
-  stringField,
-  timestampField,
-} from "./seroval-text";
 
 /**
- * Parsers for opencode's usage history: the per-day cost chart (`getCosts`) and
- * the per-session table (`usage.list`).
+ * Parsers for the opencode console's usage payloads: the per-day cost chart
+ * (`/usage/cost-by-day`) and the per-request table (`/usage/rows`).
  *
- * Field names and scaling are taken from the dashboard's own consuming code, not
- * from a sampled payload. Both endpoints report money in hundred-millionths of a
- * dollar, which the client divides by 1e8 before display.
+ * The console reports money in micro-cents and counts as decimal strings, both
+ * of which are converted here so nothing downstream has to know the wire units.
  */
 export const COST_UNITS_PER_USD = 1e8;
 
 export type GoPlan = "sub" | "lite" | "payg";
 
 export interface GoCostRow {
-  /** Calendar day in the timezone the request asked for, as YYYY-MM-DD. */
+  /** Calendar day as the console dates it, as YYYY-MM-DD. */
   date: string;
-  model: string;
+  /**
+   * null when the figure is a day total the console did not break out by model.
+   * Only the per-request table names models, and it reaches back 30 days.
+   */
+  model: string | null;
   usd: number;
   keyId: string | null;
   plan: GoPlan;
@@ -41,9 +35,18 @@ export interface GoCostReport {
   keys: GoApiKey[];
 }
 
+/** One day of the console's cost chart, before it is split into months. */
+export interface GoCostDay {
+  date: string;
+  usd: number;
+  tokens: number;
+  requests: number;
+}
+
 export interface GoUsageRow {
   /** The server's own row id, which is what lets a re-read of the table merge with the rows already held. */
   id: string | null;
+  /** Always null on the console API, which reports requests rather than sessions. */
   sessionId: string | null;
   keyId: string | null;
   atMs: number | null;
@@ -59,146 +62,97 @@ export interface GoUsageRow {
   isByok: boolean;
 }
 
+/** One page of the per-request table, with the cursor that continues it. */
+export interface GoUsagePage {
+  rows: GoUsageRow[];
+  nextCursor: string | null;
+}
+
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-function usdFromUnits(units: number): number {
-  return units / COST_UNITS_PER_USD;
+/** Money and counts arrive as decimal strings, large ones included. */
+export function numericField(value: unknown): number | null {
+  const direct = finiteNumber(value);
+  if (direct !== null) return direct;
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
-function planFrom(value: unknown): GoPlan {
-  return value === "sub" || value === "lite" ? value : "payg";
-}
-
-function costRowFromRecord(value: unknown): GoCostRow | null {
-  if (!isRecord(value)) return null;
-  const { date, model } = value;
-  const units = finiteNumber(value.totalCost);
-  if (typeof date !== "string" || !DATE_PATTERN.test(date)) return null;
-  if (typeof model !== "string" || model.length === 0 || units === null) return null;
-  return {
-    date,
-    model,
-    usd: usdFromUnits(units),
-    keyId: typeof value.keyId === "string" ? value.keyId : null,
-    plan: planFrom(value.plan),
-  };
-}
-
-function costRowFromBlock(block: string): GoCostRow | null {
-  const date = stringField(block, "date");
-  const model = stringField(block, "model");
-  const units = numberField(block, "totalCost");
-  if (date === null || !DATE_PATTERN.test(date) || model === null || units === null) return null;
-  return {
-    date,
-    model,
-    usd: usdFromUnits(units),
-    keyId: stringField(block, "keyId"),
-    plan: planFrom(stringField(block, "plan")),
-  };
-}
-
-function apiKeyFromRecord(value: unknown): GoApiKey | null {
-  if (!isRecord(value)) return null;
-  const { id, displayName } = value;
-  if (typeof id !== "string" || id.length === 0) return null;
-  return {
-    id,
-    displayName: typeof displayName === "string" ? displayName : id,
-    isDeleted: value.deleted === true,
-  };
-}
-
-function costReportFromJson(text: string): GoCostReport | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  if (!isRecord(parsed) || !Array.isArray(parsed.usage)) return null;
-  const rows = parsed.usage.map(costRowFromRecord).filter((row): row is GoCostRow => row !== null);
-  const keys = Array.isArray(parsed.keys)
-    ? parsed.keys.map(apiKeyFromRecord).filter((key): key is GoApiKey => key !== null)
-    : [];
-  return { rows, keys };
-}
-
-function costReportFromSerializedText(text: string): GoCostReport | null {
-  const rows = objectLiterals(text, ["date", "model", "totalCost"])
-    .map(costRowFromBlock)
-    .filter((row): row is GoCostRow => row !== null);
-  // A month with no traffic still answers, as `usage:[]`, and is not a failure.
-  if (rows.length === 0 && !isEmptyArrayAtKey(text, "usage")) return null;
-  const keys = objectLiterals(text, ["id", "displayName"])
-    .map((block) => {
-      const id = stringField(block, "id");
-      if (id === null) return null;
-      return {
-        id,
-        displayName: stringField(block, "displayName") ?? id,
-        isDeleted: booleanField(block, "deleted"),
-      };
-    })
-    .filter((key): key is GoApiKey => key !== null);
-  return { rows, keys };
+export function usdFromMicroCents(value: unknown): number | null {
+  const units = numericField(value);
+  return units === null ? null : units / COST_UNITS_PER_USD;
 }
 
 /**
- * Reads the per-day cost chart response in either the JSON or the
- * serialized-JavaScript form the RPC may return.
+ * Requests billed against money are spend; everything else draws on an
+ * allowance already paid for. `free` and `byok` cost the workspace nothing, so
+ * they belong on the allowance side rather than in a billed total.
  */
-export function parseCostReport(text: string): GoCostReport | null {
-  return costReportFromJson(text) ?? costReportFromSerializedText(text);
+const BILLED_SOURCES = new Set(["managed-inference", "credit", "seat-credit"]);
+
+export function planFromBillingSource(value: unknown): GoPlan {
+  if (typeof value !== "string") return "lite";
+  return BILLED_SOURCES.has(value) ? "payg" : "lite";
+}
+
+function costDayFromRecord(value: unknown): GoCostDay | null {
+  if (!isRecord(value)) return null;
+  const { date } = value;
+  const usd = usdFromMicroCents(value.totalCostMicroCents);
+  if (typeof date !== "string" || !DATE_PATTERN.test(date) || usd === null) return null;
+  return {
+    date,
+    usd,
+    tokens: numericField(value.totalTokens) ?? 0,
+    requests: numericField(value.totalRequests) ?? 0,
+  };
+}
+
+/**
+ * Reads the per-day cost chart. An array is the whole answer, so an empty one
+ * is a workspace with no traffic in the window rather than a failure.
+ */
+export function parseCostDays(value: unknown): GoCostDay[] | null {
+  if (!Array.isArray(value)) return null;
+  const days = value.map(costDayFromRecord);
+  return days.some((day) => day === null) ? null : (days as GoCostDay[]);
 }
 
 function usageRowFromRecord(value: unknown): GoUsageRow | null {
   if (!isRecord(value)) return null;
   const { model } = value;
-  const inputTokens = finiteNumber(value.inputTokens);
-  const outputTokens = finiteNumber(value.outputTokens);
+  const inputTokens = numericField(value.inputTokens);
+  const outputTokens = numericField(value.outputTokens);
   if (typeof model !== "string" || model.length === 0) return null;
   if (inputTokens === null || outputTokens === null) return null;
-  const enrichment = isRecord(value.enrichment) ? value.enrichment : {};
-  const keyId = value.keyID ?? value.keyId;
+  const id = value.id;
   return {
-    id: typeof value.id === "string" ? value.id : null,
-    sessionId: typeof value.sessionID === "string" ? value.sessionID : null,
-    keyId: typeof keyId === "string" ? keyId : null,
-    atMs: timestampMs(value.timeCreated),
+    id: typeof id === "string" ? id : typeof id === "number" ? String(id) : null,
+    sessionId: null,
+    keyId: typeof value.serviceApiKeyId === "string" ? value.serviceApiKeyId : null,
+    atMs: timestampMs(value.createdAt),
     model,
     inputTokens,
     outputTokens,
-    reasoningTokens: finiteNumber(value.reasoningTokens) ?? 0,
-    cacheReadTokens: finiteNumber(value.cacheReadTokens) ?? 0,
-    cacheWrite5mTokens: finiteNumber(value.cacheWrite5mTokens) ?? 0,
-    cacheWrite1hTokens: finiteNumber(value.cacheWrite1hTokens) ?? 0,
-    usd: usdFromUnits(finiteNumber(value.cost) ?? 0),
-    plan: planFrom(enrichment.plan),
-    isByok: value.byok === true,
+    reasoningTokens: numericField(value.reasoningTokens) ?? 0,
+    cacheReadTokens: numericField(value.cacheReadTokens) ?? 0,
+    cacheWrite5mTokens: numericField(value.cacheWrite5mTokens) ?? 0,
+    cacheWrite1hTokens: numericField(value.cacheWrite1hTokens) ?? 0,
+    usd: usdFromMicroCents(value.costMicroCents) ?? 0,
+    plan: planFromBillingSource(value.billingSource),
+    isByok: value.billingSource === "byok",
   };
 }
 
-function usageRowFromBlock(block: string): GoUsageRow | null {
-  const model = stringField(block, "model");
-  const inputTokens = numberField(block, "inputTokens");
-  const outputTokens = numberField(block, "outputTokens");
-  if (model === null || inputTokens === null || outputTokens === null) return null;
+/** Reads one page of the per-request usage table. */
+export function parseUsagePage(value: unknown): GoUsagePage | null {
+  if (!isRecord(value) || !Array.isArray(value.items)) return null;
+  const rows = value.items.map(usageRowFromRecord);
+  if (rows.some((row) => row === null)) return null;
   return {
-    id: stringField(block, "id"),
-    sessionId: stringField(block, "sessionID"),
-    keyId: stringField(block, "keyID") ?? stringField(block, "keyId"),
-    atMs: timestampField(block, "timeCreated"),
-    model,
-    inputTokens,
-    outputTokens,
-    reasoningTokens: numberField(block, "reasoningTokens") ?? 0,
-    cacheReadTokens: numberField(block, "cacheReadTokens") ?? 0,
-    cacheWrite5mTokens: numberField(block, "cacheWrite5mTokens") ?? 0,
-    cacheWrite1hTokens: numberField(block, "cacheWrite1hTokens") ?? 0,
-    usd: usdFromUnits(numberField(block, "cost") ?? 0),
-    plan: planFrom(stringField(block, "plan")),
-    isByok: booleanField(block, "byok"),
+    rows: rows as GoUsageRow[],
+    nextCursor: typeof value.nextCursor === "string" ? value.nextCursor : null,
   };
 }
 
@@ -221,65 +175,30 @@ export interface GoBilling {
 }
 
 /**
- * Billing mixes two scales, which the dashboard's own renderers settle:
- * `balance` and `monthlyUsage` are hundred-millionths and get divided by 1e8,
- * while `monthlyLimit` and `reloadAmount` are plain dollars printed as-is.
+ * Reads the billing status, optionally enriched with the auto-recharge record.
+ *
+ * The console publishes a balance and a credit limit but no metered month total,
+ * so `monthlyUsageUsd` stays null and the spend view falls back to the cost rows
+ * rather than printing a figure the console never sent.
  */
-function billingFromFields(
-  read: (key: string) => number | null,
-  has: (key: string) => boolean,
-): GoBilling {
+export function parseBillingStatus(
+  status: unknown,
+  autoRecharge: unknown,
+  options: { hasGoAccess: boolean },
+): GoBilling | null {
+  if (!isRecord(status)) return null;
+  const balanceUsd = usdFromMicroCents(status.balanceMicroCents);
+  if (balanceUsd === null) return null;
+  const recharge = isRecord(autoRecharge) ? autoRecharge : null;
   return {
-    balanceUsd: usdFromUnits(read("balance") ?? 0),
-    monthlyUsageUsd: has("monthlyUsage") ? usdFromUnits(read("monthlyUsage") ?? 0) : null,
-    monthlyLimitUsd: has("monthlyLimit") ? read("monthlyLimit") : null,
-    isAutoReloadOn: has("reload"),
-    reloadAmountUsd: read("reloadAmount"),
-    hasLiteSubscription: has("lite") || has("liteSubscriptionID"),
-    hasSubscription: has("subscription") || has("subscriptionID"),
+    balanceUsd,
+    monthlyUsageUsd: null,
+    monthlyLimitUsd: null,
+    isAutoReloadOn: recharge?.enabled === true,
+    reloadAmountUsd: recharge ? numericField(recharge.rechargeAmountDollars) : null,
+    hasLiteSubscription: options.hasGoAccess,
+    // Seat subscriptions are not a Go concept; the Go access flag is the only
+    // plan state the console reports for this workspace.
+    hasSubscription: false,
   };
-}
-
-/**
- * Reads the billing record. Absent and null are treated alike: both mean the
- * account does not bill that way, which is the point of the distinction.
- */
-export function parseBilling(text: string): GoBilling | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    parsed = null;
-  }
-  if (isRecord(parsed) && "balance" in parsed) {
-    const record = parsed;
-    return billingFromFields(
-      (key) => finiteNumber(record[key]),
-      (key) => record[key] !== undefined && record[key] !== null && record[key] !== false,
-    );
-  }
-
-  const block = objectLiterals(text, ["balance"])[0];
-  if (block === undefined) return null;
-  return billingFromFields(
-    (key) => numberField(block, key),
-    (key) => hasValue(block, key),
-  );
-}
-
-/** Reads one page of the per-session usage table, in either wire form. */
-export function parseUsageRows(text: string): GoUsageRow[] | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    parsed = null;
-  }
-  if (Array.isArray(parsed)) {
-    return parsed.map(usageRowFromRecord).filter((row): row is GoUsageRow => row !== null);
-  }
-  const rows = objectLiterals(text, ["model", "inputTokens", "outputTokens"])
-    .map(usageRowFromBlock)
-    .filter((row): row is GoUsageRow => row !== null);
-  return rows.length > 0 ? rows : null;
 }

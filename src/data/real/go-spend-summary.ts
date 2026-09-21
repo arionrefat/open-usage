@@ -1,5 +1,5 @@
 import type { ModelSpend, Money, SpendKind, SpendPeriod, SpendSummary } from "../types";
-import { COST_UNITS_PER_USD, type GoCostRow } from "./opencode-usage";
+import { COST_UNITS_PER_USD, type GoPlan, type GoUsageRow } from "./opencode-usage";
 import type { GoUsageHistory } from "./opencode-server";
 
 /**
@@ -26,7 +26,7 @@ function dollarsToMoney(dollars: number): Money {
   return { amountMinor: Math.round(dollars * 100), currency: "USD", exponent: 2 };
 }
 
-function kindOf(row: GoCostRow): SpendKind {
+function kindOf(row: { plan: GoPlan }): SpendKind {
   return row.plan === "payg" ? "billed" : "allowance";
 }
 
@@ -40,25 +40,38 @@ export function monthLabel(month: string): string {
   return `${name.toLowerCase()} ${year}`;
 }
 
+interface ModelTotal {
+  usd: number;
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
+}
+
 /**
  * One row per model per kind. A model used both on plan and pay-as-you-go stays
  * on two rows, since collapsing them would hide which half was charged.
+ *
+ * Only the per-request table names models, so this is empty for a month the
+ * console can answer for with day totals alone.
  */
-function modelsFrom(rows: GoCostRow[]): ModelSpend[] {
-  const totals = new Map<SpendKind, Map<string, number>>();
+function modelsFrom(rows: GoUsageRow[]): ModelSpend[] {
+  const totals = new Map<SpendKind, Map<string, ModelTotal>>();
   for (const row of rows) {
     const kind = kindOf(row);
-    const byModel = totals.get(kind) ?? new Map<string, number>();
-    byModel.set(row.model, (byModel.get(row.model) ?? 0) + row.usd);
+    const byModel = totals.get(kind) ?? new Map<string, ModelTotal>();
+    const running = byModel.get(row.model) ?? { usd: 0, tokens: { ...NO_TOKENS } };
+    running.usd += row.usd;
+    running.tokens.input += row.inputTokens;
+    running.tokens.output += row.outputTokens + row.reasoningTokens;
+    running.tokens.cacheRead += row.cacheReadTokens;
+    running.tokens.cacheWrite += row.cacheWrite5mTokens + row.cacheWrite1hTokens;
+    byModel.set(row.model, running);
     totals.set(kind, byModel);
   }
   return [...totals]
     .flatMap(([kind, byModel]) =>
-      [...byModel].map(([model, usd]) => ({
+      [...byModel].map(([model, total]) => ({
         model,
-        // Cost rows carry no token counts; usage.list holds those, per session.
-        tokens: { ...NO_TOKENS },
-        cost: usdToMoney(usd),
+        tokens: total.tokens,
+        cost: usdToMoney(total.usd),
         exactness: "exact" as const,
         kind,
       })),
@@ -66,7 +79,21 @@ function modelsFrom(rows: GoCostRow[]): ModelSpend[] {
     .sort((left, right) => (right.cost?.amountMinor ?? 0) - (left.cost?.amountMinor ?? 0));
 }
 
-export function periodFrom(history: GoUsageHistory): SpendPeriod {
+/** The per-request rows that fall inside a month, which is what names its models. */
+export function rowsInMonth(rows: GoUsageRow[], month: string): GoUsageRow[] {
+  return rows.filter((row) => row.atMs !== null && monthKeyOf(row.atMs) === month);
+}
+
+function monthKeyOf(atMs: number): string {
+  const at = new Date(atMs);
+  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * Money comes from the console's own day totals, which cover every month, while
+ * the model breakdown comes from the per-request rows, which reach back 30 days.
+ */
+export function periodFrom(history: GoUsageHistory, usageRows: GoUsageRow[] = []): SpendPeriod {
   const rows = history.costs.rows;
   const sumWhere = (kind: SpendKind) =>
     rows.filter((row) => kindOf(row) === kind).reduce((sum, row) => sum + row.usd, 0);
@@ -85,7 +112,7 @@ export function periodFrom(history: GoUsageHistory): SpendPeriod {
         ? dollarsToMoney(history.billing.monthlyLimitUsd)
         : null,
     exactness: "exact",
-    models: modelsFrom(rows),
+    models: modelsFrom(usageRows),
     isBeforeRecordsBegan: false,
   };
 }
@@ -94,8 +121,13 @@ export function periodFrom(history: GoUsageHistory): SpendPeriod {
  * Newest month first. The server keeps the history itself, so unlike Claude Code
  * there is no local store to reconcile and no partly covered day to guard.
  */
-export function goSpendSummary(months: GoUsageHistory[]): SpendSummary | null {
-  const periods = months.map(periodFrom);
+export function goSpendSummary(
+  months: GoUsageHistory[],
+  usageRows: GoUsageRow[] | null = null,
+): SpendSummary | null {
+  const periods = months.map((month) =>
+    periodFrom(month, usageRows ? rowsInMonth(usageRows, month.month) : []),
+  );
   const [current, ...history] = periods;
   if (!current) return null;
   return {

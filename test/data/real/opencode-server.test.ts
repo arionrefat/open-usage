@@ -2,293 +2,405 @@ import { describe, expect, spyOn, test } from "bun:test";
 import {
   OpencodeRateLimitError,
   OpencodeServerError,
-  SERVER_FUNCTION_IDS,
+  consoleTimestamp,
   fetchGoServerLimits,
   fetchGoUsageHistory,
   fetchGoUsageRows,
   filterCookieHeader,
   isInsufficientBalance,
-  isNullPayload,
   isSignedOut,
-  parseSubscription,
-  parseWorkspaceId,
-  resetDiscoveredIds,
+  parseGoStatus,
+  parseOrgId,
   retryAfterMs,
-  timezoneOffsetLabel,
 } from "../../../src/data/real/opencode-server";
 
-/** Verbatim response shapes from CodexBar's parser fixtures. */
-const WORKSPACE_JS =
-  ';0x00000089;((self.$R=self.$R||{})["codexbar"]=[],' +
-  '($R=>$R[0]=[$R[1]={id:"wrk_01K6AR1ZET89H8NB691FQ2C2VB",name:"Default",slug:null}])' +
-  '($R["codexbar"]))';
+const WORKSPACE_ID = "wrk_01KWJ21MX7C6XMR8MJ01ST2Z6E";
+const ORGS = [{ id: WORKSPACE_ID, name: "Default" }];
 
-const SUBSCRIPTION_JS =
-  "$R[16]($R[30],$R[41]={" +
-  'rollingUsage:$R[42]={status:"ok",resetInSec:5944,usagePercent:17},' +
-  'weeklyUsage:$R[43]={status:"ok",resetInSec:278201,usagePercent:75},' +
-  'monthlyUsage:$R[44]={status:"ok",resetInSec:90061,usagePercent:99},useBalance:true' +
-  "});";
+/** Verbatim in shape from a live `GET /console/api/go/status`. */
+const GO_STATUS = {
+  subscriberUserId: "acc_01KWJ21K70PJJMDEW14AA7PPFQ",
+  useBalance: false,
+  renewalPending: false,
+  access: {
+    startsAt: "2026-09-08T15:04:50.000Z",
+    endsAt: "2026-10-08T15:04:50.000Z",
+    meters: {
+      fiveHour: {
+        startsAt: null,
+        resetsAt: null,
+        limitMicroCents: "1200000000",
+        usedMicroCents: "0",
+      },
+      week: {
+        startsAt: "2026-09-14T00:00:00.000Z",
+        resetsAt: "2026-09-21T00:00:00.000Z",
+        limitMicroCents: "3000000000",
+        usedMicroCents: "1358460874",
+      },
+      month: { limitMicroCents: "6000000000", usedMicroCents: "2731836592" },
+    },
+  },
+};
 
-/** What `lite.subscription.get` returns once the workspace has no plan. */
-const NULL_SUBSCRIPTION_JS =
-  ';0x00000051;((self.$R=self.$R||{})["server-fn:619751d7-8409-4ded-b5ee-6533a794f8f3"]=[],null)';
+const NOW = new Date("2026-09-20T12:00:00.000Z");
 
-describe("parseWorkspaceId", () => {
-  test("finds the workspace id in serialized javascript", () => {
-    expect(parseWorkspaceId(WORKSPACE_JS)).toBe("wrk_01K6AR1ZET89H8NB691FQ2C2VB");
+type FetchHandler = (url: URL, init?: RequestInit) => Response;
+
+function mockConsole(handle: FetchHandler) {
+  return spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(
+      (input: string | URL | Request, init?: RequestInit | BunFetchRequestInit) =>
+        Promise.resolve(handle(new URL(input.toString()), init as RequestInit)),
+      { preconnect: (_url: string | URL) => undefined },
+    ),
+  );
+}
+
+function json(value: unknown): Response {
+  return new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+}
+
+describe("parseOrgId", () => {
+  test("finds the workspace in the org listing", () => {
+    expect(parseOrgId(ORGS)).toBe(WORKSPACE_ID);
+    expect(parseOrgId([{ id: "org_01ABC" }])).toBe("org_01ABC");
   });
 
   test("returns null when no workspace is present", () => {
-    expect(parseWorkspaceId('{"workspaces":[]}')).toBeNull();
+    expect(parseOrgId([])).toBeNull();
+    expect(parseOrgId([{ id: "acc_01ABC" }])).toBeNull();
+    expect(parseOrgId({ items: ORGS })).toBeNull();
   });
 });
 
-describe("parseSubscription", () => {
-  test("reads all windows out of serialized javascript, including $R[n]= bindings", () => {
-    const parsed = parseSubscription(SUBSCRIPTION_JS);
-    expect(parsed?.rolling).toEqual({ percent: 17, resetInSec: 5944 });
-    expect(parsed?.weekly).toEqual({ percent: 75, resetInSec: 278201 });
-    expect(parsed?.monthly).toEqual({ percent: 99, resetInSec: 90061 });
-    expect(parsed?.useBalance).toBe(true);
+describe("parseGoStatus", () => {
+  test("turns meter dollars into the percentages the card shows", () => {
+    const limits = parseGoStatus(GO_STATUS, NOW);
+    expect(limits?.rollingPercent).toBe(0);
+    expect(limits?.weeklyPercent).toBeCloseTo(45.28, 2);
+    expect(limits?.monthlyPercent).toBeCloseTo(45.53, 2);
+    expect(limits?.weeklyUsd).toBeCloseTo(13.58, 2);
+    expect(limits?.weeklyCapUsd).toBe(30);
+    expect(limits?.useBalance).toBe(false);
+    expect(limits?.source).toBe("dashboard");
   });
 
-  test("reads the json form too", () => {
-    const parsed = parseSubscription(
-      JSON.stringify({
-        rollingUsage: { usagePercent: 17, resetInSec: 5944 },
-        weeklyUsage: { usagePercent: 75, resetInSec: 278201 },
-        monthlyUsage: { usagePercent: 99, resetInSec: 90061 },
-        useBalance: false,
-      }),
-    );
-    expect(parsed?.rolling.percent).toBe(17);
-    expect(parsed?.weekly?.percent).toBe(75);
-    expect(parsed?.monthly?.percent).toBe(99);
-    expect(parsed?.useBalance).toBe(false);
+  test("the plan's renewal is the month's reset, which the meter omits", () => {
+    const limits = parseGoStatus(GO_STATUS, NOW);
+    expect(limits?.monthlyResetAtMs).toBe(Date.parse("2026-10-08T15:04:50.000Z"));
+    expect(limits?.weeklyResetAtMs).toBe(Date.parse("2026-09-21T00:00:00.000Z"));
+    // An unused rolling window has no reset yet, which the row says outright
+    // rather than inventing one five hours out.
+    expect(limits?.rollingResetAtMs).toBeNull();
   });
 
-  test("reads small percentages literally instead of rescaling them", () => {
-    // usagePercent is a 0-100 field, so 1 means 1%. Treating values at or under
-    // 1 as fractions would show a just-reset account as fully capped.
-    const parsed = parseSubscription(
-      JSON.stringify({
-        rollingUsage: { usagePercent: 1, resetInSec: 600 },
-        weeklyUsage: { usagePercent: 0.5, resetInSec: 3600 },
-      }),
+  test("clamps a meter that overshot its cap", () => {
+    const limits = parseGoStatus(
+      {
+        access: {
+          endsAt: "2026-10-08T15:04:50.000Z",
+          meters: { fiveHour: { limitMicroCents: "100", usedMicroCents: "140" } },
+        },
+      },
+      NOW,
     );
-    expect(parsed?.rolling.percent).toBe(1);
-    expect(parsed?.weekly?.percent).toBe(0.5);
+    expect(limits?.rollingPercent).toBe(100);
   });
 
-  test("clamps out-of-range percentages", () => {
-    const parsed = parseSubscription(
-      JSON.stringify({ rollingUsage: { usagePercent: 140, resetInSec: 600 } }),
+  test("tolerates missing weekly and monthly meters but requires the rolling one", () => {
+    const partial = parseGoStatus(
+      {
+        access: {
+          endsAt: null,
+          meters: { fiveHour: { limitMicroCents: "1200000000", usedMicroCents: "600000000" } },
+        },
+      },
+      NOW,
     );
-    expect(parsed?.rolling.percent).toBe(100);
-  });
+    expect(partial?.rollingPercent).toBe(50);
+    expect(partial?.weeklyPercent).toBeNull();
+    expect(partial?.monthlyPercent).toBeNull();
 
-  test("computes a percent from used and limit when none is published", () => {
-    const parsed = parseSubscription(
-      JSON.stringify({ rollingUsage: { used: 25, limit: 100, resetInSec: 600 } }),
-    );
-    expect(parsed?.rolling.percent).toBe(25);
-  });
-
-  test("tolerates missing weekly and monthly windows but requires the rolling one", () => {
-    const weeklyless = parseSubscription(
-      JSON.stringify({ rollingUsage: { usagePercent: 17, resetInSec: 5944 } }),
-    );
-    expect(weeklyless?.weekly).toBeNull();
-    expect(weeklyless?.monthly).toBeNull();
-    expect(weeklyless?.useBalance).toBeNull();
-
-    expect(parseSubscription(JSON.stringify({ weeklyUsage: { usagePercent: 5 } }))).toBeNull();
-    expect(parseSubscription("null")).toBeNull();
-    expect(parseSubscription("<html>login</html>")).toBeNull();
-  });
-
-  test("does not read one window's reset into the other", () => {
-    // A bare `resetInSec` scan would hand the rolling value to weekly.
-    const parsed = parseSubscription(
-      "rollingUsage:{resetInSec:100,usagePercent:10},weeklyUsage:{usagePercent:20}",
-    );
-    expect(parsed?.rolling.resetInSec).toBe(100);
-    expect(parsed?.weekly).toBeNull();
-  });
-
-  test("a back-referenced window does not absorb the next window's values", () => {
-    // The serializer emits a repeated object as a bare `$R[n]` with no literal;
-    // scanning onward would silently give rolling the weekly figures.
-    const parsed = parseSubscription(
-      "$R[16]($R[30],$R[41]={rollingUsage:$R[42]," +
-        'weeklyUsage:$R[43]={status:"ok",resetInSec:278201,usagePercent:75}});',
-    );
-    expect(parsed).toBeNull();
-  });
-
-  test("still reads a window bound through $R[n]=", () => {
-    const parsed = parseSubscription(
-      'rollingUsage:$R[42]={status:"ok",resetInSec:5944,usagePercent:17}',
-    );
-    expect(parsed?.rolling).toEqual({ percent: 17, resetInSec: 5944 });
+    expect(parseGoStatus({ access: { meters: { week: {} } } }, NOW)).toBeNull();
+    expect(parseGoStatus({ access: null }, NOW)).toBeNull();
+    expect(parseGoStatus("<html>login</html>", NOW)).toBeNull();
   });
 });
 
 describe("fetchGoServerLimits", () => {
-  test("uses an id-only GET for workspaces and exact seroval args for subscription", async () => {
+  test("discovers the workspace, then names it in the org header", async () => {
     const urls: URL[] = [];
-    const methods: Array<string | undefined> = [];
     const headers: Headers[] = [];
-    let call = 0;
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(
-        (input: string | URL | Request, init?: RequestInit | BunFetchRequestInit) => {
-          urls.push(new URL(input.toString()));
-          methods.push(init?.method);
-          headers.push(new Headers(init?.headers));
-          call += 1;
-          const body =
-            call === 1
-              ? WORKSPACE_JS
-              : JSON.stringify({
-                  rollingUsage: { usagePercent: 0, resetInSec: 18_000 },
-                  weeklyUsage: { usagePercent: 15, resetInSec: 100_800 },
-                  monthlyUsage: { usagePercent: 99, resetInSec: 90_000 },
-                });
-          return Promise.resolve(
-            new Response(body, { headers: { "Content-Type": "application/json" } }),
-          );
-        },
-        { preconnect: (_url: string | URL) => undefined },
-      ),
-    );
+    const fetchSpy = mockConsole((url, init) => {
+      urls.push(url);
+      headers.push(new Headers(init?.headers));
+      return json(url.pathname.endsWith("/orgs") ? ORGS : GO_STATUS);
+    });
 
     try {
-      const now = new Date("2026-08-02T00:00:00Z");
-      const limits = await fetchGoServerLimits("auth=secret", now);
-      expect(methods).toEqual(["GET", "GET"]);
-      expect(headers[0]?.get("X-Server-Id")).toBe(SERVER_FUNCTION_IDS.workspaces);
-      expect(headers[1]?.get("X-Server-Id")).toBe(SERVER_FUNCTION_IDS.liteSubscription);
-      for (const requestHeaders of headers) {
-        expect(requestHeaders.get("X-Server-Instance")).toMatch(/^server-fn:[0-9a-f-]+$/);
-      }
-      expect(urls[0]?.searchParams.get("id")).toBe(SERVER_FUNCTION_IDS.workspaces);
-      expect(urls[0]?.searchParams.has("args")).toBe(false);
-      expect(urls[1]?.searchParams.get("id")).toBe(SERVER_FUNCTION_IDS.liteSubscription);
-      expect(urls[1]?.searchParams.get("args")).toBe(
-        '{"t":{"t":9,"i":0,"l":1,"a":[{"t":1,"s":"wrk_01K6AR1ZET89H8NB691FQ2C2VB"}],"o":0},"f":31,"m":[]}',
-      );
-      expect(limits.monthlyPercent).toBe(99);
-      expect(limits.monthlyResetAtMs).toBe(now.getTime() + 90_000_000);
-      expect(limits.workspaceId).toBe("wrk_01K6AR1ZET89H8NB691FQ2C2VB");
+      const limits = await fetchGoServerLimits("auth=secret", NOW);
+      expect(urls.map((url) => url.pathname)).toEqual([
+        "/console/api/orgs",
+        "/console/api/go/status",
+      ]);
+      expect(headers[0]?.get("Cookie")).toBe("auth=secret");
+      expect(headers[0]?.has("x-org-id")).toBe(false);
+      expect(headers[1]?.get("x-org-id")).toBe(WORKSPACE_ID);
+      expect(limits.workspaceId).toBe(WORKSPACE_ID);
+      expect(limits.monthlyPercent).toBeCloseTo(45.53, 2);
     } finally {
       fetchSpy.mockRestore();
     }
   });
-});
 
-describe("server function id self-healing", () => {
-  const ROTATED = "a".repeat(64);
-  const COSTS = '{usage:[{date:"2026-08-01",model:"kimi-k3",totalCost:100000000,plan:"lite"}],keys:[]}';
-  const BILLING = "{balance:0,reloadAmount:20,monthlyUsage:null,monthlyLimit:null}";
-  const BUNDLE =
-    'const q = createServerReference("' + ROTATED + '");' + 'const w = query(q, "workspaces");';
-
-  /** Answers each function with a payload its own parser accepts. */
-  function payloadFor(id: string): string {
-    if (id === SERVER_FUNCTION_IDS.billing) return BILLING;
-    if (id === SERVER_FUNCTION_IDS.usageCosts) return COSTS;
-    return '[{id:"wrk_01ABC"}]';
-  }
-
-  function mockServer(handle: (url: URL, init?: RequestInit) => Response) {
-    return spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(
-        (input: string | URL | Request, init?: RequestInit | BunFetchRequestInit) =>
-          Promise.resolve(handle(new URL(input.toString()), init as RequestInit)),
-        { preconnect: (_url: string | URL) => undefined },
-      ),
-    );
-  }
-
-  test("re-derives a rotated id from the bundle and retries with it", async () => {
-    resetDiscoveredIds();
-    const idsTried: string[] = [];
-    const fetchSpy = mockServer((url) => {
-      if (url.pathname === "/") return new Response('"/_build/assets/entry-1.js"');
-      if (url.pathname.startsWith("/_build/")) return new Response(BUNDLE);
-
-      const id = url.searchParams.get("id") ?? "";
-      idsTried.push(id);
-      // The shipped workspaces id no longer resolves; the rotated one does.
-      if (id === SERVER_FUNCTION_IDS.workspaces) return new Response("null");
-      if (id === ROTATED) return new Response('[{id:"wrk_01ABC"}]');
-      return new Response(payloadFor(id));
+  test("a known workspace saves the discovery round trip", async () => {
+    const paths: string[] = [];
+    const fetchSpy = mockConsole((url) => {
+      paths.push(url.pathname);
+      return json(GO_STATUS);
     });
 
     try {
-      const history = await fetchGoUsageHistory("auth=secret", new Date("2026-08-18T00:00:00Z"));
-      expect(idsTried[0]).toBe(SERVER_FUNCTION_IDS.workspaces);
-      expect(idsTried).toContain(ROTATED);
-      expect(history.workspaceId).toBe("wrk_01ABC");
-      expect(history.costs.rows[0]?.usd).toBe(1);
+      await fetchGoServerLimits("auth=secret", NOW, { workspaceId: WORKSPACE_ID });
+      expect(paths).toEqual(["/console/api/go/status"]);
     } finally {
       fetchSpy.mockRestore();
-      resetDiscoveredIds();
     }
   });
 
-  test("an expired session is reported, never chased with a fresh id", async () => {
-    // A new id cannot fix bad credentials. Treating 401 as drift would crawl the
-    // bundle on every poll and hide the real reason from the user.
-    resetDiscoveredIds();
-    let bundleFetches = 0;
-    const fetchSpy = mockServer((url) => {
-      if (url.pathname === "/" || url.pathname.startsWith("/_build/")) {
-        bundleFetches += 1;
-        return new Response(BUNDLE);
-      }
-      return new Response("nope", { status: 401 });
-    });
+  test("reports a lapsed plan rather than blaming the parser", async () => {
+    const fetchSpy = mockConsole((url) =>
+      json(url.pathname.endsWith("/orgs") ? ORGS : { useBalance: false, access: null }),
+    );
 
     try {
-      const failure = await fetchGoUsageHistory("auth=secret", new Date()).catch(
+      const failure = await fetchGoServerLimits("auth=secret", NOW).catch(
         (error: unknown) => error,
       );
       expect(failure).toBeInstanceOf(OpencodeServerError);
-      expect((failure as OpencodeServerError).kind).toBe("credentials");
-      expect(bundleFetches).toBe(0);
+      expect((failure as OpencodeServerError).kind).toBe("no-subscription");
     } finally {
       fetchSpy.mockRestore();
-      resetDiscoveredIds();
     }
   });
 
-  test("does not touch the bundle while the shipped ids still parse", async () => {
-    resetDiscoveredIds();
-    let bundleFetches = 0;
-    const fetchSpy = mockServer((url) => {
-      if (url.pathname === "/" || url.pathname.startsWith("/_build/")) {
-        bundleFetches += 1;
-        return new Response(BUNDLE);
-      }
-      return new Response(payloadFor(url.searchParams.get("id") ?? ""));
-    });
+  test("a rejected query is drift, not a connection problem", async () => {
+    // The console answers a query it no longer understands with 400. Calling
+    // that a network failure would retry it forever instead of saying the API
+    // moved.
+    const fetchSpy = mockConsole((url) =>
+      url.pathname.endsWith("/orgs")
+        ? json(ORGS)
+        : new Response('{"_tag":"BadRequest"}', { status: 400 }),
+    );
 
     try {
-      await fetchGoUsageHistory("auth=secret", new Date("2026-08-18T00:00:00Z"));
-      expect(bundleFetches).toBe(0);
+      const failure = await fetchGoServerLimits("auth=secret", NOW).catch(
+        (error: unknown) => error,
+      );
+      expect((failure as OpencodeServerError).kind).toBe("parse");
     } finally {
       fetchSpy.mockRestore();
-      resetDiscoveredIds();
+    }
+  });
+
+  test("an expired session is reported as credentials", async () => {
+    const fetchSpy = mockConsole(() => new Response('{"_tag":"Unauthorized"}', { status: 401 }));
+
+    try {
+      const failure = await fetchGoServerLimits("auth=secret", NOW).catch(
+        (error: unknown) => error,
+      );
+      expect((failure as OpencodeServerError).kind).toBe("credentials");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("a drained account is told to top up, not to re-paste its cookie", async () => {
+    const fetchSpy = mockConsole(
+      () =>
+        new Response('{"type":"CreditsError","message":"Insufficient balance."}', { status: 401 }),
+    );
+
+    try {
+      const failure = await fetchGoServerLimits("auth=secret", NOW).catch(
+        (error: unknown) => error,
+      );
+      expect((failure as OpencodeServerError).kind).toBe("insufficient-balance");
+    } finally {
+      fetchSpy.mockRestore();
     }
   });
 });
 
-describe("timezoneOffsetLabel", () => {
-  test("formats the offset the cost query buckets days by", () => {
-    expect(timezoneOffsetLabel(new Date())).toMatch(/^[+-]\d{2}:\d{2}$/);
+describe("fetchGoUsageHistory", () => {
+  const COST_DAYS = [
+    { date: "2026-08-31", totalCostMicroCents: "100000000", totalTokens: "10", totalRequests: "1" },
+    { date: "2026-09-01", totalCostMicroCents: "250000000", totalTokens: "20", totalRequests: "2" },
+    { date: "2026-09-20", totalCostMicroCents: "50000000", totalTokens: "5", totalRequests: "1" },
+  ];
+
+  function handle(url: URL): Response {
+    if (url.pathname.endsWith("/orgs")) return json(ORGS);
+    if (url.pathname.endsWith("/usage/cost-by-day")) return json(COST_DAYS);
+    if (url.pathname.endsWith("/go/status")) return json(GO_STATUS);
+    if (url.pathname.endsWith("/billing/status")) return json({ balanceMicroCents: "0" });
+    return json({ enabled: false, rechargeAmountDollars: 20 });
+  }
+
+  test("splits the day chart into months, newest first", async () => {
+    const fetchSpy = mockConsole(handle);
+
+    try {
+      const months = await fetchGoUsageHistory("auth=secret", NOW, {
+        workspaceId: WORKSPACE_ID,
+        months: 3,
+      });
+      expect(months.map((month) => month.month)).toEqual(["2026-09", "2026-08", "2026-07"]);
+      expect(months[0]?.costs.rows.map((row) => row.usd)).toEqual([2.5, 0.5]);
+      expect(months[1]?.costs.rows.map((row) => row.usd)).toEqual([1]);
+      expect(months[2]?.costs.rows).toEqual([]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("asks for the whole span once, from the oldest month's first day", async () => {
+    const queries: string[] = [];
+    const fetchSpy = mockConsole((url) => {
+      if (url.pathname.endsWith("/usage/cost-by-day")) {
+        queries.push(url.searchParams.get("since") ?? "");
+      }
+      return handle(url);
+    });
+
+    try {
+      await fetchGoUsageHistory("auth=secret", NOW, { workspaceId: WORKSPACE_ID, months: 3 });
+      expect(queries).toEqual([consoleTimestamp(new Date(2026, 6, 1).getTime())]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("a subscriber's days are allowance, and only the open month carries billing", async () => {
+    const fetchSpy = mockConsole(handle);
+
+    try {
+      const months = await fetchGoUsageHistory("auth=secret", NOW, {
+        workspaceId: WORKSPACE_ID,
+        months: 2,
+      });
+      expect(months[0]?.costs.rows[0]?.plan).toBe("lite");
+      expect(months[0]?.billing?.hasLiteSubscription).toBe(true);
+      expect(months[1]?.billing).toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("keeps the months when billing cannot be read", async () => {
+    const fetchSpy = mockConsole((url) =>
+      url.pathname.includes("/billing/") ? new Response("nope", { status: 500 }) : handle(url),
+    );
+
+    try {
+      const months = await fetchGoUsageHistory("auth=secret", NOW, {
+        workspaceId: WORKSPACE_ID,
+        months: 1,
+      });
+      expect(months[0]?.costs.rows).toHaveLength(2);
+      expect(months[0]?.billing).toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+describe("fetchGoUsageRows", () => {
+  function rowAt(id: number, atMs: number) {
+    return {
+      id,
+      model: "glm-5.3",
+      inputTokens: 10,
+      outputTokens: 1,
+      costMicroCents: "100000000",
+      billingSource: "go",
+      createdAt: new Date(atMs).toISOString(),
+    };
+  }
+
+  test("follows the cursor until the console stops sending one", async () => {
+    const cursors: Array<string | null> = [];
+    const fetchSpy = mockConsole((url) => {
+      cursors.push(url.searchParams.get("cursor"));
+      return cursors.length === 1
+        ? json({ items: [rowAt(1, NOW.getTime())], nextCursor: "page_2" })
+        : json({ items: [rowAt(2, NOW.getTime() - 60_000)], nextCursor: null });
+    });
+
+    try {
+      const rows = await fetchGoUsageRows("auth=secret", WORKSPACE_ID, {
+        sinceMs: NOW.getTime() - 86_400_000,
+      });
+      expect(cursors).toEqual([null, "page_2"]);
+      expect(rows.map((row) => row.id)).toEqual(["1", "2"]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("names the window and the page size the console accepts", async () => {
+    const sinceMs = Date.parse("2026-08-21T12:00:00.000Z");
+    const seen: URL[] = [];
+    const fetchSpy = mockConsole((url) => {
+      seen.push(url);
+      return json({ items: [], nextCursor: null });
+    });
+
+    try {
+      await fetchGoUsageRows("auth=secret", WORKSPACE_ID, { sinceMs });
+      expect(seen[0]?.searchParams.get("since")).toBe("2026-08-21T12:00:00Z");
+      expect(seen[0]?.searchParams.get("pageSize")).toBe("100");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("drops rows the window does not cover", async () => {
+    const sinceMs = NOW.getTime() - 3_600_000;
+    const fetchSpy = mockConsole(() =>
+      json({
+        items: [rowAt(1, NOW.getTime()), rowAt(2, sinceMs - 60_000)],
+        nextCursor: null,
+      }),
+    );
+
+    try {
+      const rows = await fetchGoUsageRows("auth=secret", WORKSPACE_ID, { sinceMs });
+      expect(rows.map((row) => row.id)).toEqual(["1"]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("stops at the page cap rather than walking indefinitely", async () => {
+    let pages = 0;
+    const fetchSpy = mockConsole(() => {
+      pages += 1;
+      return json({ items: [rowAt(pages, NOW.getTime())], nextCursor: `page_${pages}` });
+    });
+
+    try {
+      await fetchGoUsageRows("auth=secret", WORKSPACE_ID, {
+        sinceMs: NOW.getTime() - 86_400_000,
+        maxPages: 3,
+      });
+      expect(pages).toBe(3);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
 
@@ -321,20 +433,12 @@ describe("retryAfterMs", () => {
 
 describe("fetchGoServerLimits rate limiting", () => {
   test("a 429 surfaces as a rate limit carrying the server's Retry-After", async () => {
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(
-        () =>
-          Promise.resolve(
-            new Response("slow down", { status: 429, headers: { "Retry-After": "90" } }),
-          ),
-        { preconnect: (_url: string | URL) => undefined },
-      ),
+    const fetchSpy = mockConsole(
+      () => new Response("slow down", { status: 429, headers: { "Retry-After": "90" } }),
     );
 
     try {
-      const failure = await fetchGoServerLimits("auth=secret", new Date()).catch(
-        (error: unknown) => error,
-      );
+      const failure = await fetchGoServerLimits("auth=secret", NOW).catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(OpencodeRateLimitError);
       expect((failure as OpencodeRateLimitError).retryAfterMs).toBe(90_000);
       expect((failure as OpencodeRateLimitError).kind).toBe("rate-limited");
@@ -344,16 +448,10 @@ describe("fetchGoServerLimits rate limiting", () => {
   });
 
   test("a 429 without a Retry-After still reports a rate limit", async () => {
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(() => Promise.resolve(new Response("slow down", { status: 429 })), {
-        preconnect: (_url: string | URL) => undefined,
-      }),
-    );
+    const fetchSpy = mockConsole(() => new Response("slow down", { status: 429 }));
 
     try {
-      const failure = await fetchGoServerLimits("auth=secret", new Date()).catch(
-        (error: unknown) => error,
-      );
+      const failure = await fetchGoServerLimits("auth=secret", NOW).catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(OpencodeRateLimitError);
       expect((failure as OpencodeRateLimitError).retryAfterMs).toBeNull();
     } finally {
@@ -363,9 +461,16 @@ describe("fetchGoServerLimits rate limiting", () => {
 });
 
 describe("filterCookieHeader", () => {
-  test("keeps only the auth cookies", () => {
+  test("keeps only the session cookies", () => {
     expect(filterCookieHeader("ph_session=abc; auth=tok123; _ga=x")).toBe("auth=tok123");
     expect(filterCookieHeader("__Host-auth=tok; other=1")).toBe("__Host-auth=tok");
+    // What a pasted console header looks like: the session id the API checks,
+    // the older sealed cookie, and a pile of analytics that must not be sent.
+    expect(
+      filterCookieHeader(
+        "oc_locale=en; auth=tok123; desktop_promo_dismissed=1; __Host-console_session=st_abc; __stripe_mid=x",
+      ),
+    ).toBe("auth=tok123; __Host-console_session=st_abc");
   });
 
   test("returns null when nothing authenticates", () => {
@@ -374,199 +479,25 @@ describe("filterCookieHeader", () => {
   });
 });
 
-describe("isSignedOut", () => {
-  test("detects the lapsed-session responses", () => {
-    expect(isSignedOut('actor of type "public"')).toBe(true);
-    expect(isSignedOut("redirecting to /auth/authorize")).toBe(true);
-    expect(isSignedOut(SUBSCRIPTION_JS)).toBe(false);
+describe("consoleTimestamp", () => {
+  test("drops the milliseconds the console's since filter rejects", () => {
+    expect(consoleTimestamp(Date.parse("2026-09-20T11:22:44.776Z"))).toBe("2026-09-20T11:22:44Z");
   });
 });
 
-describe("isNullPayload", () => {
-  test("recognizes the answer a workspace with no plan returns", () => {
-    expect(isNullPayload(NULL_SUBSCRIPTION_JS)).toBe(true);
-    expect(isNullPayload("null")).toBe(true);
-  });
-
-  test("does not mistake a real reading for an empty one", () => {
-    expect(isNullPayload(SUBSCRIPTION_JS)).toBe(false);
-    expect(isNullPayload(WORKSPACE_JS)).toBe(false);
-    expect(isNullPayload(JSON.stringify({ rollingUsage: null }))).toBe(false);
+describe("isSignedOut", () => {
+  test("detects the lapsed-session responses", () => {
+    expect(isSignedOut('actor of type "public"')).toBe(true);
+    expect(isSignedOut("redirecting to https://opencode.ai/console/login")).toBe(true);
+    expect(isSignedOut(JSON.stringify(GO_STATUS))).toBe(false);
   });
 });
 
 describe("isInsufficientBalance", () => {
   test("recognizes the credits refusal opencode answers 401 with", () => {
-    expect(
-      isInsufficientBalance('{"type":"CreditsError","message":"Insufficient balance."}'),
-    ).toBe(true);
+    expect(isInsufficientBalance('{"type":"CreditsError","message":"Insufficient balance."}')).toBe(
+      true,
+    );
     expect(isInsufficientBalance('{"message":"Unauthorized"}')).toBe(false);
-  });
-});
-
-describe("fetchGoServerLimits without a subscription", () => {
-  test("reports a lapsed plan rather than blaming the parser", async () => {
-    let call = 0;
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(
-        () => {
-          call += 1;
-          return Promise.resolve(new Response(call === 1 ? WORKSPACE_JS : NULL_SUBSCRIPTION_JS));
-        },
-        { preconnect: (_url: string | URL) => undefined },
-      ),
-    );
-
-    try {
-      await expect(fetchGoServerLimits("auth=tok", new Date())).rejects.toMatchObject({
-        kind: "no-subscription",
-      });
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  test("a body that stopped parsing is still reported as drift", async () => {
-    let call = 0;
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(
-        () => {
-          call += 1;
-          return Promise.resolve(new Response(call === 1 ? WORKSPACE_JS : '{"renamed":{}}'));
-        },
-        { preconnect: (_url: string | URL) => undefined },
-      ),
-    );
-
-    try {
-      await expect(fetchGoServerLimits("auth=tok", new Date())).rejects.toMatchObject({
-        kind: "parse",
-      });
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-});
-
-describe("fetchGoUsageRows", () => {
-  const WORKSPACE = "wrk_01ABC";
-  /**
-   * A full page, timestamped so the walk can be steered by the window. Full
-   * because a short page legitimately means the end of the table.
-   */
-  function page(atMs: number, rows = 50): string {
-    return JSON.stringify(
-      Array.from({ length: rows }, (_, index) => ({
-        id: `usg_${index}`,
-        sessionID: "ses_1",
-        timeCreated: new Date(atMs).toISOString(),
-        model: "kimi-k3",
-        inputTokens: 1,
-        outputTokens: 1,
-        reasoningTokens: 0,
-        cacheReadTokens: 0,
-        cacheWrite5mTokens: 0,
-        cacheWrite1hTokens: 0,
-        cost: 0,
-        plan: "lite",
-      })),
-    );
-  }
-
-  function mock(handle: (page: number) => Response) {
-    return spyOn(globalThis, "fetch").mockImplementation(
-      Object.assign(
-        (_input: string | URL | Request, init?: RequestInit | BunFetchRequestInit) => {
-          const body = String((init as RequestInit)?.body ?? "");
-          const requested = Number(/"s":(\d+)}\]/.exec(body)?.[1] ?? 0);
-          return Promise.resolve(handle(requested));
-        },
-        { preconnect: (_url: string | URL) => undefined },
-      ),
-    );
-  }
-
-  test("stops walking once a page reaches past the window", async () => {
-    const now = Date.parse("2026-08-20T00:00:00Z");
-    const requested: number[] = [];
-    const fetchSpy = mock((requestedPage) => {
-      requested.push(requestedPage);
-      // Page 6 is older than the cutoff, so the walk must end there.
-      const atMs = requestedPage < 6 ? now - 60_000 : now - 10 * 24 * 60 * 60 * 1000;
-      return new Response(page(atMs));
-    });
-    try {
-      const rows = await fetchGoUsageRows("auth=secret", WORKSPACE, {
-        sinceMs: now - 24 * 60 * 60 * 1000,
-      });
-      // The first page goes alone, then four at a time: the batch holding page
-      // 6 is the last, and nothing beyond it is asked for.
-      expect(requested).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
-      expect(rows).toHaveLength(6 * 50);
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  test("a light month costs one request", async () => {
-    const now = Date.parse("2026-08-20T00:00:00Z");
-    const requested: number[] = [];
-    const fetchSpy = mock((requestedPage) => {
-      requested.push(requestedPage);
-      return new Response(page(now - 60_000, 12));
-    });
-    try {
-      const rows = await fetchGoUsageRows("auth=secret", WORKSPACE, { sinceMs: 0 });
-      expect(requested).toEqual([0]);
-      expect(rows).toHaveLength(12);
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  test("a failed page inside a batch keeps the pages before it and drops the rest", async () => {
-    const now = Date.parse("2026-08-20T00:00:00Z");
-    const fetchSpy = mock((requestedPage) =>
-      requestedPage === 2 ? new Response("", { status: 500 }) : new Response(page(now - 60_000)),
-    );
-    try {
-      // Pages 3 and 4 came back fine, but the rows between them and page 1
-      // were never seen, so keeping them would leave a hole in the series.
-      const rows = await fetchGoUsageRows("auth=secret", WORKSPACE, { sinceMs: 0, maxPages: 5 });
-      expect(rows).toHaveLength(2 * 50);
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  test("keeps the pages it already walked when a later one fails", async () => {
-    const now = Date.parse("2026-08-20T00:00:00Z");
-    const fetchSpy = mock((requestedPage) =>
-      requestedPage === 0 ? new Response(page(now - 60_000)) : new Response("", { status: 500 }),
-    );
-    try {
-      // Losing a month of history to one bad page would read as no usage.
-      const rows = await fetchGoUsageRows("auth=secret", WORKSPACE, { sinceMs: 0 });
-      expect(rows).toHaveLength(50);
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  test("throws rather than reporting an empty window when the first page fails", async () => {
-    const fetchSpy = mock(() => new Response("", { status: 500 }));
-    try {
-      await expect(
-        fetchGoUsageRows("auth=secret", WORKSPACE, { sinceMs: 0 }),
-      ).rejects.toBeInstanceOf(OpencodeServerError);
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  test("refuses to walk without an auth cookie", async () => {
-    await expect(
-      fetchGoUsageRows("theme=dark", WORKSPACE, { sinceMs: 0 }),
-    ).rejects.toBeInstanceOf(OpencodeServerError);
   });
 });

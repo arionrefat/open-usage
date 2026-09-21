@@ -99,16 +99,23 @@ function matchesCredential(reading: GoServerLimits | null, kind: GoCredentialKin
   return kind === "api-key" ? reading.source === "api" : reading.source !== "api";
 }
 
+/**
+ * The expiry an Iron-sealed cookie carries in its own value. The console's
+ * session cookie is an opaque id with no such field, so a header holding only
+ * that one has no expiry to warn on and says so by returning null.
+ */
 export function cookieExpiryMs(cookieHeader: string): number | null {
   const filtered = filterCookieHeader(cookieHeader);
   if (!filtered) return null;
-  const firstCookie = filtered.split(";", 1)[0];
-  const equals = firstCookie?.indexOf("=") ?? -1;
-  if (equals < 1) return null;
-  const expiryField = firstCookie?.slice(equals + 1).split("*")[5];
-  if (!expiryField || !/^\d+$/.test(expiryField)) return null;
-  const expiryMs = Number(expiryField);
-  return Number.isFinite(expiryMs) && expiryMs > 0 ? expiryMs : null;
+  for (const part of filtered.split(";")) {
+    const value = part.slice(part.indexOf("=") + 1);
+    if (!value.startsWith("Fe26.2")) continue;
+    const expiryField = value.split("*")[5];
+    if (!expiryField || !/^\d+$/.test(expiryField)) continue;
+    const expiryMs = Number(expiryField);
+    if (Number.isFinite(expiryMs) && expiryMs > 0) return expiryMs;
+  }
+  return null;
 }
 
 export const dormantGoLimitsSource: GoLimitsSource = {

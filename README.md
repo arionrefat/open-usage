@@ -202,20 +202,22 @@ The same directory holds the cached limits the app opens on (`usage-cache.json`)
 OpenCode publishes Go plan usage to its dashboard but not to any public API, so the exact numbers sit behind your signed-in `opencode.ai` session.
 Hand `open-usage` that session cookie and the Go card swaps its local estimate for the dashboard's own rolling, weekly, and monthly figures.
 
-1. Sign in at [opencode.ai](https://opencode.ai) and open the dashboard.
+1. Sign in at [opencode.ai/console](https://opencode.ai/console) and open your workspace.
 2. Open devtools and find the cookie store: **Application → Cookies** in Chrome and Edge, **Storage → Cookies** in Firefox and Safari.
-3. Select `https://opencode.ai` and copy the value of the `auth` cookie - `__Host-auth` if that is the name your browser holds.
+3. Select `https://opencode.ai` and copy the value of the `__Host-console_session` cookie - `console_session` if that is the name your browser holds.
 4. Give it to `open-usage`, either in `~/.config/open-usage/config.json` - a file you create, separate from `preferences.json`:
 
    ```json
-   { "opencodeCookie": "auth=<value>" }
+   { "opencodeCookie": "__Host-console_session=<value>" }
    ```
 
    or per-shell:
 
    ```bash
-   export OPEN_USAGE_OPENCODE_COOKIE='auth=<value>'
+   export OPEN_USAGE_OPENCODE_COOKIE='__Host-console_session=<value>'
    ```
+
+Pasting the whole `Cookie` header works too: everything but the session cookies is stripped before the request.
 
 The config file is re-read on every poll, so a cookie pasted there lands within a minute - press `r` to skip the wait.
 The environment variable is read once at launch, so exporting it means restarting the app.

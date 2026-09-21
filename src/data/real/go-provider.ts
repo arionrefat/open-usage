@@ -61,6 +61,15 @@ function spendLimit(
   };
 }
 
+/**
+ * A window the console has not started has no reset to report, which happens
+ * whenever nothing has been spent in it yet. Saying so beats "reset unknown",
+ * which reads as a failure rather than as an idle window.
+ */
+function serverResetText(resetAtMs: number | null, nowMs: number): string {
+  return resetAtMs === null ? "no usage in window" : resetText(resetAtMs, nowMs);
+}
+
 /** Server percentages replace the estimate for each published window. */
 function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: number): UsageLimit[] {
   const limits: UsageLimit[] = [
@@ -69,7 +78,7 @@ function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: nu
       label: "rolling 5h",
       detailLabel: "rolling 5h limit",
       percent: Math.round(server.rollingPercent),
-      reset: resetText(server.rollingResetAtMs, nowMs),
+      reset: serverResetText(server.rollingResetAtMs, nowMs),
       ...(server.rollingUsd !== null && server.rollingUsd !== undefined &&
         server.rollingCapUsd !== null && server.rollingCapUsd !== undefined
         ? { detailValueLabel: `${formatUsd(server.rollingUsd)} of ${formatUsd(server.rollingCapUsd)}` }
@@ -82,7 +91,7 @@ function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: nu
       label: "rolling 7d",
       detailLabel: "rolling 7d limit",
       percent: Math.round(server.weeklyPercent),
-      reset: resetText(server.weeklyResetAtMs, nowMs),
+      reset: serverResetText(server.weeklyResetAtMs, nowMs),
       ...(server.weeklyUsd !== null && server.weeklyUsd !== undefined &&
         server.weeklyCapUsd !== null && server.weeklyCapUsd !== undefined
         ? { detailValueLabel: `${formatUsd(server.weeklyUsd)} of ${formatUsd(server.weeklyCapUsd)}` }
@@ -97,7 +106,7 @@ function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: nu
       label: "this cycle",
       detailLabel: "monthly limit",
       percent: Math.round(server.monthlyPercent),
-      reset: resetText(server.monthlyResetAtMs, nowMs),
+      reset: serverResetText(server.monthlyResetAtMs, nowMs),
       ...(server.monthlyUsd !== null && server.monthlyUsd !== undefined &&
         server.monthlyCapUsd !== null && server.monthlyCapUsd !== undefined
         ? { detailValueLabel: `${formatUsd(server.monthlyUsd)} of ${formatUsd(server.monthlyCapUsd)}` }
@@ -115,6 +124,12 @@ function sessionsFooter(
   server: GoServerLimits | null,
 ): string | undefined {
   if (!stats || stats.sessions <= 0) {
+    // The console reports requests rather than sessions, so workspace history
+    // arrives with tokens and no session count. Calling that "no history" would
+    // deny a chart the reader is looking at.
+    if (stats && stats.tokens > 0) {
+      return `tokens 30d ${formatTokenCount(stats.tokens)} ▏ workspace-wide ▏ tokens from the opencode console`;
+    }
     if (!server) return undefined;
     return `no local history ▏ limits from ${server.source === "api" ? "API" : "dashboard"}`;
   }
@@ -276,7 +291,7 @@ function sessionScope(
     return {
       percent: Math.round(server.rollingPercent),
       window: "5h rolling · opencode",
-      reset: resetText(server.rollingResetAtMs, nowMs),
+      reset: serverResetText(server.rollingResetAtMs, nowMs),
     };
   }
   if (spend) {
@@ -299,7 +314,7 @@ function weeklyScope(
     return {
       percent: Math.round(server.weeklyPercent),
       window: "7d · opencode",
-      reset: resetText(server.weeklyResetAtMs, nowMs),
+      reset: serverResetText(server.weeklyResetAtMs, nowMs),
     };
   }
   if (spend) {
