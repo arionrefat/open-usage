@@ -4,6 +4,7 @@ import {
   OpencodeServerError,
   fetchGoServerLimits,
   filterCookieHeader,
+  hasConsoleSessionCookie,
   type GoServerLimits,
 } from "./opencode-server";
 import { fetchGoApiLimits } from "./opencode-api";
@@ -137,14 +138,22 @@ function isPlanGone(error: unknown): boolean {
   return error.kind === "no-subscription" || error.kind === "insufficient-balance";
 }
 
-function describeGoFailure(error: unknown, kind: GoCredentialKind | null): string {
+function describeGoFailure(
+  error: unknown,
+  kind: GoCredentialKind | null,
+  isConsoleCookieMissing = false,
+): string {
   if (!(error instanceof OpencodeServerError)) return "opencode unreachable";
   // Kept short: this doubles as the reason printed in place of a percentage.
   if (error.kind === "no-subscription") return "no opencode go subscription";
   if (error.kind === "insufficient-balance") return "opencode balance spent - add credit";
   if (error.kind === "credentials") {
-    return kind === "api-key"
-      ? `opencode API key rejected - update ${API_KEY_ENV_VAR}`
+    if (kind === "api-key") return `opencode API key rejected - update ${API_KEY_ENV_VAR}`;
+    // A cookie copied before opencode moved to the console cannot work, however
+    // fresh it is, so saying "expired" would send the user to re-copy the same
+    // dead cookie rather than the one the console now issues.
+    return isConsoleCookieMissing
+      ? "old opencode cookie - copy the console session one"
       : "opencode session expired - paste a fresh cookie";
   }
   if (error.kind === "parse") {
@@ -167,6 +176,8 @@ export function createGoLimitsSource(
   // credential rewritten mid-poll cannot make the precheck and fetch disagree.
   let credentialForAttempt: GoCredential | null = null;
   let failureCredentialKind: GoCredentialKind | null = null;
+  // Remembered per attempt so the failure can name the cookie the console wants.
+  let isConsoleCookieMissing = false;
   // A lapsed plan is a standing account state, not a request that went wrong,
   // so it is remembered separately from the schedule's failure count.
   let isPlanMissing = false;
@@ -176,6 +187,9 @@ export function createGoLimitsSource(
     precheck: () => {
       credentialForAttempt = readCredential(configPath, env);
       failureCredentialKind = credentialForAttempt?.kind ?? null;
+      isConsoleCookieMissing =
+        credentialForAttempt?.kind === "cookie" &&
+        !hasConsoleSessionCookie(credentialForAttempt.value);
       // No remote credential is a normal local-only state. Leave the schedule
       // untouched so adding one takes effect on the next tick.
       if (!credentialForAttempt) return { note: null, isThrottled: false };
@@ -207,7 +221,8 @@ export function createGoLimitsSource(
       return { ...value, source: value.source ?? "dashboard" };
     },
     fetchedAtMs: (value) => value.fetchedAtMs,
-    describeFailure: (error) => describeGoFailure(error, failureCredentialKind),
+    describeFailure: (error) =>
+      describeGoFailure(error, failureCredentialKind, isConsoleCookieMissing),
     onFailure: (error) => {
       isPlanMissing = isPlanGone(error);
       // Both an expired session and a dashboard redeploy invalidate the

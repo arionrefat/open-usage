@@ -7,6 +7,7 @@ import {
   fetchGoUsageHistory,
   fetchGoUsageRows,
   filterCookieHeader,
+  hasConsoleSessionCookie,
   isInsufficientBalance,
   isSignedOut,
   parseGoStatus,
@@ -476,6 +477,15 @@ describe("filterCookieHeader", () => {
   test("returns null when nothing authenticates", () => {
     expect(filterCookieHeader("_ga=x; ph_session=abc")).toBeNull();
     expect(filterCookieHeader("")).toBeNull();
+  });
+});
+
+describe("hasConsoleSessionCookie", () => {
+  test("tells the console's own cookie from the old dashboard's", () => {
+    expect(hasConsoleSessionCookie("oc_locale=en; __Host-console_session=st_abc")).toBe(true);
+    expect(hasConsoleSessionCookie("console_session=st_abc")).toBe(true);
+    expect(hasConsoleSessionCookie("auth=Fe26.2**sealed; _ga=x")).toBe(false);
+    expect(hasConsoleSessionCookie("_ga=x")).toBe(false);
   });
 });
 

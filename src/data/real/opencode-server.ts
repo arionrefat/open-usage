@@ -25,13 +25,15 @@ import {
 const CONSOLE_API_URL = "https://opencode.ai/console/api";
 const ORG_HEADER = "x-org-id";
 
+/** What the console itself issues, and the only cookie its API checks. */
+const CONSOLE_SESSION_COOKIE_NAMES = ["__Host-console_session", "console_session"];
+
 /**
  * Only the session cookies carry auth; everything else is noise we must not
- * send. `console_session` is what the console issues; `auth` is the older
- * dashboard's Iron-sealed cookie, kept because it still carries the expiry the
- * card warns on and costs nothing to pass along.
+ * send. `auth` is the older dashboard's Iron-sealed cookie, kept because it
+ * still carries the expiry the card warns on and costs nothing to pass along.
  */
-const AUTH_COOKIE_NAMES = ["__Host-console_session", "console_session", "auth", "__Host-auth"];
+const AUTH_COOKIE_NAMES = [...CONSOLE_SESSION_COOKIE_NAMES, "auth", "__Host-auth"];
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 
@@ -53,6 +55,19 @@ export function filterCookieHeader(raw: string): string | null {
     kept.push(trimmed);
   }
   return kept.length > 0 ? kept.join("; ") : null;
+}
+
+/**
+ * True when a pasted header carries the cookie the console API checks. A header
+ * holding only the old dashboard's cookie authenticates nothing since the
+ * September 2026 migration, and the card says which cookie to fetch instead.
+ */
+export function hasConsoleSessionCookie(cookieHeader: string): boolean {
+  const filtered = filterCookieHeader(cookieHeader);
+  if (!filtered) return false;
+  return filtered
+    .split(";")
+    .some((part) => CONSOLE_SESSION_COOKIE_NAMES.includes(part.trim().split("=")[0] ?? ""));
 }
 
 /** The workspace ids the console issues; `wrk_` predates the rename to orgs. */

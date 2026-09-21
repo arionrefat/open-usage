@@ -292,13 +292,24 @@ describe("createGoLimitsSource", () => {
   });
 
   test("an expired session clears the reading and says how to fix it", async () => {
-    const path = configWithCookie("auth=tok");
+    const path = configWithCookie("__Host-console_session=st_abc");
     const source = createGoLimitsSource(path, {}, () =>
       Promise.reject(new OpencodeServerError("opencode session expired", "credentials")),
     );
     await source.poll(new Date());
     expect(source.read()).toBeNull();
     expect(source.note()).toContain("fresh cookie");
+  });
+
+  test("a cookie from before the console migration is named as the reason", async () => {
+    // Every pre-console cookie is refused, so "session expired" would send the
+    // user to re-copy the same dead cookie instead of the console's own.
+    const path = configWithCookie("auth=tok");
+    const source = createGoLimitsSource(path, {}, () =>
+      Promise.reject(new OpencodeServerError("opencode session expired", "credentials")),
+    );
+    await source.poll(new Date());
+    expect(source.note()).toBe("old opencode cookie - copy the console session one");
   });
 
   test("a cancelled poll neither backs off nor blames the network", async () => {
