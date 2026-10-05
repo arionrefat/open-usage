@@ -51,6 +51,8 @@ const UNSUBSCRIBED_BILLING: NonNullable<Parameters<typeof buildGoProvider>[0]["b
   monthlyLimitUsd: null,
   isAutoReloadOn: false,
   reloadAmountUsd: null,
+  isAutoReloadPending: false,
+  autoReloadFailure: null,
   hasLiteSubscription: false,
   hasSubscription: false,
 };
@@ -106,6 +108,21 @@ describe("buildGoProvider details", () => {
     expect(build({ server: SERVER }).provider.meta.planEnd).toEqual({ text: "until Jan 15", isSoon: true });
     expect(build({ server: { ...SERVER, monthlyResetAtMs: null } }).provider.meta.planEnd).toBeUndefined();
     expect(build({}).provider.meta.planEnd).toBeUndefined();
+  });
+
+  test("a failed or pending top-up shows in the billed rows", () => {
+    const billing = {
+      ...UNSUBSCRIBED_BILLING,
+      hasLiteSubscription: true,
+      isAutoReloadOn: true,
+      reloadAmountUsd: 20,
+      isAutoReloadPending: true,
+      autoReloadFailure: "card_declined",
+    };
+    const rows = build({ server: SERVER, billing }).provider.details?.find((section) => section.title === "billed")?.rows;
+
+    expect(rows?.find((row) => row.label === "auto-reload")?.value).toBe("on · $20.00 · pending");
+    expect(rows?.find((row) => row.label === "auto-reload failed")?.value).toBe("card_declined");
   });
 
   test("a plan cancelled at period end says it ends rather than runs until", () => {

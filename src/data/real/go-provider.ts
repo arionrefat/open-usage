@@ -156,8 +156,13 @@ function billedSection(billing: GoBilling | null): DetailSection | null {
         : []),
       {
         label: "auto-reload",
-        value: billing.isAutoReloadOn ? `on · ${money(billing.reloadAmountUsd ?? 0)}` : "off",
+        value: billing.isAutoReloadOn
+          ? `on · ${money(billing.reloadAmountUsd ?? 0)}${billing.isAutoReloadPending ? " · pending" : ""}`
+          : "off",
       },
+      ...(billing.autoReloadFailure !== null
+        ? [{ label: "auto-reload failed", value: billing.autoReloadFailure, color: COLORS.warn }]
+        : []),
     ],
   };
 }

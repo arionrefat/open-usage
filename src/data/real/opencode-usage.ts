@@ -194,9 +194,18 @@ export interface GoBilling {
   monthlyLimitUsd: number | null;
   isAutoReloadOn: boolean;
   reloadAmountUsd: number | null;
+  isAutoReloadPending: boolean;
+  /** The console's reason the last automatic top-up failed. */
+  autoReloadFailure: string | null;
   /** True when a Go (lite) subscription is attached. */
   hasLiteSubscription: boolean;
   hasSubscription: boolean;
+}
+
+/** Only `null` has been seen live, so a reason in a shape we cannot print still counts as a failure. */
+function failureFrom(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  return typeof value === "string" ? value : "unknown reason";
 }
 
 /**
@@ -221,6 +230,8 @@ export function parseBillingStatus(
     monthlyLimitUsd: null,
     isAutoReloadOn: recharge?.enabled === true,
     reloadAmountUsd: recharge ? numericField(recharge.rechargeAmountDollars) : null,
+    isAutoReloadPending: recharge?.pending === true,
+    autoReloadFailure: failureFrom(recharge?.failureReason),
     hasLiteSubscription: options.hasGoAccess,
     // Seat subscriptions are not a Go concept; the Go access flag is the only
     // plan state the console reports for this workspace.

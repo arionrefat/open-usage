@@ -84,12 +84,18 @@ function goBilling(value: unknown): GoBilling | null {
   if (typeof raw.hasLiteSubscription !== "boolean" || typeof raw.hasSubscription !== "boolean") {
     return null;
   }
+  // Absent from records written before the auto-recharge state was kept.
+  const autoReloadFailure = raw.autoReloadFailure === undefined ? null : nullableString(raw.autoReloadFailure);
+  if (autoReloadFailure === undefined) return null;
+  if (raw.isAutoReloadPending !== undefined && typeof raw.isAutoReloadPending !== "boolean") return null;
   return {
     balanceUsd,
     monthlyUsageUsd,
     monthlyLimitUsd,
     isAutoReloadOn: raw.isAutoReloadOn,
     reloadAmountUsd,
+    isAutoReloadPending: raw.isAutoReloadPending === true,
+    autoReloadFailure,
     hasLiteSubscription: raw.hasLiteSubscription,
     hasSubscription: raw.hasSubscription,
   };

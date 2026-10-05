@@ -280,6 +280,25 @@ describe("parseBillingStatus", () => {
     expect(billing?.hasLiteSubscription).toBe(true);
   });
 
+  test("keeps a pending or failed top-up, which the live record reports as null and false", () => {
+    // Verbatim from a live `GET /console/api/billing/auto-recharge`.
+    const live = { enabled: false, thresholdDollars: 5, rechargeAmountDollars: 20, pending: false, failureReason: null };
+    const quiet = parseBillingStatus({ balanceMicroCents: "0" }, live, { hasGoAccess: true });
+    expect(quiet?.isAutoReloadPending).toBe(false);
+    expect(quiet?.autoReloadFailure).toBeNull();
+
+    const failed = parseBillingStatus(
+      { balanceMicroCents: "0" },
+      { ...live, enabled: true, pending: true, failureReason: "card_declined" },
+      { hasGoAccess: true },
+    );
+    expect(failed?.isAutoReloadPending).toBe(true);
+    expect(failed?.autoReloadFailure).toBe("card_declined");
+    // A reason in a shape we cannot print is still a failure, not silence.
+    const odd = parseBillingStatus({ balanceMicroCents: "0" }, { ...live, failureReason: { code: 1 } }, { hasGoAccess: true });
+    expect(odd?.autoReloadFailure).toBe("unknown reason");
+  });
+
   test("a go account reports no metered month, because the console publishes none", () => {
     const billing = parseBillingStatus(
       { balanceMicroCents: "0" },

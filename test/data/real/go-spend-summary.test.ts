@@ -32,6 +32,8 @@ const NO_BILLING: GoBilling = {
   monthlyLimitUsd: null,
   isAutoReloadOn: false,
   reloadAmountUsd: 20,
+  isAutoReloadPending: false,
+  autoReloadFailure: null,
   hasLiteSubscription: true,
   hasSubscription: false,
 };

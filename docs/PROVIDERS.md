@@ -550,7 +550,8 @@ Two wire details are easy to miss and both silently empty the result: a month wi
 The dashboard keeps the three in separate chart stacks for this reason, so any summary must keep the split rather than adding them into one "spend" figure.
 Verified on a Go account whose `billing.get` reports `balance = 0`, `monthlyUsage = null` and `subscription = null` with only `lite` set: every row is `lite`, totalling $40.9177 in July, none of which was billed.
 
-The real-money surface for a go account is `GET /console/api/billing/status` (`balanceMicroCents`, `creditLimitMicroCents`) alongside `GET /console/api/billing/auto-recharge` (`enabled`, `thresholdDollars`, `rechargeAmountDollars`).
+The real-money surface for a go account is `GET /console/api/billing/status` (`balanceMicroCents`, `creditLimitMicroCents`) alongside `GET /console/api/billing/auto-recharge` (`enabled`, `thresholdDollars`, `rechargeAmountDollars`, `pending`, `failureReason`).
+A pending top-up is appended to the auto-reload row, and a `failureReason` gets a warning row of its own; only `false` and `null` have been seen live, so a reason that is not a string still shows as "unknown reason" rather than vanishing.
 The console publishes no metered month total, so the spend view reports the cost rows rather than a figure it was never given.
 
 The monthly window's reset doubles as the plan's end date: the header reads `Go · until Oct 9`, on the same terms as codex and only when the server reports the window.

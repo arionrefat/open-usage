@@ -28,6 +28,8 @@ const reading: GoHistoryReading = {
         monthlyLimitUsd: null,
         isAutoReloadOn: false,
         reloadAmountUsd: 20,
+        isAutoReloadPending: false,
+        autoReloadFailure: "card_declined",
         hasLiteSubscription: true,
         hasSubscription: false,
       },
@@ -61,7 +63,12 @@ const reading: GoHistoryReading = {
 const VERSION_1_FILE = {
   version: 1,
   reading: {
-    months: reading.months,
+    // Billing records then carried no auto-recharge state.
+    months: reading.months.map((month) => {
+      if (!month.billing) return month;
+      const { isAutoReloadPending: _pending, autoReloadFailure: _failure, ...billing } = month.billing;
+      return { ...month, billing };
+    }),
     rows: [
       {
         id: "2095385180",
@@ -119,7 +126,9 @@ describe("go history cache", () => {
       writeFileSync(path, JSON.stringify(VERSION_1_FILE));
 
       const migrated = readGoHistoryCache(path);
-      expect(migrated?.months).toEqual(reading.months);
+      expect(migrated?.months[0]?.costs).toEqual(reading.months[0]?.costs);
+      expect(migrated?.months[0]?.billing?.autoReloadFailure).toBeNull();
+      expect(migrated?.months[0]?.billing?.isAutoReloadPending).toBe(false);
       // Banked, but nothing recorded which days those reads answered for.
       expect(migrated?.costCoverage).toEqual([]);
       // Old table ids share nothing with request log ids, so keeping these
