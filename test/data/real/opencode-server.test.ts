@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import {
   OpencodeRateLimitError,
   OpencodeServerError,
-  consoleTimestamp,
+  costCoverage,
   fetchGoServerLimits,
   fetchGoUsageHistory,
   fetchGoUsageRows,
@@ -251,68 +251,96 @@ describe("fetchGoUsageHistory", () => {
     return json({ enabled: false, rechargeAmountDollars: 20 });
   }
 
-  test("splits the day chart into months, newest first", async () => {
+  test("turns each reported day into a cost row", async () => {
     const fetchSpy = mockConsole(handle);
 
     try {
-      const months = await fetchGoUsageHistory("auth=secret", NOW, {
-        workspaceId: WORKSPACE_ID,
-        months: 3,
-      });
-      expect(months.map((month) => month.month)).toEqual(["2026-09", "2026-08", "2026-07"]);
-      expect(months[0]?.costs.rows.map((row) => row.usd)).toEqual([2.5, 0.5]);
-      expect(months[1]?.costs.rows.map((row) => row.usd)).toEqual([1]);
-      expect(months[2]?.costs.rows).toEqual([]);
+      const reply = await fetchGoUsageHistory("auth=secret", NOW, { workspaceId: WORKSPACE_ID });
+      expect(reply.rows.map((row) => [row.date, row.usd])).toEqual([
+        ["2026-08-31", 1],
+        ["2026-09-01", 2.5],
+        ["2026-09-20", 0.5],
+      ]);
+      expect(reply.workspaceId).toBe(WORKSPACE_ID);
     } finally {
       fetchSpy.mockRestore();
     }
   });
 
-  test("asks for the whole span once, from the oldest month's first day", async () => {
-    const queries: string[] = [];
+  test("asks for the 30-day range the console's own chart uses, with no since", async () => {
+    // Any `since` now answers with the last two days alone, which is how the
+    // poll came to overwrite August and September with empty months.
+    const seen: URL[] = [];
     const fetchSpy = mockConsole((url) => {
-      if (url.pathname.endsWith("/usage/cost-by-day")) {
-        queries.push(url.searchParams.get("since") ?? "");
-      }
+      if (url.pathname.endsWith("/usage/cost-by-day")) seen.push(url);
       return handle(url);
     });
 
     try {
-      await fetchGoUsageHistory("auth=secret", NOW, { workspaceId: WORKSPACE_ID, months: 3 });
-      expect(queries).toEqual([consoleTimestamp(new Date(2026, 6, 1).getTime())]);
+      await fetchGoUsageHistory("auth=secret", NOW, { workspaceId: WORKSPACE_ID });
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.searchParams.get("range")).toBe("30d");
+      expect(seen[0]?.searchParams.get("bucket")).toBe("day");
+      expect(seen[0]?.searchParams.has("since")).toBe(false);
     } finally {
       fetchSpy.mockRestore();
     }
   });
 
-  test("a subscriber's days are allowance, and only the open month carries billing", async () => {
+  test("claims coverage only for the window's whole days", () => {
+    // 2026-09-20T12:00Z less 30 days starts part way through 21 August.
+    expect(costCoverage(NOW)).toEqual({ from: "2026-08-22", until: "2026-09-20" });
+  });
+
+  test("a subscriber's days are allowance, and the billing record comes along", async () => {
     const fetchSpy = mockConsole(handle);
 
     try {
-      const months = await fetchGoUsageHistory("auth=secret", NOW, {
-        workspaceId: WORKSPACE_ID,
-        months: 2,
-      });
-      expect(months[0]?.costs.rows[0]?.plan).toBe("lite");
-      expect(months[0]?.billing?.hasLiteSubscription).toBe(true);
-      expect(months[1]?.billing).toBeNull();
+      const reply = await fetchGoUsageHistory("auth=secret", NOW, { workspaceId: WORKSPACE_ID });
+      expect(reply.rows[0]?.plan).toBe("lite");
+      expect(reply.billing?.hasLiteSubscription).toBe(true);
     } finally {
       fetchSpy.mockRestore();
     }
   });
 
-  test("keeps the months when billing cannot be read", async () => {
+  test("an unreadable plan state is not taken for a lapsed plan", async () => {
+    const fetchSpy = mockConsole((url) =>
+      url.pathname.endsWith("/go/status") ? new Response("nope", { status: 500 }) : handle(url),
+    );
+
+    try {
+      const reply = await fetchGoUsageHistory("auth=secret", NOW, { workspaceId: WORKSPACE_ID });
+      // Calling these days billed would tell a subscriber they paid for them.
+      expect(reply.rows.every((row) => row.plan === "lite")).toBe(true);
+      expect(reply.billing?.hasLiteSubscription).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("a workspace the console says has no plan is billed for its days", async () => {
+    const fetchSpy = mockConsole((url) =>
+      url.pathname.endsWith("/go/status") ? json({ useBalance: false, access: null }) : handle(url),
+    );
+
+    try {
+      const reply = await fetchGoUsageHistory("auth=secret", NOW, { workspaceId: WORKSPACE_ID });
+      expect(reply.rows.every((row) => row.plan === "payg")).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("keeps the days when billing cannot be read", async () => {
     const fetchSpy = mockConsole((url) =>
       url.pathname.includes("/billing/") ? new Response("nope", { status: 500 }) : handle(url),
     );
 
     try {
-      const months = await fetchGoUsageHistory("auth=secret", NOW, {
-        workspaceId: WORKSPACE_ID,
-        months: 1,
-      });
-      expect(months[0]?.costs.rows).toHaveLength(2);
-      expect(months[0]?.billing).toBeNull();
+      const reply = await fetchGoUsageHistory("auth=secret", NOW, { workspaceId: WORKSPACE_ID });
+      expect(reply.rows).toHaveLength(3);
+      expect(reply.billing).toBeNull();
     } finally {
       fetchSpy.mockRestore();
     }
@@ -510,12 +538,6 @@ describe("hasConsoleSessionCookie", () => {
     expect(hasConsoleSessionCookie("console_session=st_abc")).toBe(true);
     expect(hasConsoleSessionCookie("auth=Fe26.2**sealed; _ga=x")).toBe(false);
     expect(hasConsoleSessionCookie("_ga=x")).toBe(false);
-  });
-});
-
-describe("consoleTimestamp", () => {
-  test("drops the milliseconds the console's since filter rejects", () => {
-    expect(consoleTimestamp(Date.parse("2026-09-20T11:22:44.776Z"))).toBe("2026-09-20T11:22:44Z");
   });
 });
 

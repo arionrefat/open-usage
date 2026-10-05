@@ -51,6 +51,8 @@ const reading: GoHistoryReading = {
       plan: "lite",
     },
   ],
+  costCoverage: [{ from: "2026-07-20", until: "2026-08-18" }],
+  hasCostGap: false,
   hasRequestLogDrift: false,
   fetchedAtMs,
 };
@@ -118,6 +120,8 @@ describe("go history cache", () => {
 
       const migrated = readGoHistoryCache(path);
       expect(migrated?.months).toEqual(reading.months);
+      // Banked, but nothing recorded which days those reads answered for.
+      expect(migrated?.costCoverage).toEqual([]);
       // Old table ids share nothing with request log ids, so keeping these
       // would count every request twice once the log is walked.
       expect(migrated?.rows).toBeNull();

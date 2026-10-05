@@ -459,11 +459,8 @@ Do not request a user's cookie during support, and do not add automatic browser-
 
 ### Usage history
 
-Verified against live responses on 2026-09-21.
-
-`GET /console/api/usage/cost-by-day?since=<ISO>&bucket=day` backs the console's cost chart.
-A row is `{ date: "YYYY-MM-DD", totalCostMicroCents, totalTokens, totalRequests }`, and one call covers the whole span, so three months of history cost one request rather than three.
-It names no model, which is why a closed month's cost rows carry `model: null` rather than a guess.
+Two console routes feed the history: the per-day cost chart for money, and the request log for tokens, models and sessions.
+Both were re-verified against live responses on 2026-10-06, after the console's backend move broke each of them in a different way.
 
 #### The request log replaced the usage table
 
@@ -498,14 +495,36 @@ Whether a request served from credit after a Go cap ("extra usage", `useBalance`
 
 The log's retention is 30 days, but it only reached back to the console migration on 2026-09-20; earlier requests are in the cost chart's totals and nowhere else.
 
-#### The cost chart
+#### The cost chart reaches back 30 days and no further
 
-`since` takes `YYYY-MM-DDTHH:MM:SSZ` and rejects a value carrying milliseconds; `range` is one of `24h`, `7d`, `30d`.
+`GET /console/api/usage/cost-by-day?range=30d&bucket=day` backs the console's cost chart.
+A row is `{ date: "YYYY-MM-DD", totalCostMicroCents, totalTokens, totalRequests }`, dated in UTC; a day with no traffic is simply absent.
+It names no model, which is why a closed month's cost rows carry `model: null` rather than a guess.
 
 **Money is micro-cents on the chart: `1e8` to the dollar.** Taking `totalCostMicroCents` at face value overstates by a factor of 100 million.
 Token counts and costs both arrive as decimal strings, not numbers.
 
-These are parsed by `src/data/real/opencode-usage.ts`, assembled by `go-spend-summary.ts`, and polled by `go-history-source.ts` every 30 minutes for the open month plus two closed ones.
+Until the October 2026 backend move one call with `since=<first day of the oldest month>` covered three months.
+Now any `since`, with or without `range`, answers with the last two days alone, whatever date it names, while `range=30d` without `since` returns the full 30 days and `range=7d` the last week.
+`includeLegacyKeys=true` and `userId`, which the console adds for a member's own view, change nothing.
+The console's bundle shows why it never noticed: it sends `since` only with `range=24h` for its "today" view, and `range` alone for 7 and 30 days.
+Whether anything older than 30 days survives the move is unknown, since no route reaches it.
+
+The 30-minute poll used to read three months in that one call and rebuild them from the reply, and `fetchGoUsageHistory` turned a month the reply left out into an empty one.
+So once `since` broke, the first poll after the move overwrote the banked August and September with $0 months.
+Now the client asks for `range=30d` and folds the reply into what it already holds, in `go-cost-history.ts`:
+
+- a day inside the reply's window takes the server's figure;
+- a day outside it is kept as banked, since the reply never asked about it;
+- the window's first day is cut part way through, so coverage starts the day after and that partial figure never replaces a whole one;
+- a reply that leaves out a day with spend it once reported inside its own window is not trusted for coverage, and the card says "opencode cost history changed - showing saved months".
+
+Alongside the days the reading keeps `costCoverage`, the merged runs of days some reply has answered for in full.
+That is what tells an unspent month from an unknown one, which `SpendPeriod` already expresses: a month with no coverage and no banked days is `exactness: "unavailable"` with `isBeforeRecordsBegan`, and the history line reads "not recorded" instead of dropping it as zero.
+A month covered only from some day on keeps its figure with `totalWindowLabel` "from sep 6", and one with scattered coverage, or banked days from a version 1 cache that recorded none, reads "partial record".
+Only a month wholly covered and unspent is dropped from the line.
+
+These are parsed by `src/data/real/opencode-usage.ts`, merged by `go-cost-history.ts`, assembled by `go-spend-summary.ts`, and polled by `go-history-source.ts` every 30 minutes for the open month plus two closed ones.
 Money for every month comes from the day chart; the per-model breakdown comes from the request log, which reaches back 30 days, so the open month names its models and closed ones report totals alone.
 
 `usage.list`, the console table's predecessor, was parsed but never fetched until 2026-08-26, which left the cookie a second-class source: it reported exact limits and per-day cost, and then said "no history" because `opencode.db` was the only thing wired to `series`.

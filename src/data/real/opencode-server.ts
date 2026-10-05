@@ -1,3 +1,4 @@
+import { DAY_MS } from "./aggregate";
 import { isRecord, timestampMs } from "./json";
 import {
   parseBillingStatus,
@@ -349,63 +350,84 @@ export interface GoUsageHistory {
   month: string;
 }
 
-/** `YYYY-MM-DDTHH:MM:SSZ`, which is the only `since` form the console accepts. */
-export function consoleTimestamp(atMs: number): string {
-  return `${new Date(atMs).toISOString().slice(0, 19)}Z`;
+/** Inclusive run of console days, as YYYY-MM-DD, that a cost reply answered for in full. */
+export interface GoCostSpan {
+  from: string;
+  until: string;
 }
 
-/** Midnight on the first of the month `monthsAgo` before `now`, in local time. */
-function monthStart(now: Date, monthsAgo: number): Date {
-  return new Date(now.getFullYear(), now.getMonth() - monthsAgo, 1);
+/** What one read of the cost chart says, before it is merged into the days already held. */
+export interface GoCostReply {
+  /** One row per day the chart reported; a day with no traffic is simply absent. */
+  rows: GoCostRow[];
+  coverage: GoCostSpan;
+  billing: GoBilling | null;
+  workspaceId: string;
 }
 
-function monthKey(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+/** The chart's widest window, and the only one it still answers for in full. */
+const COST_WINDOW_DAYS = 30;
+
+function utcDay(atMs: number): string {
+  return new Date(atMs).toISOString().slice(0, 10);
+}
+
+/**
+ * The chart dates its days in UTC. The first day of the window is cut part way
+ * through, so coverage starts the day after: a partial first day must never
+ * stand in for a whole one already held.
+ */
+export function costCoverage(now: Date): GoCostSpan {
+  return {
+    from: utcDay(now.getTime() - (COST_WINDOW_DAYS - 1) * DAY_MS),
+    until: utcDay(now.getTime()),
+  };
 }
 
 /**
  * Day totals become one cost row each. The console breaks its chart down by day
  * but not by model, so the model is left unnamed and filled in from the
- * per-request table where that reaches, rather than guessed at here.
+ * request log where that reaches, rather than guessed at here.
+ *
+ * Only a plan the console says is absent makes the days spend: a status read
+ * that failed is no evidence the plan lapsed, and calling allowance a charge
+ * would tell a subscriber they paid for what their plan already covered.
  */
-function costRowsFrom(days: GoCostDay[], hasGoAccess: boolean): GoCostRow[] {
+function costRowsFrom(days: GoCostDay[], hasGoAccess: boolean | null): GoCostRow[] {
   return days.map((day) => ({
     date: day.date,
     model: null,
     usd: day.usd,
     keyId: null,
-    plan: hasGoAccess ? "lite" : "payg",
+    plan: hasGoAccess === false ? "payg" : "lite",
   }));
 }
 
 /**
- * Reads the recent months of per-day cost plus the billing record.
+ * Reads the last 30 days of per-day cost plus the billing record.
  *
  * The two answer different questions and must stay apart: cost rows on a
  * subscription are allowance consumed, while billing is what was charged.
- * Months come back newest first.
+ *
+ * Only `range=30d` reaches back a month. Since the console's October 2026
+ * backend move, any `since` - with or without a range - answers with the last
+ * two days alone, and the console itself sends `since` only for its 24-hour
+ * view. Older days exist only in what earlier reads banked.
  */
 export async function fetchGoUsageHistory(
   cookieHeader: string,
   now: Date,
-  options: {
-    workspaceId?: string;
-    signal?: AbortSignal;
-    timeoutMs?: number;
-    /** How many calendar months to cover, counting the open one. */
-    months?: number;
-  } = {},
-): Promise<GoUsageHistory[]> {
+  options: { workspaceId?: string; signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<GoCostReply> {
   const cookie = requireCookie(cookieHeader);
   const signal = deadlineSignal(options.timeoutMs, options.signal);
   const workspaceId = options.workspaceId ?? (await discoverOrgId(cookie, signal));
-  const months = Math.max(1, options.months ?? 1);
-  const since = consoleTimestamp(monthStart(now, months - 1).getTime());
+  const query = { range: `${COST_WINDOW_DAYS}d`, bucket: "day" };
 
   // The chart, the plan state and the balance are independent reads, so they go
   // out together rather than in series.
   const [chart, goStatus, billingStatus, autoRecharge] = await Promise.all([
-    consoleJson("/usage/cost-by-day", { cookie, orgId: workspaceId, signal, query: { since, bucket: "day" } }),
+    consoleJson("/usage/cost-by-day", { cookie, orgId: workspaceId, signal, query }),
     // Billing is supplementary: without it the cost rows still stand, so a
     // failure here must not lose the months that were already read.
     consoleJson("/go/status", { cookie, orgId: workspaceId, signal }).catch(() => null),
@@ -416,25 +438,15 @@ export async function fetchGoUsageHistory(
   const days = parseCostDays(chart);
   if (!days) throw new OpencodeServerError("no usage in response", "parse");
 
-  const hasGoAccess = isRecord(goStatus) && isRecord(goStatus.access);
-  const billing = parseBillingStatus(billingStatus, autoRecharge, { hasGoAccess });
-  const byMonth = new Map<string, GoCostDay[]>();
-  for (const day of days) {
-    const key = day.date.slice(0, 7);
-    byMonth.set(key, [...(byMonth.get(key) ?? []), day]);
-  }
-
-  return Array.from({ length: months }, (_, monthsAgo) => {
-    const month = monthKey(monthStart(now, monthsAgo));
-    return {
-      costs: { rows: costRowsFrom(byMonth.get(month) ?? [], hasGoAccess), keys: [] },
-      // The billing record is one per workspace, not one per month, so only the
-      // open month carries it and the closed ones stay unannotated.
-      billing: monthsAgo === 0 ? billing : null,
-      workspaceId,
-      month,
-    };
-  });
+  const hasGoAccess = goStatus === null ? null : isRecord(goStatus) && isRecord(goStatus.access);
+  return {
+    rows: costRowsFrom(days, hasGoAccess),
+    coverage: costCoverage(now),
+    // An unreadable plan state is not a lapsed plan, so it must not trip the
+    // "no subscription" warning either.
+    billing: parseBillingStatus(billingStatus, autoRecharge, { hasGoAccess: hasGoAccess ?? true }),
+    workspaceId,
+  };
 }
 
 /** The request log's largest page. */

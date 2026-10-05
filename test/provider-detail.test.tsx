@@ -296,6 +296,19 @@ test("spend renders the exact total, its cap, and the per-model split", async ()
   expect(frame).toContain("not recorded");
 });
 
+test("a past period recorded only in part names its window", async () => {
+  const frame = await renderSpend((snapshot) => {
+    const spend = snapshot.providers.cl.spend;
+    if (!spend) throw new Error("mock provider lost its spend summary");
+    const [past] = spend.history;
+    if (!past) throw new Error("mock provider lost its spend history");
+    past.label = "september 2026";
+    past.totalWindowLabel = "from sep 6";
+  });
+
+  expect(frame).toContain("september 2026 (from sep 6)");
+});
+
 test("an estimated period is labelled with the price date rather than passing as a bill", async () => {
   const frame = await renderSpend((snapshot) => {
     const spend = snapshot.providers.cl.spend;

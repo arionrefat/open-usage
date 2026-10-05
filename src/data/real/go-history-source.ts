@@ -1,11 +1,14 @@
 import type { PollOptions, SpendSummary } from "../types";
 import { DAY_MS } from "./aggregate";
 import { goActivityFromRows, type GoActivity } from "./go-activity";
+import { mergeCostHistory } from "./go-cost-history";
 import { goSpendSummary } from "./go-spend-summary";
 import {
   OpencodeServerError,
   fetchGoUsageHistory,
   fetchGoUsageRows,
+  type GoCostReply,
+  type GoCostSpan,
   type GoUsageHistory,
 } from "./opencode-server";
 import type { GoBilling, GoUsageRow } from "./opencode-usage";
@@ -21,6 +24,10 @@ import { createPolledSource, type PolledSource } from "./polled-source";
 export interface GoHistoryReading {
   /** The open month first, then the two before it. */
   months: GoUsageHistory[];
+  /** Runs of days the cost chart has answered for in full, which is what tells an unspent month from an unknown one. */
+  costCoverage: GoCostSpan[];
+  /** True when the latest cost reply dropped days it had reported before, so its window was not trusted. */
+  hasCostGap: boolean;
   /** One row per request across the activity window, or null when the log could not be read. */
   rows: GoUsageRow[] | null;
   /**
@@ -102,7 +109,7 @@ const NOTHING_DERIVED: DerivedHistory = { summary: null, billing: null, activity
 function deriveHistory(reading: GoHistoryReading | null): DerivedHistory {
   if (!reading) return NOTHING_DERIVED;
   return {
-    summary: goSpendSummary(reading.months, reading.rows),
+    summary: goSpendSummary(reading.months, reading.rows, reading.costCoverage, reading.fetchedAtMs),
     billing: reading.months[0]?.billing ?? null,
     activity: reading.rows ? goActivityFromRows(reading.rows) : null,
   };
@@ -184,24 +191,27 @@ export function createGoHistorySource(
           }),
         );
 
+      const costs = (reply: GoCostReply) => {
+        const merged = mergeCostHistory(previous, reply, now, MONTHS);
+        return { months: merged.months, costCoverage: merged.coverage, hasCostGap: merged.hasCostGap };
+      };
+
       // Discovery is one round trip, skipped whenever any source has already
       // made it. Without it the months go first, alone, to make it: the rows
       // walk cannot start until the workspace is named.
       const known = options.knownWorkspaceId?.() ?? workspaceId;
       if (!known) {
-        const months = await fetchHistory(cookie, now, { months: MONTHS, signal });
-        const discovered = months[0]?.workspaceId;
-        if (!discovered) throw new OpencodeServerError("missing workspace id", "parse");
-        workspaceId = discovered;
-        return { months, ...(await readRows(discovered)), fetchedAtMs: nowMs };
+        const reply = await fetchHistory(cookie, now, { signal });
+        workspaceId = reply.workspaceId;
+        return { ...costs(reply), ...(await readRows(reply.workspaceId)), fetchedAtMs: nowMs };
       }
 
-      const [months, rows] = await Promise.all([
-        fetchHistory(cookie, now, { months: MONTHS, workspaceId: known, signal }),
+      const [reply, rows] = await Promise.all([
+        fetchHistory(cookie, now, { workspaceId: known, signal }),
         readRows(known),
       ]);
       workspaceId = known;
-      return { months, ...rows, fetchedAtMs: nowMs };
+      return { ...costs(reply), ...rows, fetchedAtMs: nowMs };
     },
     fetchedAtMs: (value) => value.fetchedAtMs,
     describeFailure: () => "opencode history unavailable",
@@ -237,9 +247,11 @@ export function createGoHistorySource(
     note: () => {
       // The schedule's own note clears on the next good reading, ours or one
       // another process persisted, so it says whether the failure still stands.
+      const reading = source.read();
+      const hasCostDrift = (isLastFailureDrift && source.note() !== null) || reading?.hasCostGap === true;
       const notes = [
-        isLastFailureDrift && source.note() !== null ? COST_DRIFT_NOTE : null,
-        source.read()?.hasRequestLogDrift ? REQUEST_LOG_DRIFT_NOTE : null,
+        hasCostDrift ? COST_DRIFT_NOTE : null,
+        reading?.hasRequestLogDrift ? REQUEST_LOG_DRIFT_NOTE : null,
       ].filter((note): note is string => note !== null);
       return notes.length > 0 ? notes.join(" · ") : null;
     },

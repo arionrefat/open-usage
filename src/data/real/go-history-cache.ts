@@ -3,7 +3,7 @@ import { basename, dirname, join } from "node:path";
 import { withFileLock } from "../../lib/file-lock";
 import type { GoHistoryReading } from "./go-history-source";
 import { isRecord } from "./json";
-import type { GoUsageHistory } from "./opencode-server";
+import type { GoCostSpan, GoUsageHistory } from "./opencode-server";
 import type { GoApiKey, GoBilling, GoCostRow, GoPlan, GoUsageRow } from "./opencode-usage";
 
 /**
@@ -146,27 +146,55 @@ function goMonths(value: unknown): GoUsageHistory[] | null {
   return months === null || months.length === 0 ? null : months;
 }
 
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function goCostSpan(value: unknown): GoCostSpan | null {
+  const raw = record(value);
+  if (!raw || typeof raw.from !== "string" || typeof raw.until !== "string") return null;
+  if (!DATE_PATTERN.test(raw.from) || !DATE_PATTERN.test(raw.until)) return null;
+  return { from: raw.from, until: raw.until };
+}
+
 function goHistory(value: unknown): GoHistoryReading | null {
   const raw = record(value);
   const fetchedAtMs = finite(raw?.fetchedAtMs);
-  if (!raw || fetchedAtMs === null || typeof raw.hasRequestLogDrift !== "boolean") return null;
+  if (!raw || fetchedAtMs === null) return null;
+  if (typeof raw.hasRequestLogDrift !== "boolean" || typeof raw.hasCostGap !== "boolean") return null;
   const months = goMonths(raw.months);
-  if (months === null) return null;
+  const costCoverage = everyItem(raw.costCoverage, goCostSpan);
+  if (months === null || costCoverage === null) return null;
   const rows = raw.rows === null ? null : everyItem(raw.rows, goUsageRow);
   if (raw.rows !== null && rows === null) return null;
-  return { months, rows, hasRequestLogDrift: raw.hasRequestLogDrift, fetchedAtMs };
+  return {
+    months,
+    costCoverage,
+    hasCostGap: raw.hasCostGap,
+    rows,
+    hasRequestLogDrift: raw.hasRequestLogDrift,
+    fetchedAtMs,
+  };
 }
 
 /**
  * A version 1 file holds rows from the retired usage table, whose ids share
  * nothing with the request log's, so joining them would count every request
- * twice. Its cost months are still the console's own figures and are kept.
- * The reading is stamped as never fetched, so the first poll walks the log at
- * once instead of waiting out a cadence the old rows no longer earn.
+ * twice. Its cost months are still the console's own figures and are kept,
+ * banked but with no coverage, since nothing recorded which days their reads
+ * answered for. The reading is stamped as never fetched, so the first poll
+ * walks the log at once instead of waiting out a cadence the old rows no
+ * longer earn.
  */
 function migratedFromVersion1(value: unknown): GoHistoryReading | null {
   const months = goMonths(record(value)?.months);
-  return months === null ? null : { months, rows: null, hasRequestLogDrift: false, fetchedAtMs: 0 };
+  if (months === null) return null;
+  return {
+    months,
+    costCoverage: [],
+    hasCostGap: false,
+    rows: null,
+    hasRequestLogDrift: false,
+    fetchedAtMs: 0,
+  };
 }
 
 const CACHE_VERSION = 2;

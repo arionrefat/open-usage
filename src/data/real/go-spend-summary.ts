@@ -1,6 +1,6 @@
 import type { ModelSpend, Money, SpendKind, SpendPeriod, SpendSummary } from "../types";
 import { COST_UNITS_PER_USD, type GoPlan, type GoUsageRow } from "./opencode-usage";
-import type { GoUsageHistory } from "./opencode-server";
+import type { GoCostSpan, GoUsageHistory } from "./opencode-server";
 
 /**
  * Turns opencode's per-day cost rows into a spend summary.
@@ -90,27 +90,87 @@ function monthKeyOf(atMs: number): string {
 }
 
 /**
- * Money comes from the console's own day totals, which cover every month, while
- * the model breakdown comes from the per-request rows, which reach back 30 days.
+ * How much of a month the cost chart has answered for: all of it, all of it
+ * from some day on, scattered parts of it, or none. Up to `today` for the open
+ * month, since days that have not happened yet need no answer.
  */
-export function periodFrom(history: GoUsageHistory, usageRows: GoUsageRow[] = []): SpendPeriod {
+export type MonthCoverage =
+  | { kind: "full" }
+  | { kind: "from"; date: string }
+  | { kind: "partial" }
+  | { kind: "none" };
+
+function lastDayOfMonth(month: string): string {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const last = new Date(Date.UTC(year ?? 1970, monthNumber ?? 1, 0));
+  return last.toISOString().slice(0, 10);
+}
+
+export function monthCoverage(month: string, spans: GoCostSpan[], today: string): MonthCoverage {
+  const first = `${month}-01`;
+  const monthEnd = lastDayOfMonth(month);
+  const last = today >= first && today < monthEnd ? today : monthEnd;
+  const touching = spans.filter((span) => span.until >= first && span.from <= last);
+  if (touching.some((span) => span.from <= first && span.until >= last)) return { kind: "full" };
+  const [only] = touching;
+  if (touching.length === 1 && only && only.until >= last) return { kind: "from", date: only.from };
+  return touching.length > 0 ? { kind: "partial" } : { kind: "none" };
+}
+
+/** "2026-09-06" reads as "from sep 6", in the lowercase the period labels use. */
+function fromLabel(date: string): string {
+  const day = new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+  return `from ${day.toLowerCase()}`;
+}
+
+/**
+ * Money comes from the console's own day totals, while the model breakdown
+ * comes from the per-request rows, which reach back 30 days.
+ *
+ * Coverage decides what an absent day means. Inside it, the chart answered and
+ * left the day out because nothing was spent; outside it nobody asked, so a
+ * month with no coverage and no banked days is unknown rather than free.
+ */
+export function periodFrom(
+  history: GoUsageHistory,
+  usageRows: GoUsageRow[] = [],
+  coverage: MonthCoverage = { kind: "full" },
+): SpendPeriod {
   const rows = history.costs.rows;
+  const label = monthLabel(history.month);
+  const limit =
+    history.billing?.monthlyLimitUsd != null ? dollarsToMoney(history.billing.monthlyLimitUsd) : null;
+  if (coverage.kind === "none" && rows.length === 0) {
+    return {
+      label,
+      total: null,
+      allowanceUsed: null,
+      limit,
+      exactness: "unavailable",
+      models: modelsFrom(usageRows),
+      isBeforeRecordsBegan: true,
+    };
+  }
+
   const sumWhere = (kind: SpendKind) =>
     rows.filter((row) => kindOf(row) === kind).reduce((sum, row) => sum + row.usd, 0);
-
   const billed = sumWhere("billed");
   const allowance = sumWhere("allowance");
   const hasAllowance = rows.some((row) => kindOf(row) === "allowance");
+  const windowLabel =
+    coverage.kind === "from" ? fromLabel(coverage.date) : coverage.kind === "full" ? null : "partial record";
 
   return {
-    label: monthLabel(history.month),
+    label,
     // Metered charges outrank the row sum: they are what the account was billed.
     total: usdToMoney(history.billing?.monthlyUsageUsd ?? billed),
     allowanceUsed: hasAllowance ? usdToMoney(allowance) : null,
-    limit:
-      history.billing?.monthlyLimitUsd != null
-        ? dollarsToMoney(history.billing.monthlyLimitUsd)
-        : null,
+    ...(windowLabel ? { totalWindowLabel: windowLabel } : {}),
+    limit,
     exactness: "exact",
     models: modelsFrom(usageRows),
     isBeforeRecordsBegan: false,
@@ -118,21 +178,37 @@ export function periodFrom(history: GoUsageHistory, usageRows: GoUsageRow[] = []
 }
 
 /**
- * Newest month first. The server keeps the history itself, so unlike Claude Code
- * there is no local store to reconcile and no partly covered day to guard.
+ * Newest month first. The chart answers for 30 days and no further, so the
+ * days behind the closed months are the ones earlier reads banked, and
+ * `coverage` says which of them were ever answered for.
  */
 export function goSpendSummary(
   months: GoUsageHistory[],
-  usageRows: GoUsageRow[] | null = null,
+  usageRows: GoUsageRow[] | null,
+  coverage: GoCostSpan[],
+  asOfMs: number,
 ): SpendSummary | null {
+  const today = new Date(asOfMs).toISOString().slice(0, 10);
   const periods = months.map((month) =>
-    periodFrom(month, usageRows ? rowsInMonth(usageRows, month.month) : []),
+    periodFrom(
+      month,
+      usageRows ? rowsInMonth(usageRows, month.month) : [],
+      monthCoverage(month.month, coverage, today),
+    ),
   );
   const [current, ...history] = periods;
   if (!current) return null;
   return {
     current,
-    history: history.filter((period) => (period.allowanceUsed ?? period.total)?.amountMinor),
+    // Only a month wholly known to be unspent is dropped. An unknown one stays
+    // and reads as "not recorded", and a partly known one keeps its window,
+    // rather than either vanishing as if it were zero.
+    history: history.filter(
+      (period) =>
+        period.isBeforeRecordsBegan ||
+        period.totalWindowLabel !== undefined ||
+        (period.allowanceUsed ?? period.total)?.amountMinor,
+    ),
     // Nothing here is priced locally; every figure is the server's own.
     pricesAsOf: "",
     unpricedModels: [],

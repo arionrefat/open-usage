@@ -159,7 +159,8 @@ The Go history is the exception, because one poll of it is thirty-odd requests: 
 
 `go-history-source.ts` is built on the same scheduler and persists the rows the dashboard sent - three months of cost rows and the console's per-request log - rather than the figures derived from them, in `go-history.json`, so the daemon's walk serves a dashboard opened later.
 The request log is walked incrementally: rows never change once written, so a poll pages back only to the newest row already held and joins by the server's request id, which turns a sixty-page walk into one or two pages.
-Everything independent in that poll goes out together - the closed months alongside the open one, pages four at a time - because the same work done in series was the thirteen seconds a refresh used to take.
+Everything independent in that poll goes out together - the cost chart, the plan and billing reads, and the request log walk - because the same work done in series was the thirteen seconds a refresh used to take.
+The cost chart now answers for 30 days only, so each reply is folded into the days already banked by `go-cost-history.ts` rather than replacing them, and the reading records which days some reply answered for, so a month nobody asked about reads as unknown rather than as $0.
 
 ### Notifications (`src/notifications/`)
 

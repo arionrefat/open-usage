@@ -5,35 +5,63 @@ import {
   readRowsSince,
   type GoHistoryReading,
 } from "../../../src/data/real/go-history-source";
-import { OpencodeServerError, type GoUsageHistory } from "../../../src/data/real/opencode-server";
-import type { GoUsageRow } from "../../../src/data/real/opencode-usage";
+import {
+  OpencodeServerError,
+  costCoverage,
+  type GoCostReply,
+  type GoUsageHistory,
+} from "../../../src/data/real/opencode-server";
+import type { GoBilling, GoUsageRow } from "../../../src/data/real/opencode-usage";
+
+const BILLING: GoBilling = {
+  balanceUsd: 0,
+  monthlyUsageUsd: null,
+  monthlyLimitUsd: null,
+  isAutoReloadOn: false,
+  reloadAmountUsd: 20,
+  hasLiteSubscription: true,
+  hasSubscription: false,
+};
 
 function history(month: string, usd: number): GoUsageHistory {
   return {
     costs: {
-      rows: [{ date: `${month}-01`, model: "kimi-k3", usd, keyId: null, plan: "lite" }],
+      rows: [{ date: `${month}-01`, model: null, usd, keyId: null, plan: "lite" }],
       keys: [],
     },
-    billing: {
-      balanceUsd: 0,
-      monthlyUsageUsd: null,
-      monthlyLimitUsd: null,
-      isAutoReloadOn: false,
-      reloadAmountUsd: 20,
-      hasLiteSubscription: true,
-      hasSubscription: false,
-    },
-    workspaceId: "wrk_1",
+    billing: BILLING,
+    workspaceId: "wrk_test",
     month,
   };
 }
 
-/** The three months one console call now answers with, newest first. */
-function months(usd = 10): GoUsageHistory[] {
-  return ["2026-08", "2026-07", "2026-06"].map((month) => history(month, usd));
+const NOW = new Date("2026-08-18T12:00:00Z");
+
+/** One read of the 30-day chart at `now`: a day in the open month and one in the month before. */
+function reply(usd = 10, now = NOW): GoCostReply {
+  return {
+    rows: [
+      { date: "2026-07-25", model: null, usd, keyId: null, plan: "lite" },
+      { date: "2026-08-01", model: null, usd, keyId: null, plan: "lite" },
+    ],
+    coverage: costCoverage(now),
+    billing: BILLING,
+    workspaceId: "wrk_test",
+  };
 }
 
-const NOW = new Date("2026-08-18T12:00:00Z");
+/** A reading as the cache holds it, with nothing flagged. */
+function reading(partial: Partial<GoHistoryReading>): GoHistoryReading {
+  return {
+    months: [history("2026-08", 4)],
+    costCoverage: [],
+    hasCostGap: false,
+    rows: null,
+    hasRequestLogDrift: false,
+    fetchedAtMs: NOW.getTime(),
+    ...partial,
+  };
+}
 
 describe("createGoHistorySource", () => {
   test("stays dormant without a cookie and never calls the server", async () => {
@@ -41,7 +69,7 @@ describe("createGoHistorySource", () => {
     const source = createGoHistorySource(() => null, {
       fetchHistory: async () => {
         calls += 1;
-        return months();
+        return reply();
       },
     });
     await source.poll(NOW);
@@ -50,21 +78,21 @@ describe("createGoHistorySource", () => {
   });
 
   test("reads the months in one call and keeps the workspace it discovered", async () => {
-    const asked: Array<{ workspaceId?: string; months?: number }> = [];
+    const asked: Array<string | undefined> = [];
     const source = createGoHistorySource(() => "auth=tok", {
       fetchHistory: async (_cookie, _now, options = {}) => {
-        asked.push({ ...(options.workspaceId === undefined ? {} : { workspaceId: options.workspaceId }), months: options.months });
-        return months();
+        asked.push(options.workspaceId);
+        return reply();
       },
     });
     await source.poll(NOW);
-    expect(asked).toEqual([{ months: 3 }]);
+    expect(asked).toEqual([undefined]);
     expect(source.read()?.current.label).toBe("august 2026");
     expect(source.billing()?.hasLiteSubscription).toBe(true);
 
     // The id the first walk discovered spares the next one the lookup.
     await source.poll(new Date(NOW.getTime() + 31 * 60_000), { force: true });
-    expect(asked[1]).toEqual({ workspaceId: "wrk_1", months: 3 });
+    expect(asked[1]).toBe("wrk_test");
   });
 
   test("a failure keeps the last good copy rather than blanking the screen", async () => {
@@ -72,7 +100,7 @@ describe("createGoHistorySource", () => {
     const source = createGoHistorySource(() => "auth=tok", {
       fetchHistory: async () => {
         if (shouldFail) throw new Error("network");
-        return months();
+        return reply();
       },
     });
     await source.poll(NOW);
@@ -89,7 +117,7 @@ describe("createGoHistorySource", () => {
     const source = createGoHistorySource(() => "auth=tok", {
       fetchHistory: async () => {
         calls += 1;
-        return months();
+        return reply();
       },
     });
     await source.poll(NOW);
@@ -111,7 +139,7 @@ describe("workspace activity", () => {
     // opencode.db does not exist until opencode has been installed and used, so
     // without this the cookie path shows limits and no history at all.
     const source = createGoHistorySource(() => "auth=x", {
-      fetchHistory: async () => [history("2026-08", 1)],
+      fetchHistory: async () => reply(1),
       fetchRows: async () => [rowAt("rlg_test1", NOW.getTime() - 3_600_000, 500)],
     });
 
@@ -123,7 +151,7 @@ describe("workspace activity", () => {
   test("asks only for the window the charts show", async () => {
     let sinceMs = 0;
     const source = createGoHistorySource(() => "auth=x", {
-      fetchHistory: async () => [history("2026-08", 1)],
+      fetchHistory: async () => reply(1),
       fetchRows: async (_cookie, _workspace, options) => {
         sinceMs = options.sinceMs;
         return [];
@@ -138,7 +166,7 @@ describe("workspace activity", () => {
   test("keeps the last good activity when a later poll cannot reach the table", async () => {
     let shouldFail = false;
     const source = createGoHistorySource(() => "auth=x", {
-      fetchHistory: async () => [history("2026-08", 1)],
+      fetchHistory: async () => reply(1),
       fetchRows: async () => {
         if (shouldFail) throw new Error("network");
         return [rowAt("rlg_test1", NOW.getTime() - 3_600_000, 700)];
@@ -159,7 +187,7 @@ describe("workspace activity", () => {
     let hasMoved = false;
     const published: GoHistoryReading[] = [];
     const source = createGoHistorySource(() => "auth=x", {
-      fetchHistory: async () => [history("2026-08", 1)],
+      fetchHistory: async () => reply(1),
       fetchRows: async () => {
         // What the retired usage table started answering: 404, which the
         // client reports as drift.
@@ -189,7 +217,7 @@ describe("workspace activity", () => {
     const source = createGoHistorySource(() => "auth=x", {
       fetchHistory: async () => {
         if (hasMoved) throw new OpencodeServerError("no usage in response", "parse");
-        return [history("2026-08", 1)];
+        return reply(1);
       },
       fetchRows: async () => [],
     });
@@ -208,7 +236,7 @@ describe("workspace activity", () => {
     const source = createGoHistorySource(() => "auth=x", {
       fetchHistory: async () => {
         if (shouldFail) throw new OpencodeServerError("opencode session expired", "credentials");
-        return [history("2026-08", 1)];
+        return reply(1);
       },
       fetchRows: async () => [],
     });
@@ -222,7 +250,7 @@ describe("workspace activity", () => {
 
   test("still reports the month when the usage table is unreachable from the first poll", async () => {
     const source = createGoHistorySource(() => "auth=x", {
-      fetchHistory: async () => [history("2026-08", 1)],
+      fetchHistory: async () => reply(1),
       fetchRows: async () => {
         throw new Error("network");
       },
@@ -249,7 +277,7 @@ describe("history walk economy", () => {
     const source = createGoHistorySource(() => "auth=tok", {
       fetchHistory: async () => {
         calls += 1;
-        return months();
+        return reply();
       },
       fetchRows: async () => [],
     });
@@ -257,7 +285,37 @@ describe("history walk economy", () => {
     await source.poll(NOW);
 
     expect(calls).toBe(1);
-    expect(source.read()?.history).toHaveLength(2);
+    const [july, june] = source.read()?.history ?? [];
+    // July is answered for from the 20th, June not at all: neither reads as whole.
+    expect(july?.totalWindowLabel).toBe("from jul 20");
+    expect(june?.total).toBeNull();
+    expect(june?.isBeforeRecordsBegan).toBe(true);
+  });
+
+  test("a later poll never replaces banked days with their absence", async () => {
+    const replies = [
+      reply(10),
+      // A month on, the chart's window no longer reaches July at all.
+      {
+        ...reply(0, new Date("2026-09-18T12:00:00Z")),
+        rows: [{ date: "2026-09-02", model: null, usd: 3, keyId: null, plan: "lite" as const }],
+      },
+    ];
+    const source = createGoHistorySource(() => "auth=tok", {
+      fetchHistory: async () => replies.shift() ?? reply(),
+      fetchRows: async () => [],
+    });
+
+    await source.poll(NOW);
+    await source.poll(new Date("2026-09-18T12:00:00Z"));
+
+    const summary = source.read();
+    expect(summary?.current.label).toBe("september 2026");
+    const [august, july] = summary?.history ?? [];
+    // The August 1st banked on the first poll survives a reply that no longer reaches it.
+    expect(august?.label).toBe("august 2026");
+    expect(august?.allowanceUsed?.amountMinor).toBe(10 * 1e8);
+    expect(july?.allowanceUsed?.amountMinor).toBe(10 * 1e8);
   });
 
   test("skips workspace discovery when another source already knows it", async () => {
@@ -272,7 +330,7 @@ describe("history walk economy", () => {
         peak = Math.max(peak, inFlight);
         await Bun.sleep(5);
         inFlight -= 1;
-        return months();
+        return reply();
       },
       fetchRows: async (_cookie, workspace) => {
         seen.push(workspace);
@@ -290,15 +348,13 @@ describe("history walk economy", () => {
   test("a seeded reading is served at once and defers the walk, even for a press", async () => {
     let calls = 0;
     const source = createGoHistorySource(() => "auth=tok", {
-      initial: {
-        months: [history("2026-08", 4)],
+      initial: reading({
         rows: [rowAt("rlg_test1", NOW.getTime() - 3_600_000, 500)],
-        hasRequestLogDrift: false,
         fetchedAtMs: NOW.getTime() - 60_000,
-      },
+      }),
       fetchHistory: async () => {
         calls += 1;
-        return months();
+        return reply();
       },
       fetchRows: async () => [],
     });
@@ -322,7 +378,7 @@ describe("history walk economy", () => {
     const source = createGoHistorySource(() => "auth=tok", {
       fetchHistory: async () => {
         calls += 1;
-        return months();
+        return reply();
       },
       fetchRows: async () => [],
       onUpdate: (reading) => published.push(reading),
@@ -334,12 +390,7 @@ describe("history walk economy", () => {
     expect(source.activity()).not.toBeNull();
 
     // The daemon walked the table since; the dashboard takes its reading as its own.
-    persisted = {
-      months: [history("2026-08", 99)],
-      rows: null,
-      hasRequestLogDrift: false,
-      fetchedAtMs: NOW.getTime() + 40 * 60_000,
-    };
+    persisted = reading({ months: [history("2026-08", 99)], fetchedAtMs: NOW.getTime() + 40 * 60_000 });
     await source.poll(new Date(NOW.getTime() + 41 * 60_000));
 
     expect(calls).toBe(1);
@@ -350,13 +401,11 @@ describe("history walk economy", () => {
   test("walks only back to the rows it already holds", async () => {
     const asked: number[] = [];
     const source = createGoHistorySource(() => "auth=tok", {
-      initial: {
-        months: [history("2026-08", 4)],
+      initial: reading({
         rows: [rowAt("rlg_b", NOW.getTime() - 10 * 60_000), rowAt("rlg_a", NOW.getTime() - 20 * 60_000)],
-        hasRequestLogDrift: false,
         fetchedAtMs: NOW.getTime() - 40 * 60_000,
-      },
-      fetchHistory: async () => months(),
+      }),
+      fetchHistory: async () => reply(),
       fetchRows: async (_cookie, _workspace, options) => {
         asked.push(options.sinceMs);
         return [rowAt("rlg_c", NOW.getTime() - 60_000, 7), rowAt("rlg_b", NOW.getTime() - 10 * 60_000)];
