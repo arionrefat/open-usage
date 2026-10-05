@@ -8,7 +8,7 @@ Verdict up front: all three providers can show real or near-real limit data, eac
 
 | Provider | Real percent-of-limit? | Best source | User must provide | Status |
 | --- | --- | --- | --- | --- |
-| claude code | Yes (5h + weekly) | First-party `claude -p "/usage"`, then a fresh statusline snapshot | Claude Code installed and signed in | Shipped |
+| claude code | Yes (5h, weekly, and every scoped weekly lane) | First-party `claude -p "/usage"`, then a fresh statusline snapshot | Claude Code installed and signed in | Shipped |
 | codex | Yes, from the CLI itself | Codex CLI `app-server` JSON-RPC | Codex CLI installed and signed in | Shipped |
 | opencode go | Yes with a cookie, else a spend estimate | `opencode.ai/console/api` REST, falling back to `opencode.db` spend vs caps | Optional session cookie for exact figures | Shipped |
 
@@ -18,7 +18,7 @@ Verdict up front: all three providers can show real or near-real limit data, eac
 
 | Source | Type | Auth | Fields | Reliability |
 | --- | --- | --- | --- | --- |
-| `claude --safe-mode -p "/usage" --output-format json --no-session-persistence` | first-party CLI | Claude Code's own login | current session %, weekly all-models %, model-specific weekly %, reset text | Live account fetch with no model turn, but quota fields are text rather than a stable JSON schema |
+| `claude --safe-mode -p "/usage" --output-format stream-json --verbose --no-session-persistence` | first-party CLI | Claude Code's own login | `usage_report`: every meter by `kind` with an ISO reset time, plus extra-usage spend; the same reply's text as a fallback | Live account fetch with no model turn; the structured report is marked experimental, so the text stays the fallback |
 | `~/.claude/usage-snapshot.json` | local file, rewritten every ~3s by the statusline | none | `rate_limits.five_hour.{used_percentage,resets_at}`, `rate_limits.seven_day.{used_percentage,resets_at}`, `context_window`, `cost`, `model` | Official schema and high confidence while fresh; goes stale otherwise |
 | `GET https://api.anthropic.com/api/oauth/usage` | HTTP, undocumented (powers `/usage`) | OAuth bearer token + `anthropic-beta: oauth-2025-04-20` + `User-Agent: claude-code/<version>` | session %, weekly all-models %, weekly per-model %, reset timestamps | Reverse-engineered; 429s hard without the User-Agent header; poll no faster than ~180s |
 | `~/.claude/projects/**/*.jsonl` | local transcripts | none | per-message token usage, model, timestamps | Usable for activity shape once de-duplicated (see below); never for accounting |
@@ -28,8 +28,41 @@ Verdict up front: all three providers can show real or near-real limit data, eac
 
 Use the signed-in Claude CLI as the live source, with a conservative three-minute minimum poll interval and a ten-minute cache cutoff.
 The command was verified locally on Claude Code 2.1.220: it completed in 627 ms with zero turns, zero tokens, and zero cost, and matched the Claude web dashboard at 10% session and 95% weekly usage.
-Its outer response is JSON but the quota fields remain human-readable text, so parsing must be defensive and fail closed if both expected windows are not present.
 Use the documented statusline schema only while its file is under ten minutes old.
+
+### The structured /usage report
+
+Re-verified 2026-10-06 against Claude Code 2.1.289.
+In `stream-json` mode the CLI attaches a `usage_report` to the synthetic assistant line that carries the `/usage` text, and the result line repeats the text.
+`usage_report.rate_limits.limits[]` holds one row per meter: `kind` (`session`, `weekly_all`, `weekly_scoped`), `group`, `percent`, `resets_at` as ISO 8601, `scope` naming a model or a surface by `display_name`, `severity` and `is_active`.
+`usage_report.rate_limits.extra_usage` holds `is_enabled`, `monthly_limit`, `used_credits`, `utilization` and `currency`, with amounts in minor units of that currency.
+The schema in the binary says to classify a row on `kind`, never on its label, and that a new meter needs no client release; `rate_limits` is null while the usage fetch is failing.
+
+What open-usage does with it:
+
+- Every `weekly_scoped` row becomes its own limit, model or surface, where the text parser only ever caught "current week (fable)".
+- A lane's id comes from its scope alone, so notifications keep their state across polls: a model lane is its slugged name (Fable stays `fable`) and a surface lane is `surface-` plus its slug.
+- `resets_at` gives every window a timestamp, so the reset countdown and the weekly burn projection work when the CLI is the only source; the text twin's reset prose still heads each row.
+- Extra usage is shown as credits used of the monthly limit, and only while it is switched on.
+- Rows of kinds open-usage does not render are skipped; a malformed row of a kind it does render, or a report without well-formed session and all-models rows, drops the whole report and the text from the same reply is parsed instead.
+- The text parser learned every "current week (X)" lane too, under the same ids, so falling back loses only the reset timestamps.
+- `severity` is not used: the meters already grade themselves at the 70% and 85% thresholds, and a server colour on the readout alone would disagree with its own bar.
+- The child gets a closed stdin, because `stream-json` mode otherwise waits three seconds for piped input ("no stdin data received in 3s").
+
+The persisted cache stores the scoped lanes and reset times, and still decodes entries written with the older `fable` key, so an upgrade keeps a valid reading.
+While a fresh statusline snapshot covers the session and weekly windows, the CLI still runs every twenty minutes to keep the scoped lanes and extra usage current.
+
+### Weekly share by surface
+
+`~/.claude.json` caches `cachedUsageUtilization.utilization.seven_day_breakdown` as `{as_of, window_started_at, rows: [{key, display_name, percent}]}`, one row per surface such as Claude Code, Chats and Cowork.
+It is a passthrough of the server's raw reply that Claude Code itself never reads, so nothing upstream holds its shape steady.
+open-usage shows it as a "weekly share by surface" detail section, checks every field, requires the shares to sum to a whole within rounding, and omits the section on any mismatch or once the week it describes has ended.
+
+### Plan tier
+
+`claude auth status --json` reports `subscriptionType: "max"` for both Max plans.
+`~/.claude.json` `oauthAccount.organizationRateLimitTier` carries the multiplier, `default_claude_max_20x` or `default_claude_max_5x`, which the card shows as "Max 20x" or "Max 5x".
+Team seats carry the same tier strings, so the mapping applies only to a "max" subscription; an unknown tier, or a user-level tier that contradicts the organisation's, keeps the plain label.
 Never render an older statusline percentage as current, even with a stale warning; show the limits as unavailable until the CLI succeeds or a fresh session snapshot arrives.
 Do not adopt the OAuth endpoint as a default path: on macOS the token lives in the Keychain, consumer OAuth is intended for Anthropic's own clients, and direct polling introduces credential, compatibility, rate-limit, and Terms risks.
 Treat transcripts as the histogram source only.
@@ -164,6 +197,12 @@ In that case the exact total keeps its own window label and the per-model split 
 Cache writes are priced by TTL: `ephemeral_5m_input_tokens` at 1.25x input and `ephemeral_1h_input_tokens` at 2x.
 Transcripts predating that breakdown attribute the remainder to the 5m rate, which is the cheaper multiplier and so never over-bills.
 Fast-mode usage is kept in a separate bucket because it bills at its own rate.
+
+The table was last checked on 2026-10-06 against Anthropic's pricing page (platform.claude.com/docs/en/about-claude/pricing).
+That check found Opus 5.5 unpriced, which on a machine that mostly used it left nearly the whole spend estimate unpriced.
+Opus 5.5 is $4 / $20 per MTok with cache reads at $0.20, 5% of input rather than the usual tenth, and fast mode at $8 / $40.
+Sonnet 5.5 is $2 / $10, and Sonnet 5 is $2 / $10 too, since its scheduled rise to $3 / $15 was cancelled.
+Caching multipliers stack on fast-mode rates, so a model's own cache read rate scales with the fast input rate.
 
 ### Spend: the retention constraint
 

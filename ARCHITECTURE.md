@@ -105,7 +105,7 @@ Touch when a shared provider presentation primitive changes.
 | `usage-cache.ts` | `~/.config/open-usage/usage-cache.json` | Last successful Claude, Codex, and OpenCode Go limit readings, shared with the daemon |
 | `go-history-cache.ts` | `~/.config/open-usage/go-history.json` | The Go month history and usage table; its own file because it is a megabyte that changes half-hourly, beside limits that change by the minute |
 | `jsonl.ts` | - | `matchingLines`: scans a JSONL file for the lines carrying a marker and decodes only those, so a 65 MB live transcript costs its few hundred token lines rather than the file |
-| `claude-account-usage.ts` | `~/.claude.json` | The account's real credit spend, cap and balance (`cachedUsageUtilization`) |
+| `claude-account-usage.ts` | `~/.claude.json` | The account's real credit spend, cap and balance and the week's share by surface (`cachedUsageUtilization`), plus the plan's rate-limit tier |
 | `spend-store.ts` | `~/.config/open-usage/spend-history.json` | Our own record: spend cycles as a high-water mark, tokens per day per model |
 | `pricing.ts` | shipped table + `~/.config/open-usage/pricing.json` | Per-model rates, used only to apportion an exact total or to label an estimate |
 | `claude-spend.ts` | - | Assembles the two into the `SpendSummary` the detail screen renders |
