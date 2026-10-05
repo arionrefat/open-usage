@@ -197,7 +197,7 @@ The billing page itself is behind the web session cookie, which stays off limits
 | --- | --- | --- | --- | --- |
 | `GET https://chatgpt.com/backend-api/wham/usage` | HTTP, private (what Codex CLI's `/status` polls, ~60s) | `Authorization: Bearer <access_token>` + `ChatGPT-Account-Id: <account_id>` | `plan_type`, primary window (5h) and secondary window (weekly): `used_percent`, `resets_in_seconds`, `window_minutes`, credits | Private endpoint, may change; the whole tracker ecosystem (CodexBar, pi-codex-status) relies on it |
 | `x-codex-primary-used-percent` / `x-codex-secondary-used-percent` | HTTP response headers | same token | live used-percent on any Codex API call | Real-time but only when traffic flows |
-| `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | local files | none | `token_count` events: cumulative tokens + nullable `rate_limits` snapshot | Offline fallback; `rate_limits` is sometimes null (openai/codex#14880); not present on this machine |
+| `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` | local files | none | `token_usage_record` lines (one per model response, since CLI 0.153.4); `token_count` events: cumulative tokens + nullable `rate_limits` snapshot | Offline fallback; `rate_limits` is sometimes null (openai/codex#14880); not present on this machine |
 | `api.openai.com/v1/billing/usage` | HTTP, official | platform API key | API billing usage | Wrong billing system for ChatGPT-plan users; irrelevant here |
 
 ### The CLI RPC path (best, when Codex is installed)
@@ -248,13 +248,24 @@ Codex CLI 0.146.0 was installed, which made the CLI RPC route available, so no t
 Ground truth beat the third-party docs in three places, all verified against `codex app-server generate-json-schema` and a live call:
 
 - Fields are camelCase (`usedPercent`, `resetsAt`, `windowDurationMins`), not the snake_case in CodexBar's write-up. `resetsAt` is unix **seconds**.
-- `primary` is not necessarily the session window. This Plus account reports a single **weekly** window (`windowDurationMins: 10080`) as `primary` with `secondary: null`, so windows are classified by their own reported duration - anything at or under six hours is the session lane - and position is only a fallback when the duration is absent.
+- `primary` is not necessarily the session window.
+  A Plus or Pro 100 (`prolite`) account reports a single **weekly** window (`windowDurationMins: 10080`) as `primary` with `secondary: null`, so windows are classified by their own reported duration - anything at or under six hours is the session lane - and position is only a fallback when the duration is absent.
 - The response also carries `rateLimitResetCredits`, a free "reset my limits" grant. It surfaces on the card because it is the way out of a capped week.
   Each grant carries an `expiresAt`, so the card states the soonest deadline - the grant is use-it-or-lose-it and expires roughly a month after it is issued.
 - `spendControlReached` is read as well. A spend control blocks the account at any percentage, so the meter beside it cannot explain why codex refuses to run, and this line outranks the grant when both apply.
-- Still unread: `rateLimitReachedType` and `individualLimit`, both null on every account seen so far. Nothing renders them until there is a live reply to check against.
+- `rateLimitReachedType` and `individualLimit` are read too, though both are null on every account seen so far.
+  A workspace credits-depleted or usage-limit classification puts a red line on the card, and any other value stays quiet, since an unknown value is likelier a not-reached sentinel than a new block.
+  `individualLimit` becomes the `monthly-credit` lane, as a percentage only until a real workspace payload settles whether its figures are dollars or cents.
+- `ordinaryUsageAllowed`, on the response rather than the snapshot, is the backend's own verdict on included usage, and its schema says clients must not infer recovery from percentages or reset times.
+  A `false` shows "included usage blocked" in red whatever the meters read.
+  A spend control or workspace block outranks it, because each names the reason the bare verdict leaves out; it outranks the grant, which rides along as a count.
+  A null or missing value is unknown, not allowed.
+  Desktop notifications stay keyed on the meters, so a week that resets under a standing block can still be announced as reset; that is the one place the verdict is not consulted.
+- A per-model lane is named by `limitName`, then `normalModelSlug` - the model the schema says describes the quota alias - and only then by its opaque `limitId`.
 
 `account/read` supplies the real plan name, which replaces the opencode-derived stand-in label.
+The wire names are not the marketed ones, so the card uses the labels codex's own `/status` prints (`codex-rs/tui/src/subscription.rs`): `prolite`, `pro` and `promax` are Pro 100, Pro 200 and Pro 500, `go` is Go, `team` is Business, and `self_serve_business_prolite` is Business Premium.
+A plan added after that falls back to its title-cased wire name.
 
 ### Usage history
 
@@ -268,6 +279,24 @@ dailyUsageBuckets: [{ startDate: "YYYY-MM-DD", tokens }]
 Buckets are sparse - idle days are absent rather than zero - so they are mapped onto the chart's date keys rather than consumed positionally.
 This supersedes the opencode-derived series for codex, which only ever saw traffic opencode itself sent: server history reports a 110M peak day against opencode's 4M.
 The call is treated as a bonus, so limits still render if a future CLI drops the method.
+
+### Local rollouts
+
+The chart, burn rate and local footer come from the rollout files, counted on the blended basis: input minus cached input, plus output.
+
+Since codex-cli 0.153.4 a rollout carries a top-level `token_usage_record` line per model response: `{thread_id, turn_id, response_id, usage, turn_token_usage, thread_token_usage}`, each usage block holding `input_tokens`, `cached_input_tokens`, `cache_write_input_tokens`, `output_tokens`, `reasoning_output_tokens` and `total_tokens`.
+A record is written just before the `token_count` for the same call, and its own `timestamp` is the one bucketed.
+A file with records is counted from them alone, deduplicated by `response_id`; the `token_count` events an older CLI wrote before a resumed session's first record still count.
+A record without the input and output breakdown is treated as drift and skipped, so the file falls back to its token counts rather than charting the session idle or passing a cache-inclusive total off as blended.
+
+The records replaced summing `token_count.info.last_token_usage`, which drifted both ways.
+Codex re-emits `token_count` with a stale `last`, so the sum over-counted, and a compaction call gets no `token_count` at all, so every session that compacted was under-counted.
+Older rollouts with no records now step through the cumulative `total_token_usage` instead, which a re-emit leaves unchanged.
+The first event uses its own `last`, because a forked session's cumulative total opens on its parent's usage, which the parent's rollout already counts.
+
+Checked 2026-10-06 against 26 real rollouts, 25 of them with records.
+Each file's reference is codex's own running total: the last record's `thread_token_usage` less what the thread inherited, or for the one older file its final cumulative total.
+The old sum was off by 6.2% in aggregate, from +9.6% to -19.0% per file, the worst being sessions that compacted; the new reader matches every file exactly.
 
 ### On whether opencode shares this pool
 
@@ -287,6 +316,9 @@ Hidden providers are never queried, failures back off for five minutes, and copi
 Any failed refresh clears the copied account snapshot instead of extending an old percentage; the next successful `account/rateLimits/read` restores it.
 Tests inject `stubCodexLimitsSource` so the suite never launches a real codex process.
 
+`account/rateLimits/read` accepts `excludeResetCreditDetails: true` for background polls, which skips a backend lookup but leaves only the grant count.
+It is not sent: without the grant list there is no expiry, and the deadline on a use-it-or-lose-it grant is the part of that line worth reading.
+
 ### Re-verified 2026-08-02
 
 CLI 0.146.0 is current, and the core `account/*` methods are stable enough that the official VSCode extension depends on them.
@@ -295,7 +327,8 @@ The app-server carries no breaking-change guarantee, so the parser stays defensi
 `openai/codex#32707` reports Pro accounts losing the 5-hour bucket from `account/rateLimits/read`.
 That is the exact shape our duration-based classification already handles - a lone window is placed by its own `windowDurationMins` - whereas a positional `primary → session` mapping would mislabel it. The choice made under uncertainty turns out to be the one that survives the schema moving.
 
-Fields left unread, and why: `rateLimitsByLimitId`, `individualLimit` and `spendControlReached` only populate on Team/Business plans with workspace spend controls; `rateLimits.credits` reads `balance: "0"` on a Plus account with no add-on credits. None reach a Plus user, so reading them would add branches nothing exercises.
+Fields then left unread: `rateLimitsByLimitId`, `individualLimit` and `spendControlReached`, which only carry anything beyond the main bucket on Team/Business plans with workspace spend controls, and `rateLimits.credits`, which reads `balance: "0"` on an account with no add-on credits.
+All four are read now, defensively: the by-id map supplies the per-model lanes, and a positive or unlimited credit balance gets its own detail section.
 
 `account/usage/read` counts cached input tokens toward its totals with no separate breakdown, which is consistent with how those tokens count against the rate-limit windows.
 
@@ -314,6 +347,10 @@ Checked 2026-09-18 against the ChatGPT billing page, which read "Your plan auto-
 The card header shows it as `Plus · until Oct 5`, on the existing header row so no meter moves.
 The wording is "until" rather than "renews" because the claim states when the paid period stops, not whether it will be renewed.
 Codex only rewrites the token when it next refreshes its sign-in, so a date already in the past is a stale reading rather than a lapsed plan, and the header omits it instead of guessing which.
+
+A token refresh does not refresh the claim either.
+Observed in October 2026: an id token reissued days earlier still carried a `chatgpt_subscription_last_checked` a month old and a `chatgpt_subscription_active_until` already past, on an account that was still active.
+The subscription fields are a snapshot the auth server re-checks on its own schedule, so the date can lapse while the plan renews, and the header showing nothing then is the intended behavior rather than a fault.
 
 ## opencode go
 
