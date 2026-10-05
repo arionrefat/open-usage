@@ -236,6 +236,8 @@ interface ClaudeProviderInput {
   /** Money and per-model history; absent when neither source has anything. */
   spend?: SpendSummary;
   weeklyBreakdown?: ClaudeWeeklyBreakdown | null;
+  /** From `~/.claude.json`, e.g. "default_claude_max_20x"; the CLI's own plan field lacks it. */
+  rateLimitTier?: string | null;
 }
 
 function sessionDetails(snapshotFile: SnapshotFile | null): DetailSection | null {
@@ -340,18 +342,28 @@ function transcriptDetails(transcripts: TranscriptAggregate): DetailSection[] {
   return [models, tokens].filter((section): section is DetailSection => section !== null);
 }
 
+/**
+ * Only tiers known to name a Max multiplier. The same tier strings also appear
+ * on Team seats, so they refine a "max" subscription and nothing else.
+ */
+const MAX_TIER_LABELS = new Map([
+  ["default_claude_max_5x", "Max 5x"],
+  ["default_claude_max_20x", "Max 20x"],
+]);
+
 /** Every screen reads a different one of the three labels, so the tier has to land on all three. */
-function withAuthPlan(meta: ProviderMeta, auth: ClaudeAuthInfo): ProviderMeta {
+function withAuthPlan(meta: ProviderMeta, auth: ClaudeAuthInfo, rateLimitTier: string | null): ProviderMeta {
   const subType = auth.subscriptionType;
   if (!subType) return meta;
-  const plan = subType.charAt(0).toUpperCase() + subType.slice(1).replace(/[_-]/g, " ");
+  const tierLabel = subType === "max" && rateLimitTier ? MAX_TIER_LABELS.get(rateLimitTier) : undefined;
+  const plan = tierLabel ?? subType.charAt(0).toUpperCase() + subType.slice(1).replace(/[_-]/g, " ");
   return { ...meta, plan, planShort: plan, planDetail: plan };
 }
 
 export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
   const { transcripts, history, snapshotFile, limitsSource, hasStatusline, trend, dates, now } = input;
   const auth = input.authSource?.read();
-  const meta = auth ? withAuthPlan(input.meta, auth) : input.meta;
+  const meta = auth ? withAuthPlan(input.meta, auth, input.rateLimitTier ?? null) : input.meta;
   const nowMs = now.getTime();
   const rate = tokensPerHour(transcripts.buckets, now);
   const rateLabel = formatRate(rate);

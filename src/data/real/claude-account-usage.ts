@@ -150,18 +150,39 @@ export function parseClaudeAccountUsage(value: unknown): ClaudeAccountUsage | nu
   };
 }
 
+const RATE_LIMIT_TIER = /^[a-z][a-z0-9_]{0,63}$/;
+
+/**
+ * The account's rate-limit tier, e.g. "default_claude_max_20x", which is what
+ * tells Max 5x from Max 20x. A user-level tier that disagrees with the
+ * organisation's leaves the tier unknown rather than picking one.
+ */
+export function parseRateLimitTier(value: unknown): string | null {
+  if (!isRecord(value) || !isRecord(value.oauthAccount)) return null;
+  const { organizationRateLimitTier: tier, userRateLimitTier: userTier } = value.oauthAccount;
+  if (typeof tier !== "string" || !RATE_LIMIT_TIER.test(tier)) return null;
+  if (userTier !== null && userTier !== undefined && userTier !== tier) return null;
+  return tier;
+}
+
+/** The parts of `~/.claude.json` open-usage reads, from one parse of the file. */
+export interface ClaudeConfig {
+  usage: ClaudeAccountUsage | null;
+  rateLimitTier: string | null;
+}
+
 /**
  * `~/.claude.json` is large and rewritten often, so a read failure or a partial
- * write is expected rather than exceptional and reads as "no account usage".
+ * write is expected rather than exceptional and reads as "nothing known".
  */
-export function readClaudeAccountUsage(path: string): ClaudeAccountUsage | null {
+export function readClaudeConfig(path: string): ClaudeConfig {
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8"));
   } catch {
-    return null;
+    return { usage: null, rateLimitTier: null };
   }
-  return parseClaudeAccountUsage(parsed);
+  return { usage: parseClaudeAccountUsage(parsed), rateLimitTier: parseRateLimitTier(parsed) };
 }
 
 /** Whether there is a real money figure to show, as opposed to a subscription with credits off. */

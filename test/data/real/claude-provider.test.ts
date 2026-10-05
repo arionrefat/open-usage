@@ -68,6 +68,7 @@ function build(options: {
   live?: ClaudeCliUsage | null;
   subscriptionType?: string | null;
   weeklyBreakdown?: ClaudeWeeklyBreakdown | null;
+  rateLimitTier?: string | null;
 } = {}) {
   return buildClaudeProvider({
     meta: createClaudeMeta(),
@@ -102,6 +103,7 @@ function build(options: {
     dates: ["2026-01-15"],
     now: NOW,
     weeklyBreakdown: options.weeklyBreakdown ?? null,
+    rateLimitTier: options.rateLimitTier ?? null,
     ...(options.subscriptionType === undefined
       ? {}
       : {
@@ -409,6 +411,23 @@ describe("buildClaudeProvider", () => {
     expect(meta.plan).toBe("Max");
     expect(meta.planShort).toBe("Max");
     expect(meta.planDetail).toBe("Max");
+  });
+
+  test("names the Max multiplier when the account's tier is known", () => {
+    const max20 = build({ subscriptionType: "max", rateLimitTier: "default_claude_max_20x" }).meta;
+    const max5 = build({ subscriptionType: "max", rateLimitTier: "default_claude_max_5x" }).meta;
+
+    expect([max20.plan, max20.planShort, max20.planDetail]).toEqual(["Max 20x", "Max 20x", "Max 20x"]);
+    expect(max5.planShort).toBe("Max 5x");
+  });
+
+  test("an unknown tier, or a known one on another plan, keeps today's label", () => {
+    expect(build({ subscriptionType: "max", rateLimitTier: "default_claude_max_50x" }).meta.plan).toBe("Max");
+    // Team seats carry the same tier strings, so they never read as Max.
+    expect(build({ subscriptionType: "team", rateLimitTier: "default_claude_max_5x" }).meta.plan).toBe("Team");
+    expect(build({ subscriptionType: null, rateLimitTier: "default_claude_max_20x" }).meta.plan).toBe(
+      "Claude subscription",
+    );
   });
 
   test("keeps the generic label when the cli reports no tier", () => {

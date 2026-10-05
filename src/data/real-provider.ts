@@ -11,7 +11,7 @@ import { createClaudeAuthSource, type ClaudeAuthSource } from "./real/claude-aut
 import { readHistoryStats } from "./real/claude-history";
 import { hasStatuslineConfigured } from "./real/claude-settings";
 import { emptyTranscriptAggregate, readClaudeTranscripts } from "./real/claude-transcripts";
-import { readClaudeAccountUsage } from "./real/claude-account-usage";
+import { readClaudeConfig } from "./real/claude-account-usage";
 import { buildClaudeSpend, recordClaudeSpend } from "./real/claude-spend";
 import { loadPriceTable } from "./real/pricing";
 import { createClaudeLimitsSource, type ClaudeLimitsSource } from "./real/claude-usage";
@@ -450,7 +450,8 @@ function buildSnapshot(
   // Money and long-range history: Claude's own account figures for spend, our
   // own record for tokens, since Claude keeps neither past the current window.
   const priceTable = loadPriceTable(paths.pricingOverrides);
-  const account = readClaudeAccountUsage(paths.claudeConfig);
+  const claudeConfig = readClaudeConfig(paths.claudeConfig);
+  const account = claudeConfig.usage;
   const spendStore = recordClaudeSpend({
     path: paths.spendHistory,
     account,
@@ -465,6 +466,7 @@ function buildSnapshot(
     snapshotFile,
     spend,
     weeklyBreakdown: account?.weeklyBreakdown ?? null,
+    rateLimitTier: claudeConfig.rateLimitTier,
     limitsSource: claudeLimits,
     hasStatusline: hasStatuslineConfigured(paths.claudeSettings),
     trend,

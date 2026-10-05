@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   hasSpendFigure,
   parseClaudeAccountUsage,
+  parseRateLimitTier,
   parseWeeklyBreakdown,
-  readClaudeAccountUsage,
+  readClaudeConfig,
 } from "../../../src/data/real/claude-account-usage";
 
 /** The shape observed on a live subscription account with credits switched off. */
@@ -173,8 +177,48 @@ describe("parseWeeklyBreakdown", () => {
   });
 });
 
-describe("readClaudeAccountUsage", () => {
+describe("parseRateLimitTier", () => {
+  test("reads the organisation's tier, which names the Max multiplier", () => {
+    expect(
+      parseRateLimitTier({
+        oauthAccount: { organizationRateLimitTier: "default_claude_max_20x", userRateLimitTier: null },
+      }),
+    ).toBe("default_claude_max_20x");
+  });
+
+  test("an absent, malformed or contradicted tier reads as unknown", () => {
+    expect(parseRateLimitTier({})).toBeNull();
+    expect(parseRateLimitTier({ oauthAccount: { organizationRateLimitTier: null } })).toBeNull();
+    expect(parseRateLimitTier({ oauthAccount: { organizationRateLimitTier: "Max 20x!" } })).toBeNull();
+    expect(
+      parseRateLimitTier({
+        oauthAccount: {
+          organizationRateLimitTier: "default_claude_max_20x",
+          userRateLimitTier: "default_claude_max_5x",
+        },
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("readClaudeConfig", () => {
   test("a missing file reads as absent rather than throwing", () => {
-    expect(readClaudeAccountUsage("/nonexistent/.claude.json")).toBeNull();
+    expect(readClaudeConfig("/nonexistent/.claude.json")).toEqual({ usage: null, rateLimitTier: null });
+  });
+
+  test("reads the usage block and the tier from one file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "open-usage-claude-config-"));
+    try {
+      const path = join(dir, ".claude.json");
+      writeFileSync(
+        path,
+        JSON.stringify({ ...CREDITS_ON, oauthAccount: { organizationRateLimitTier: "default_claude_max_5x" } }),
+      );
+      const config = readClaudeConfig(path);
+      expect(config.usage?.spend.used?.amountMinor).toBe(1842);
+      expect(config.rateLimitTier).toBe("default_claude_max_5x");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
