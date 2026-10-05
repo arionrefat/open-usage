@@ -421,6 +421,31 @@ describe("parseRateLimits", () => {
     ]);
   });
 
+  test("names a per-model lane by its model slug before its opaque limit id", () => {
+    const lane = (fields: Record<string, unknown>) =>
+      parseRateLimits(
+        {
+          rateLimits: LIVE_RESPONSE_0160.rateLimits,
+          rateLimitsByLimitId: {
+            ...LIVE_RESPONSE_0160.rateLimitsByLimitId,
+            codex_bengalfox: {
+              ...LIVE_RESPONSE_0160.rateLimitsByLimitId.codex,
+              limitId: "codex_bengalfox",
+              primary: { usedPercent: 12, windowDurationMins: 10080, resetsAt: 1791629797 },
+              ...fields,
+            },
+          },
+        },
+        NOW_MS,
+      )?.additionalRateLimits.map((limit) => limit.name);
+
+    expect(lane({ normalModelSlug: "gpt-6.1-sol" })).toEqual(["gpt-6.1-sol"]);
+    expect(lane({ limitName: "GPT-6.1-Sol Fast", normalModelSlug: "gpt-6.1-sol" })).toEqual(["GPT-6.1-Sol Fast"]);
+    // A blank name is no name: fall through to the next rather than drop the lane.
+    expect(lane({ limitName: " ", normalModelSlug: "" })).toEqual(["codex_bengalfox"]);
+    expect(lane({ limitName: null, normalModelSlug: null, limitId: null })).toEqual(["codex_bengalfox"]);
+  });
+
   test("reads the monthly spend control and backend reached classification", () => {
     const limits = parseRateLimits(
       {

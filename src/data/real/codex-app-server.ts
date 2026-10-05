@@ -120,10 +120,25 @@ function durationSuffix(window: CodexWindow, fallback: "primary" | "secondary"):
   return `${minutes}m`;
 }
 
+/**
+ * A limit id is an opaque meter key, so the human names come first:
+ * `limitName`, then `normalModelSlug`, the model that the schema says
+ * describes this quota alias. Its display name would need a `model/list`
+ * call, so the slug stands in. A blank name falls through rather than
+ * dropping the lane.
+ */
+function laneName(id: string, item: Record<string, unknown>): string | null {
+  const candidates = [item.limitName, item.normalModelSlug, item.modelName, item.model, item.limitId, id];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) return candidate.trim();
+  }
+  return null;
+}
+
 function namedWindows(id: string, item: unknown): CodexAdditionalRateLimit[] {
   if (!isRecord(item)) return [];
-  const nameValue = item.limitName ?? item.modelName ?? item.model ?? item.limitId ?? id;
-  if (typeof nameValue !== "string" || nameValue.length === 0) return [];
+  const nameValue = laneName(id, item);
+  if (nameValue === null) return [];
 
   const direct = windowFrom(item);
   if (direct) return [{ name: nameValue, ...direct }];
