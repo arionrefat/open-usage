@@ -2,7 +2,13 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { basename, dirname, join } from "node:path";
 import { withFileLock } from "../../lib/file-lock";
 import { isRecord } from "./json";
-import type { ClaudeCliUsage } from "./claude-usage";
+import type {
+  ClaudeCliUsage,
+  ClaudeExtraUsageSpend,
+  ClaudeScopedWindow,
+  ClaudeUsageWindow,
+} from "./claude-usage";
+import type { Money } from "../types";
 import type {
   CodexAccountLimits,
   CodexAdditionalRateLimit,
@@ -32,29 +38,72 @@ function nullableFinite(value: unknown): number | null {
   return value === null ? null : finite(value);
 }
 
+function claudeWindow(value: unknown): ClaudeUsageWindow | null {
+  const raw = record(value);
+  const percent = finite(raw?.percent);
+  if (percent === null || typeof raw?.reset !== "string") return null;
+  // Absent on entries parsed from the text alone, and on every entry written
+  // before the structured report was read.
+  if (raw.resetsAtMs === undefined) return { percent, reset: raw.reset };
+  const resetsAtMs = finite(raw.resetsAtMs);
+  return resetsAtMs === null ? null : { percent, reset: raw.reset, resetsAtMs };
+}
+
+function claudeScopedWindow(value: unknown): ClaudeScopedWindow | null {
+  const raw = record(value);
+  const window = claudeWindow(raw);
+  if (!window || typeof raw?.id !== "string" || typeof raw.name !== "string") return null;
+  if (raw.scope !== "model" && raw.scope !== "surface") return null;
+  return { id: raw.id, scope: raw.scope, name: raw.name, ...window };
+}
+
+/** Entries written before scoped lanes existed carried Fable under its own key. */
+function claudeScopedWindows(raw: Record<string, unknown>): ClaudeScopedWindow[] | null {
+  if (raw.scoped === undefined) {
+    if (raw.fable === undefined) return [];
+    const fable = claudeWindow(raw.fable);
+    return fable ? [{ id: "fable", scope: "model", name: "Fable", ...fable }] : null;
+  }
+  if (!Array.isArray(raw.scoped)) return null;
+  const windows: ClaudeScopedWindow[] = [];
+  for (const item of raw.scoped) {
+    const window = claudeScopedWindow(item);
+    if (!window) return null;
+    windows.push(window);
+  }
+  return windows;
+}
+
+function claudeMoney(value: unknown): Money | null {
+  const raw = record(value);
+  const amountMinor = finite(raw?.amountMinor);
+  const exponent = finite(raw?.exponent);
+  if (amountMinor === null || exponent === null || typeof raw?.currency !== "string") return null;
+  return { amountMinor, currency: raw.currency, exponent };
+}
+
+function claudeExtraUsage(value: unknown): ClaudeExtraUsageSpend | null {
+  const raw = record(value);
+  const used = claudeMoney(raw?.used);
+  if (!raw || !used) return null;
+  const monthlyLimit = raw.monthlyLimit === null ? null : claudeMoney(raw.monthlyLimit);
+  const utilization = nullableFinite(raw.utilization);
+  if (raw.monthlyLimit !== null && monthlyLimit === null) return null;
+  if (raw.utilization !== null && utilization === null) return null;
+  return { used, monthlyLimit, utilization };
+}
+
 function claude(value: unknown): ClaudeCliUsage | null {
   const raw = record(value);
-  const session = record(raw?.session);
-  const weekly = record(raw?.weekly);
-  const fable = raw?.fable === undefined ? null : record(raw.fable);
-  const sessionPercent = finite(session?.percent);
-  const weeklyPercent = finite(weekly?.percent);
-  const fablePercent = fable ? finite(fable.percent) : null;
-  const parsedFable = raw?.fable === undefined
-    ? undefined
-    : fable && fablePercent !== null && typeof fable.reset === "string"
-      ? { percent: fablePercent, reset: fable.reset }
-      : null;
+  const session = claudeWindow(raw?.session);
+  const weekly = claudeWindow(raw?.weekly);
   const fetchedAtMs = finite(raw?.fetchedAtMs);
-  if (sessionPercent === null || weeklyPercent === null || fetchedAtMs === null) return null;
-  if (typeof session?.reset !== "string" || typeof weekly?.reset !== "string") return null;
-  if (parsedFable === null) return null;
-  return {
-    session: { percent: sessionPercent, reset: session.reset },
-    weekly: { percent: weeklyPercent, reset: weekly.reset },
-    ...(parsedFable ? { fable: parsedFable } : {}),
-    fetchedAtMs,
-  };
+  if (!raw || !session || !weekly || fetchedAtMs === null) return null;
+  const scoped = claudeScopedWindows(raw);
+  if (!scoped) return null;
+  const extraUsage = raw.extraUsage === undefined ? undefined : claudeExtraUsage(raw.extraUsage);
+  if (extraUsage === null) return null;
+  return { session, weekly, scoped, ...(extraUsage ? { extraUsage } : {}), fetchedAtMs };
 }
 
 function codexWindow(value: unknown): CodexWindow | null {

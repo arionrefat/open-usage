@@ -5,6 +5,7 @@ import type { SnapshotFile, WeeklyTrend } from "../../../src/data/real/statuslin
 import {
   dormantClaudeLimitsSource,
   type ClaudeCliUsage,
+  type ClaudeScopedWindow,
 } from "../../../src/data/real/claude-usage";
 
 const NOW = new Date(2026, 0, 15, 12);
@@ -40,9 +41,18 @@ function liveUsage(reset: string): ClaudeCliUsage {
   return {
     session: { percent: 25.4, reset },
     weekly: { percent: 40, reset },
+    scoped: [],
     fetchedAtMs: NOW_MS,
   };
 }
+
+const FABLE: ClaudeScopedWindow = {
+  id: "fable",
+  scope: "model",
+  name: "Fable",
+  percent: 65,
+  reset: "resets Aug 5 at 6am (Asia/Dhaka)",
+};
 
 function trend(rate: number | null): WeeklyTrend {
   return { observe: () => rate };
@@ -155,7 +165,7 @@ describe("buildClaudeProvider", () => {
         read: () => ({
           session: { percent: 10, reset: "resets Aug 4 at 3:20am (Asia/Dhaka)" },
           weekly: { percent: 95, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
-          fable: { percent: 65, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
+          scoped: [FABLE],
           fetchedAtMs: NOW_MS,
         }),
         note: () => null,
@@ -183,6 +193,7 @@ describe("buildClaudeProvider", () => {
     const live = (ageMinutes: number): ClaudeCliUsage => ({
       session: { percent: 10, reset: "resets later" },
       weekly: { percent: 95, reset: "resets later" },
+      scoped: [],
       fetchedAtMs: NOW_MS - ageMinutes * 60_000,
     });
 
@@ -218,7 +229,7 @@ describe("buildClaudeProvider", () => {
         read: () => ({
           session: { percent: 10, reset: "resets later" },
           weekly: { percent: 20, reset: "resets later" },
-          fable: { percent: 65, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
+          scoped: [FABLE],
           fetchedAtMs: NOW_MS - 40 * 60_000,
         }),
         note: () => null,
@@ -259,7 +270,7 @@ describe("buildClaudeProvider", () => {
         read: () => ({
           session: { percent: 10, reset: "resets later" },
           weekly: { percent: 20, reset: "resets later" },
-          fable: { percent: 65, reset: "resets Aug 5 at 6am (Asia/Dhaka)" },
+          scoped: [FABLE],
           fetchedAtMs: NOW_MS - 11 * 60_000,
         }),
         note: () => null,
@@ -273,6 +284,66 @@ describe("buildClaudeProvider", () => {
 
     expect(provider.limits[2]).toMatchObject({ id: "fable", percent: 65 });
     expect(provider.limits[2]?.footnote).toBeUndefined();
+  });
+
+  test("the structured reset times drive the countdown and projection with no snapshot", () => {
+    const provider = build({
+      snapshotFile: null,
+      trendRate: 7,
+      live: {
+        session: { percent: 25, reset: "resets 4am", resetsAtMs: NOW_MS + HOUR_MS },
+        weekly: { percent: 40, reset: "resets Jan 16 at 10pm", resetsAtMs: NOW_MS + 10 * HOUR_MS },
+        scoped: [{ ...FABLE, resetsAtMs: NOW_MS + 10 * HOUR_MS }],
+        fetchedAtMs: NOW_MS,
+      },
+    });
+
+    // The CLI's own prose still heads the row; the timestamp adds the countdown.
+    expect(provider.limits[1]?.reset).toBe("resets Jan 16 at 10pm");
+    expect(provider.limits[1]?.resetLong).toStartWith("resets in 10h 0m");
+    expect(provider.limits[0]?.resetLong).toStartWith("resets in 1h 0m");
+    expect(provider.limits[2]?.resetLong).toStartWith("resets in 10h 0m");
+    expect(provider.burn.timeToReset).toBe("10h 0m to reset");
+    expect(provider.burn.projectedPercent).toBe(110);
+    expect(provider.limits[1]?.alert?.text).toContain("projected 110% before reset");
+  });
+
+  test("renders every scoped lane under an id taken from its scope", () => {
+    const provider = build({
+      live: {
+        ...liveUsage("resets later"),
+        scoped: [
+          FABLE,
+          { id: "surface-claude-code", scope: "surface", name: "Claude Code", percent: 12, reset: "resets later" },
+        ],
+      },
+    });
+
+    expect(provider.limits.map((limit) => [limit.id, limit.label])).toEqual([
+      ["session", "current session"],
+      ["weekly", "weekly · all models"],
+      ["fable", "weekly · Fable"],
+      ["surface-claude-code", "weekly · Claude Code"],
+    ]);
+  });
+
+  test("shows extra usage only when the reading carries it and is current", () => {
+    const withExtra: ClaudeCliUsage = {
+      ...liveUsage("resets later"),
+      extraUsage: {
+        used: { amountMinor: 1234, currency: "USD", exponent: 2 },
+        monthlyLimit: { amountMinor: 5000, currency: "USD", exponent: 2 },
+        utilization: 24.68,
+      },
+    };
+    const section = (live: ClaudeCliUsage) =>
+      build({ live }).details?.find((candidate) => candidate.title === "extra usage");
+
+    expect(section(withExtra)?.rows).toEqual([
+      { label: "credits used", value: "$12.34 of $50.00", percent: 24.68 },
+    ]);
+    expect(section(liveUsage("resets later"))).toBeUndefined();
+    expect(section({ ...withExtra, fetchedAtMs: NOW_MS - 2 * HOUR_MS })).toBeUndefined();
   });
 
   test("a missing snapshot yields capless session and weekly limits", () => {

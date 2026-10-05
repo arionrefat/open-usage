@@ -1,3 +1,4 @@
+import { formatMoney } from "../../lib/spend";
 import { COLORS } from "../../theme";
 import type {
   BurnOutcome,
@@ -12,10 +13,11 @@ import { HOUR_MS, formatAge, formatClock, formatCountdown, formatRate, seriesFro
 import type { HistoryStats } from "./claude-history";
 import type { TranscriptAggregate } from "./claude-transcripts";
 import {
-  CLAUDE_FABLE_STALE_MS,
   CLAUDE_LIMITS_STALE_MS,
+  CLAUDE_SCOPED_STALE_MS,
   type ClaudeCliUsage,
   type ClaudeLimitsSource,
+  type ClaudeScopedWindow,
   type ClaudeUsageWindow,
 } from "./claude-usage";
 import { capLessLimit, formatTokenCount, localBurn, resetText, trimResetProse } from "./provider-helpers";
@@ -85,14 +87,18 @@ interface ClaudeWindow extends RateWindowReading {
   resetLabel?: string;
 }
 
-/** Merges CLI reset prose with fresh statusline timestamps so projections work while live polling is active. */
+/**
+ * Keeps the CLI's reset prose for display. The timestamp comes from the CLI's
+ * structured report where it carried one, else from a fresh statusline
+ * snapshot, so the countdown and projection work with either source alone.
+ */
 function cliWindow(
   window: ClaudeUsageWindow,
   snapshotWindow: RateWindowReading | null,
 ): ClaudeWindow {
   return {
     percent: window.percent,
-    resetsAtMs: snapshotWindow?.resetsAtMs ?? null,
+    resetsAtMs: window.resetsAtMs ?? snapshotWindow?.resetsAtMs ?? null,
     resetLabel: trimResetProse(window.reset),
   };
 }
@@ -157,12 +163,32 @@ function weeklyLimit(
   return limit;
 }
 
+/** A weekly lane scoped to one model or surface; its id comes from the scope, so it holds across polls. */
+function scopedLimit(
+  window: ClaudeScopedWindow,
+  isFresh: boolean,
+  staleNote: string,
+  nowMs: number,
+): UsageLimit {
+  const limit: UsageLimit = {
+    id: window.id,
+    label: `weekly · ${window.name}`,
+    percent: Math.round(window.percent),
+    reset: trimResetProse(window.reset),
+  };
+  if (window.resetsAtMs !== undefined) {
+    limit.resetLong = `${resetText(window.resetsAtMs, nowMs)} · ${formatClock(window.resetsAtMs)}`;
+  }
+  if (!isFresh) limit.footnote = staleNote;
+  return limit;
+}
+
 function claudeLimits(
   five: ClaudeWindow | null,
   seven: ClaudeWindow | null,
-  fable: ClaudeWindow | null,
+  scoped: ClaudeScopedWindow[],
   isFresh: boolean,
-  fableIsFresh: boolean,
+  scopedIsFresh: boolean,
   snapshotFile: SnapshotFile | null,
   live: ClaudeCliUsage | null,
   useLive: boolean,
@@ -173,22 +199,16 @@ function claudeLimits(
   hasStatusline: boolean,
 ): UsageLimit[] {
   const staleNote = sourceNote ?? staleSnapshotNote(snapshotFile, hasStatusline, live, useLive, nowMs);
-  const fableStaleNote =
+  const scopedStaleNote =
     sourceNote ?? staleSnapshotNote(snapshotFile, hasStatusline, live, true, nowMs);
   const session = sessionLimit(five, isFresh, staleNote, nowMs);
   const weekly = weeklyLimit(seven, projection, rateLabel, staleNote, nowMs);
   if (!isFresh) weekly.footnote = staleNote;
-  const limits = [session, weekly];
-  if (fable) {
-    limits.push({
-      id: "fable",
-      label: "weekly · Fable",
-      percent: Math.round(fable.percent),
-      reset: fable.resetLabel ?? "reset unavailable",
-      ...(!fableIsFresh ? { footnote: fableStaleNote } : {}),
-    });
-  }
-  return limits;
+  return [
+    session,
+    weekly,
+    ...scoped.map((window) => scopedLimit(window, scopedIsFresh, scopedStaleNote, nowMs)),
+  ];
 }
 
 function claudeNoticeText(snapshotFile: SnapshotFile | null, hasStatusline: boolean): string {
@@ -247,6 +267,23 @@ function sessionDetails(snapshotFile: SnapshotFile | null): DetailSection | null
   }
   if (effort) rows.push({ label: "effort", value: effort });
   return rows.length > 0 ? { title: "session", rows } : null;
+}
+
+/** Only present while extra usage is switched on; the parser drops it otherwise. */
+function extraUsageDetails(live: ClaudeCliUsage | null): DetailSection | null {
+  const extra = live?.extraUsage;
+  if (!extra) return null;
+  const used = formatMoney(extra.used);
+  return {
+    title: "extra usage",
+    rows: [
+      {
+        label: "credits used",
+        value: extra.monthlyLimit ? `${used} of ${formatMoney(extra.monthlyLimit)}` : used,
+        percent: extra.utilization,
+      },
+    ],
+  };
 }
 
 function transcriptDetails(transcripts: TranscriptAggregate): DetailSection[] {
@@ -325,18 +362,21 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
         : live
           ? cliWindow(live.weekly, null)
           : null;
-  const fable = live?.fable ? cliWindow(live.fable, null) : null;
-  // Fable has no statusline equivalent, so the CLI polls for it on a slower
-  // cadence than the session and weekly windows. Judging it by their staleness
-  // window would brand a perfectly current reading as stale.
-  const fableIsFresh = live !== null && nowMs - live.fetchedAtMs <= CLAUDE_FABLE_STALE_MS;
+  // Scoped lanes have no statusline equivalent, so the CLI polls for them on a
+  // slower cadence than the session and weekly windows. Judging them by their
+  // staleness window would brand a perfectly current reading as stale.
+  const scopedIsFresh = live !== null && nowMs - live.fetchedAtMs <= CLAUDE_SCOPED_STALE_MS;
   const isFresh = liveIsFresh || snapshotIsFresh;
   const trendAtMs =
     live && useLive ? live.fetchedAtMs : snapshotFile ? snapshotFile.writtenAtMs : live?.fetchedAtMs ?? null;
   const trendRate =
     seven && trendAtMs !== null ? trend.observe(trendAtMs, seven.percent) : null;
   const projection = projectWeekly(seven, trendRate, nowMs);
-  const details = [sessionDetails(snapshotFile), ...transcriptDetails(transcripts)].filter(
+  const details = [
+    sessionDetails(snapshotFile),
+    scopedIsFresh ? extraUsageDetails(live) : null,
+    ...transcriptDetails(transcripts),
+  ].filter(
     (section): section is DetailSection => section !== null,
   );
 
@@ -348,9 +388,9 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
     limits: claudeLimits(
       five,
       seven,
-      fable,
+      live?.scoped ?? [],
       isFresh,
-      fableIsFresh,
+      scopedIsFresh,
       snapshotFile,
       live,
       useLive,

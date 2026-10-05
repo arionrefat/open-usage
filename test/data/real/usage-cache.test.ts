@@ -22,9 +22,24 @@ function tempCache(run: (path: string) => void): void {
 const fetchedAtMs = Date.now();
 const cache: UsageCache = {
   claude: {
-    session: { percent: 24, reset: "resets in 2h" },
+    session: { percent: 24, reset: "resets in 2h", resetsAtMs: fetchedAtMs + 2 * HOUR_MS },
     weekly: { percent: 61, reset: "resets in 4d" },
-    fable: { percent: 35, reset: "resets in 4d" },
+    scoped: [
+      {
+        id: "fable",
+        scope: "model",
+        name: "Fable",
+        percent: 35,
+        reset: "resets in 4d",
+        resetsAtMs: fetchedAtMs + 4 * DAY_MS,
+      },
+      { id: "surface-claude-code", scope: "surface", name: "Claude Code", percent: 5, reset: "no usage yet" },
+    ],
+    extraUsage: {
+      used: { amountMinor: 1234, currency: "USD", exponent: 2 },
+      monthlyLimit: null,
+      utilization: null,
+    },
     fetchedAtMs,
   },
   codex: {
@@ -100,7 +115,15 @@ describe("usage cache", () => {
 
       writeFileSync(path, JSON.stringify({
         version: 1,
-        claude: { ...cache.claude, fable: { percent: "bad", reset: "resets in 4d" } },
+        claude: { ...cache.claude, scoped: [{ id: "fable", percent: "bad", reset: "resets in 4d" }] },
+        codex: null,
+        go: null,
+      }));
+      expect(readUsageCache(path).claude).toBeNull();
+
+      writeFileSync(path, JSON.stringify({
+        version: 1,
+        claude: { ...cache.claude, session: { percent: 24, reset: "resets in 2h", resetsAtMs: "soon" } },
         codex: null,
         go: null,
       }));
@@ -108,16 +131,26 @@ describe("usage cache", () => {
     });
   });
 
-  test("accepts older Claude cache entries without Fable", () => {
+  test("reads Claude entries cached before scoped lanes, keeping Fable on its id", () => {
+    const legacy = {
+      session: { percent: 24, reset: "resets in 2h" },
+      weekly: { percent: 61, reset: "resets in 4d" },
+      fetchedAtMs,
+    };
+    const write = (path: string, claude: unknown) =>
+      writeFileSync(path, JSON.stringify({ version: 1, claude, codex: null, go: null }));
     tempCache((path) => {
-      const { fable: _fable, ...claudeWithoutFable } = cache.claude!;
-      writeFileSync(path, JSON.stringify({
-        version: 1,
-        claude: claudeWithoutFable,
-        codex: null,
-        go: null,
-      }));
-      expect(readUsageCache(path).claude).toEqual(claudeWithoutFable);
+      write(path, { ...legacy, fable: { percent: 35, reset: "resets in 4d" } });
+      expect(readUsageCache(path).claude).toEqual({
+        ...legacy,
+        scoped: [{ id: "fable", scope: "model", name: "Fable", percent: 35, reset: "resets in 4d" }],
+      });
+
+      write(path, legacy);
+      expect(readUsageCache(path).claude).toEqual({ ...legacy, scoped: [] });
+
+      write(path, { ...legacy, fable: { percent: "bad", reset: "resets in 4d" } });
+      expect(readUsageCache(path).claude).toBeNull();
     });
   });
 

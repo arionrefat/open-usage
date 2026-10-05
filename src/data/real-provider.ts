@@ -574,7 +574,7 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
     readPersisted: persisted("claude"),
     // Claude Code writes the statusline snapshot itself, at no cost to the
     // account. While it is fresh it already carries the session and weekly
-    // windows, so the CLI only needs to keep the Fable window current.
+    // windows, so the CLI only needs to keep the scoped lanes current.
     isCoveredBySnapshot: () => {
       const now = new Date();
       const snapshotFile = readUsageSnapshot(paths.usageSnapshot, now);

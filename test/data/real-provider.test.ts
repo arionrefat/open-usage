@@ -228,7 +228,7 @@ describe("persisted limit cache", () => {
       claude: {
         session: { percent: 24, reset: "resets in 2h" },
         weekly: { percent: 61, reset: "resets in 4d" },
-        fable: { percent: 35, reset: "resets in 4d" },
+        scoped: [{ id: "fable", scope: "model", name: "Fable", percent: 35, reset: "resets in 4d" }],
         fetchedAtMs,
       },
       codex: {
@@ -382,6 +382,7 @@ describe("refresh pressure on the upstream providers", () => {
         return Promise.resolve({
           session: { percent: 5, reset: "resets soon" },
           weekly: { percent: 5, reset: "resets soon" },
+          scoped: [],
           fetchedAtMs: now.getTime(),
         });
       }),
@@ -455,7 +456,7 @@ describe("refresh pressure on the upstream providers", () => {
         return Promise.resolve({
           session: { percent: 5, reset: "resets soon" },
           weekly: { percent: 5, reset: "resets soon" },
-          fable: { percent: 0, reset: "no usage yet" },
+          scoped: [{ id: "fable", scope: "model", name: "Fable", percent: 0, reset: "no usage yet" }],
           fetchedAtMs: now.getTime(),
         });
       },
@@ -471,7 +472,7 @@ describe("refresh pressure on the upstream providers", () => {
     // The old 3-minute cadence would have spent four requests here.
     expect(calls).toBe(1);
 
-    // Fable still refreshes, just on the slower cadence.
+    // The scoped lanes still refresh, just on the slower cadence.
     await claudeLimits.poll(new Date(startMs + 21 * 60_000));
     expect(calls).toBe(2);
   });
@@ -485,6 +486,7 @@ describe("refresh pressure on the upstream providers", () => {
         return Promise.resolve({
           session: { percent: 5, reset: "resets soon" },
           weekly: { percent: 5, reset: "resets soon" },
+          scoped: [],
           fetchedAtMs: now.getTime(),
         });
       },
