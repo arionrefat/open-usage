@@ -15,6 +15,7 @@ import {
 } from "./lib/args";
 import { helpText, versionText, wantsHelp, wantsVersion } from "./lib/cli-help";
 import { sendDesktopNotification } from "./notifications/desktop";
+import { preferTerminal } from "./notifications/terminal";
 import {
   clearCappedLimits,
   defaultLimitAlertsPath,
@@ -66,13 +67,6 @@ const persistPreferences = (patch: Partial<typeof preferences>) => {
   return true;
 };
 const provider = selectUsageProvider(providerModeFromFlags(flags, "real"));
-const notifyOnRefresh = provider.isSampleData
-  ? undefined
-  : (snapshot: UsageSnapshot, connections: Record<ProviderId, ProviderConnection>) => {
-      if (!preferences.notifyOnLimits) return;
-      // The dashboard has nowhere to report a failed delivery; the daemon logs them.
-      void notifyLimitChanges(limitAlertsPath, snapshot, connections, sendDesktopNotification).catch(() => {});
-    };
 // Stable identity: a fresh closure each render would re-run the effect behind it.
 const checkUpdate = () => checkForUpdate({ currentVersion: APP_VERSION });
 const renderer = await createCliRenderer({
@@ -89,6 +83,15 @@ function shutdown(exitCode: number): void {
   renderer.destroy();
   process.exit(exitCode);
 }
+const sendNotification = preferTerminal(renderer, sendDesktopNotification);
+const notifyOnRefresh = provider.isSampleData
+  ? undefined
+  : (snapshot: UsageSnapshot, connections: Record<ProviderId, ProviderConnection>) => {
+      if (!preferences.notifyOnLimits) return;
+      // The dashboard has nowhere to report a failed delivery; the daemon logs them.
+      void notifyLimitChanges(limitAlertsPath, snapshot, connections, sendNotification).catch(() => {});
+    };
+
 process.on("SIGHUP", () => shutdown(129));
 process.on("SIGINT", () => shutdown(130));
 process.on("SIGTERM", () => shutdown(143));
@@ -106,6 +109,6 @@ createRoot(renderer).render(
     }
     onPreferencesChange={persistPreferences}
     onRefreshed={notifyOnRefresh}
-    sendNotification={sendDesktopNotification}
+    sendNotification={sendNotification}
   />,
 );

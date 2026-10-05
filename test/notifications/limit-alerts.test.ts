@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mockUsageProvider } from "../../src/data/mock-provider";
@@ -10,7 +10,12 @@ import type {
   UsageLimit,
   UsageSnapshot,
 } from "../../src/data/types";
-import { desktopNotificationCommand, type SendNotification } from "../../src/notifications/desktop";
+import {
+  desktopNotificationCommand,
+  installNotificationIcon,
+  type SendNotification,
+} from "../../src/notifications/desktop";
+import { preferTerminal, type TerminalNotifier } from "../../src/notifications/terminal";
 import {
   clearCappedLimits,
   detectLimitChanges,
@@ -187,7 +192,7 @@ describe("notifyLimitChanges", () => {
     const sent: string[] = [];
     const send: SendNotification = async (title) => {
       sent.push(title);
-      return { isDelivered: true };
+      return { isDelivered: true, channel: "system" };
     };
 
     const dashboard = await notifyLimitChanges(path, snapshot, connections(), send);
@@ -229,26 +234,83 @@ describe("notifyLimitChanges", () => {
 
 describe("desktopNotificationCommand", () => {
   test("passes the text to osascript as arguments, never inside the script", () => {
-    const command = desktopNotificationCommand('codex "limit"', "7d limit at 100%", "darwin");
+    const command = desktopNotificationCommand('codex "limit"', "7d limit at 100%", { platform: "darwin" });
     expect(command?.argv[0]).toBe("osascript");
     expect(command?.argv.slice(-2)).toEqual(['codex "limit"', "7d limit at 100%"]);
     expect(command?.argv.filter((part) => part.includes('"limit"'))).toHaveLength(1);
   });
 
-  test("uses notify-send on linux and a WinRT toast on windows", () => {
-    expect(desktopNotificationCommand("t", "b", "linux")?.argv).toEqual([
+  test("uses notify-send on linux and a WinRT toast on windows, with the icon when there is one", () => {
+    expect(desktopNotificationCommand("t", "b", { platform: "linux" })?.argv).toEqual([
       "notify-send",
       "--app-name",
       "open-usage",
       "t",
       "b",
     ]);
-    const windows = desktopNotificationCommand("t", "b", "win32");
+    expect(desktopNotificationCommand("t", "b", { platform: "linux", iconPath: "/i.png" })?.argv).toEqual([
+      "notify-send",
+      "--app-name",
+      "open-usage",
+      "--icon",
+      "/i.png",
+      "t",
+      "b",
+    ]);
+    const windows = desktopNotificationCommand("t", "b", { platform: "win32" });
     expect(windows?.argv[0]).toBe("powershell.exe");
+    expect(windows?.argv.at(-1)).toContain("ToastText02");
     expect(windows?.env).toEqual({ OPEN_USAGE_NOTIFY_TITLE: "t", OPEN_USAGE_NOTIFY_BODY: "b" });
+    const withIcon = desktopNotificationCommand("t", "b", { platform: "win32", iconPath: "C:\\i.png" });
+    expect(withIcon?.argv.at(-1)).toContain("ToastImageAndText02");
+    expect(withIcon?.env?.OPEN_USAGE_NOTIFY_ICON).toBe("C:\\i.png");
   });
 
   test("has no notifier for an unknown platform", () => {
-    expect(desktopNotificationCommand("t", "b", "aix")).toBeNull();
+    expect(desktopNotificationCommand("t", "b", { platform: "aix" })).toBeNull();
+  });
+});
+
+describe("installNotificationIcon", () => {
+  test("writes the bundled icon once and leaves an identical copy alone", async () => {
+    const target = join(alertsPath(), "..", "icons", "notification-icon.png");
+    expect(await installNotificationIcon(target)).toBe(target);
+    const written = statSync(target);
+    expect(readFileSync(target).subarray(1, 4).toString()).toBe("PNG");
+    expect(await installNotificationIcon(target)).toBe(target);
+    expect(statSync(target).mtimeMs).toBe(written.mtimeMs);
+  });
+
+  test("gives up on the icon rather than the notification when it cannot be written", async () => {
+    expect(await installNotificationIcon("/nonexistent-root/icon.png")).toBeNull();
+  });
+});
+
+describe("preferTerminal", () => {
+  function terminal(supportsNotifications: boolean | null, accepts = true) {
+    const sent: Array<{ message: string; title?: string }> = [];
+    const notifier: TerminalNotifier = {
+      capabilities: supportsNotifications === null ? null : { notifications: supportsNotifications },
+      triggerNotification: (message, title) => {
+        sent.push({ message, title });
+        return accepts;
+      },
+    };
+    return { notifier, sent };
+  }
+  const system: SendNotification = async () => ({ isDelivered: true, channel: "system" });
+
+  test("sends through a terminal that can show notifications, flattened to one line", async () => {
+    const { notifier, sent } = terminal(true);
+    const result = await preferTerminal(notifier, system)("codex: a; b", "7d limit\nmonthly\u001b]0;x");
+    expect(result).toEqual({ isDelivered: true, channel: "terminal" });
+    expect(sent).toEqual([{ message: "7d limit · monthly]0;x", title: "codex: a, b" }]);
+  });
+
+  test("falls back to the system notifier when the terminal cannot or does not send", async () => {
+    for (const [supports, accepts] of [[false, true], [null, true], [true, false]] as const) {
+      const { notifier } = terminal(supports, accepts);
+      expect(await preferTerminal(notifier, system)("t", "b")).toEqual({ isDelivered: true, channel: "system" });
+    }
   });
 });

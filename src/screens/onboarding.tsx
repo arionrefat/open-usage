@@ -143,7 +143,10 @@ function notificationTestSegment(test: NotificationTest): { text: string; color:
   if (test === null) return null;
   if (test === "sending") return { text: "sending…", color: COLORS.textFaint };
   if (!test.isDelivered) return { text: `▲ not sent · ${test.reason}`, color: COLORS.warn };
-  // osascript reports success even when macOS has muted it, so name where to look.
+  // Neither route can see a notification the OS or the terminal then mutes, so name where to look.
+  if (test.channel === "terminal") {
+    return { text: "✓ sent through your terminal · nothing? check its notification settings", color: COLORS.ok };
+  }
   return process.platform === "darwin"
     ? { text: "✓ sent · nothing? allow Script Editor in System Settings › Notifications", color: COLORS.ok }
     : { text: "✓ sent", color: COLORS.ok };

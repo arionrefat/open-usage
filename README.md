@@ -66,6 +66,7 @@ The daemon is off until you start it and does not survive a reboot on its own.
 
 Limit notifications are offered during setup and can be switched with `n` in settings.
 They arrive while the dashboard is open, or from the daemon while it runs.
+The dashboard sends them through your terminal when it supports notifications, and through the system notifier otherwise.
 
 ## Data and privacy
 

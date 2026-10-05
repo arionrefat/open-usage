@@ -136,7 +136,7 @@ describe("daemon runtime", () => {
         return [
           {
             notification: { providerId: "cx", kind: "reached", title: "codex limit reached", body: "" },
-            result: { isDelivered: true },
+            result: { isDelivered: true, channel: "system" },
           },
           {
             notification: { providerId: "go", kind: "reset", title: "opencode go is ready", body: "" },

@@ -174,7 +174,14 @@ Touch when: changing what counts as a cap, or the notification wording.
 
 **`desktop.ts`**
 Delivers through the OS's own notifier, so nothing extra is installed: `osascript` on macOS, `notify-send` on Linux, a WinRT toast through Windows PowerShell.
+Linux and Windows show `assets/icon.png`, which a compiled binary embeds and writes to the config directory on first use, since both notifiers need a real file.
+AppleScript has no icon option, so macOS shows the sending app's icon.
+The daemon always delivers this way, because it has no terminal.
 Touch when: adding a platform or changing how delivery is reported.
+
+**`terminal.ts`**
+The dashboard sends through the terminal first, using OpenTUI's `triggerNotification` once the renderer has detected support (Ghostty, Kitty, iTerm2, WezTerm), and falls back to `desktop.ts` otherwise.
+A terminal notification reaches the machine the user sits at, even over SSH, under the terminal's own name and icon.
 
 ### State layer (`src/state/`)
 
