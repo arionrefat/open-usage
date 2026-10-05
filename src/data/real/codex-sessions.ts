@@ -30,6 +30,7 @@ interface FileCacheEntry {
 }
 
 const TOKEN_COUNT_MARKER = '"type":"token_count"';
+const TOKEN_USAGE_RECORD_MARKER = '"type":"token_usage_record"';
 const TURN_CONTEXT_MARKER = '"type":"turn_context"';
 const STATS_WINDOW_MS = 30 * DAY_MS;
 
@@ -51,27 +52,58 @@ function positiveNumber(value: unknown): number | null {
  * overstate codex by more than an order of magnitude. Rollouts predating the
  * breakdown fall back to `total_tokens`, the only figure they carry.
  */
-function blendedTokens(last: Record<string, unknown> | null): number | null {
-  if (!last) return null;
-  const input = positiveNumber(last.input_tokens);
-  const output = positiveNumber(last.output_tokens);
-  if (input === null || output === null) {
-    const total = positiveNumber(last.total_tokens);
-    return total !== null && total > 0 ? total : null;
-  }
-  const cached = positiveNumber(last.cached_input_tokens) ?? 0;
-  const blended = Math.max(0, input - cached) + output;
-  return blended > 0 ? blended : null;
+function blendedTokens(usage: unknown): number | null {
+  if (!isRecord(usage)) return null;
+  return breakdownTokens(usage) ?? positiveNumber(usage.total_tokens);
 }
 
+/** The blended figure, or null when the breakdown is missing. */
+function breakdownTokens(usage: unknown): number | null {
+  if (!isRecord(usage)) return null;
+  const input = positiveNumber(usage.input_tokens);
+  const output = positiveNumber(usage.output_tokens);
+  if (input === null || output === null) return null;
+  const cached = positiveNumber(usage.cached_input_tokens) ?? 0;
+  return Math.max(0, input - cached) + output;
+}
+
+/**
+ * Legacy rollouts only: the `last_token_usage` of a `token_count` is not a
+ * delta that can be summed, because codex re-emits the event with a stale
+ * `last` value - summing it over-counted sessions by up to 12%. The step in
+ * the cumulative total is exact instead. The first event uses its own `last`,
+ * since a forked session's total opens on the parent's usage, which the
+ * parent's rollout already counts; a total that falls starts over the same way.
+ */
+function tokenCountDelta(info: unknown, previousTotal: number | null): { tokens: number | null; total: number | null } {
+  if (!isRecord(info)) return { tokens: null, total: previousTotal };
+  const total = blendedTokens(info.total_token_usage);
+  const last = blendedTokens(info.last_token_usage);
+  if (total === null) return { tokens: last, total: previousTotal };
+  if (previousTotal === null || total < previousTotal) return { tokens: last, total };
+  return { tokens: total - previousTotal, total };
+}
+
+/**
+ * A rollout written by codex-cli 0.153.4 or later carries one
+ * `token_usage_record` per model response, including the compaction calls no
+ * `token_count` reports, so a session that compacted was under-counted by up
+ * to a fifth. Once a file has its first record only records count: a record
+ * precedes its own `token_count`, so the counts before it belong to an older
+ * CLI that wrote none, and the counts after it would double the records.
+ */
 function parseRolloutLines(lines: Iterable<string>): { events: RolloutEvent[]; latestMs: number } {
   const events: RolloutEvent[] = [];
   let latestMs = 0;
   // turn_context precedes its token events, so the last seen model applies.
   let currentModel: string | null = null;
+  let hasUsageRecords = false;
+  let previousTotal: number | null = null;
+  const responseIds = new Set<string>();
   for (const line of lines) {
     const isTokenCount = line.includes(TOKEN_COUNT_MARKER);
-    if (!isTokenCount && !line.includes(TURN_CONTEXT_MARKER)) continue;
+    const isUsageRecord = line.includes(TOKEN_USAGE_RECORD_MARKER);
+    if (!isTokenCount && !isUsageRecord && !line.includes(TURN_CONTEXT_MARKER)) continue;
 
     let parsed: unknown;
     try {
@@ -88,12 +120,30 @@ function parseRolloutLines(lines: Iterable<string>): { events: RolloutEvent[]; l
       }
       continue;
     }
-    if (!isTokenCount || parsed.type !== "event_msg" || payload.type !== "token_count") continue;
 
-    const info = isRecord(payload.info) ? payload.info : null;
-    const last = info && isRecord(info.last_token_usage) ? info.last_token_usage : null;
-    const tokens = blendedTokens(last);
-    if (tokens === null) continue;
+    let tokens: number | null;
+    if (isUsageRecord && parsed.type === "token_usage_record") {
+      // Every record carries the breakdown, so one without it is drift, not
+      // an old shape: it must neither pass a cache-inclusive total off as the
+      // blended figure nor switch the file off its token counts, which would
+      // chart the session as idle.
+      tokens = breakdownTokens(payload.usage);
+      if (tokens === null) continue;
+      hasUsageRecords = true;
+      const responseId = payload.response_id;
+      if (typeof responseId === "string") {
+        if (responseIds.has(responseId)) continue;
+        responseIds.add(responseId);
+      }
+    } else if (isTokenCount && parsed.type === "event_msg" && payload.type === "token_count") {
+      if (hasUsageRecords) continue;
+      const delta = tokenCountDelta(payload.info, previousTotal);
+      previousTotal = delta.total;
+      tokens = delta.tokens;
+    } else {
+      continue;
+    }
+    if (tokens === null || tokens <= 0) continue;
     const epochMs = typeof parsed.timestamp === "string" ? Date.parse(parsed.timestamp) : NaN;
     if (!Number.isFinite(epochMs)) continue;
 
@@ -159,10 +209,10 @@ export function readCodexSessions(codexHome: string, now: Date = new Date()): Co
         cached !== undefined && cached.size === stats.size && cached.mtimeMs === stats.mtimeMs;
       let entry = cacheMatchesFile ? cached : null;
       if (!entry) {
-        // Scanned for its two record types rather than read whole: a rollout
-        // is mostly tool output and a live one can pass 60 MB.
+        // Scanned for its three record types rather than read whole: a
+        // rollout is mostly tool output and a live one can pass 60 MB.
         const parsed = parseRolloutLines(
-          matchingLines(path, [TOKEN_COUNT_MARKER, TURN_CONTEXT_MARKER]),
+          matchingLines(path, [TOKEN_COUNT_MARKER, TOKEN_USAGE_RECORD_MARKER, TURN_CONTEXT_MARKER]),
         );
         entry = { size: stats.size, mtimeMs: stats.mtimeMs, ...parsed };
         fileCache.set(path, entry);
