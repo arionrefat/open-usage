@@ -1,5 +1,14 @@
 import { COLORS } from "../../theme";
-import type { DetailRow, DetailSection, LimitAlert, PlanEnd, ProviderMeta, ProviderUsage, UsageLimit } from "../types";
+import type {
+  DetailRow,
+  DetailSection,
+  LimitAlert,
+  PlanEnd,
+  ProviderMeta,
+  ProviderUsage,
+  UsageBlock,
+  UsageLimit,
+} from "../types";
 import { formatAge, formatClock, formatCountdown, seriesFromBuckets, tokensPerHour, type HourBuckets } from "./aggregate";
 import type { CodexAccountLimits, CodexWindow } from "./codex-app-server";
 import type { CodexLimitsSource } from "./codex-limits";
@@ -183,33 +192,50 @@ function resetGrants(count: number): string {
   return `${count} free reset${count > 1 ? "s" : ""}`;
 }
 
+const INCLUDED_USAGE_BLOCKED = "included usage blocked";
+
 /**
- * A spend control outranks a grant: it blocks the account at any percentage,
- * so the meter beside it cannot explain why codex refuses to run.
+ * Why codex refuses usage whatever its meters read, as a verdict the card and
+ * notifications share - a reset meter under a standing block must not be
+ * announced as ready.
+ *
+ * A spend control outranks everything: it blocks the account at any
+ * percentage, so the meter beside it cannot explain why codex refuses to run.
+ * Only the classifications that actually mean "blocked" count; an unrecognized
+ * value is far more likely to be a not-reached sentinel than a new block, and
+ * a false red banner on a healthy account is the worse mistake.
  *
  * `ordinaryUsageAllowed: false` is the backend saying the same thing without
- * the reason, so a named cause outranks it and it outranks the grant: a green
- * line on an account the backend refuses is the worse mistake. The grant
- * count still rides along, since a reset is the way out of a capped window.
+ * the reason, so a named cause outranks it. Without that field the named
+ * causes are all there is, so their absence reads as unblocked rather than
+ * unknown - otherwise a lifted spend control would never be announced on an
+ * account whose CLI omits it.
  */
-function codexAlert(limits: CodexAccountLimits, nowMs: number): LimitAlert | undefined {
-  if (limits.isSpendControlReached) {
-    return { text: "▲ spend control reached", color: COLORS.danger, isOnCard: true };
-  }
-  // Only the classifications that actually mean "blocked". An unrecognized
-  // value is far more likely to be a not-reached sentinel than a new block,
-  // and a false red banner on a healthy account is the worse mistake.
+function codexUsageBlock(limits: CodexAccountLimits): UsageBlock {
   const reachedType = limits.rateLimitReachedType;
+  if (limits.isSpendControlReached) return { isBlocked: true, reason: "spend control reached" };
   if (reachedType?.includes("credits_depleted")) {
-    return { text: "▲ workspace credits depleted", color: COLORS.danger, isOnCard: true };
+    return { isBlocked: true, reason: "workspace credits depleted" };
   }
   if (reachedType?.includes("usage_limit_reached")) {
-    return { text: "▲ workspace usage limit reached", color: COLORS.danger, isOnCard: true };
+    return { isBlocked: true, reason: "workspace usage limit reached" };
   }
+  if (limits.isOrdinaryUsageAllowed === false) return { isBlocked: true, reason: INCLUDED_USAGE_BLOCKED };
+  return { isBlocked: false };
+}
+
+/**
+ * A block outranks a grant: a green line on an account the backend refuses is
+ * the worse mistake. The bare verdict still carries the grant count, since a
+ * reset is the way out of a capped window; a named cause is not one a rate
+ * limit reset can lift.
+ */
+function codexAlert(limits: CodexAccountLimits, nowMs: number): LimitAlert | undefined {
   const count = limits.resetCredits;
-  if (limits.isOrdinaryUsageAllowed === false) {
-    const grants = count > 0 ? ` · ${resetGrants(count)}` : "";
-    return { text: `▲ included usage blocked${grants}`, color: COLORS.danger, isOnCard: true };
+  const block = codexUsageBlock(limits);
+  if (block.isBlocked) {
+    const grants = block.reason === INCLUDED_USAGE_BLOCKED && count > 0 ? ` · ${resetGrants(count)}` : "";
+    return { text: `▲ ${block.reason}${grants}`, color: COLORS.danger, isOnCard: true };
   }
   if (count <= 0) return undefined;
   const expiresAtMs = limits.resetCreditsExpireAtMs;
@@ -270,6 +296,7 @@ export function buildCodexProvider(input: CodexProviderInput): ProviderUsage {
              limitsNote ?? CODEX_NO_LIMITS,
           ),
         ],
+    ...(limits ? { usageBlock: codexUsageBlock(limits) } : {}),
     scopes: {
       session: limits?.session
         ? {

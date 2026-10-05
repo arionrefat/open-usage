@@ -165,7 +165,8 @@ Everything independent in that poll goes out together - the closed months alongs
 
 **`limit-alerts.ts`**
 Decides what to announce after a refresh: a limit reaching 100% is "reached", and a capped limit reading under 100% again is "reset".
-A provider is only called ready once none of its limits is still capped, and a limit with no current reading keeps its last state, since unknown is not evidence of a reset.
+A provider is only called ready once none of its limits is still capped and its own `usageBlock` verdict, where it gives one, no longer refuses usage.
+A limit with no current reading keeps its last state, since unknown is not evidence of a reset.
 Which limits are capped lives in `~/.config/open-usage/limit-alerts.json`, read and written under one `withFileLock`, so a dashboard and the daemon that both see a change announce it once.
 Sample data never notifies: `UsageProvider.isSampleData` keeps mock figures inside the dashboard.
 Touch when: changing what counts as a cap, or the notification wording.

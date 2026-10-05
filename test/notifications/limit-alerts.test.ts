@@ -110,7 +110,7 @@ describe("detectLimitChanges", () => {
       {
         providerId: "cl",
         kind: "reset",
-        title: "claude code: current session reset",
+        title: "claude code: current session has reset",
         body: "still at the limit: weekly · all models · weekly resets in 2h",
       },
     ]);
@@ -138,6 +138,37 @@ describe("detectLimitChanges", () => {
       expect(result.notifications).toEqual([]);
       expect(result.capped.cx).toEqual([]);
     }
+  });
+
+  test("holds the ready notification while the provider still refuses usage", () => {
+    const capped = { ...NONE_CAPPED, cx: ["weekly"] };
+    const snapshot = snapshotWith({ cx: [limit("weekly", "7d limit", 2)] });
+    snapshot.providers.cx.usageBlock = { isBlocked: true, reason: "included usage blocked" };
+
+    const reset = detectLimitChanges(capped, snapshot, connections());
+    expect(reset.capped.cx).toEqual(["usage-block"]);
+    expect(reset.notifications.map(({ title, body }) => ({ title, body }))).toEqual([
+      { title: "codex limit reached", body: "included usage blocked" },
+      { title: "codex: 7d limit has reset", body: "still at the limit: included usage blocked" },
+    ]);
+
+    snapshot.providers.cx.usageBlock = { isBlocked: false };
+    const lifted = detectLimitChanges(reset.capped, snapshot, connections());
+    expect(lifted.capped.cx).toEqual([]);
+    expect(lifted.notifications.map(({ title, body }) => ({ title, body }))).toEqual([
+      { title: "codex is ready", body: "usage is no longer blocked - you can use it again" },
+    ]);
+  });
+
+  test("keeps a block when the provider gives no verdict", () => {
+    const capped = { ...NONE_CAPPED, cx: ["usage-block"] };
+    const result = detectLimitChanges(
+      capped,
+      snapshotWith({ cx: [limit("weekly", "7d limit", 2)] }),
+      connections(),
+    );
+    expect(result.capped.cx).toEqual(["usage-block"]);
+    expect(result.notifications).toEqual([]);
   });
 
   test("labels a local estimate as one", () => {

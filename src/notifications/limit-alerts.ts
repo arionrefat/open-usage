@@ -8,6 +8,7 @@ import {
   type ProviderConnection,
   type ProviderId,
   type ProviderUsage,
+  type UsageBlock,
   type UsageLimit,
   type UsageSnapshot,
 } from "../data/types";
@@ -36,10 +37,6 @@ export interface LimitNotification {
 export interface LimitDelivery {
   notification: LimitNotification;
   result: DeliveryResult;
-}
-
-interface KnownLimit extends UsageLimit {
-  percent: number;
 }
 
 export function defaultLimitAlertsPath(): string {
@@ -87,8 +84,39 @@ export function clearCappedLimits(path: string): void {
   withFileLock(path, () => writeCappedLimitsFile(path, emptyCappedLimits()));
 }
 
-function limitLabel(limit: UsageLimit): string {
-  return limit.detailLabel ?? limit.label;
+/** The record's id for a provider-wide block, kept apart from every meter id. */
+const BLOCK_ID = "usage-block";
+
+/**
+ * Anything that can stop a provider: one of its meters, or its own verdict
+ * that it is refusing usage, which can outlive every meter's reset.
+ */
+interface Gate {
+  id: string;
+  label: string;
+  /** null when there is no current reading. */
+  isCapped: boolean | null;
+  /** The line announcing it reached. */
+  reachedText: string;
+  /** The line naming it as what still blocks a partial reset. */
+  blockingText: string;
+}
+
+function meterGate(limit: UsageLimit): Gate {
+  const label = limit.detailLabel ?? limit.label;
+  const reset = limit.resetLong ?? limit.reset;
+  return {
+    id: limit.id,
+    label,
+    isCapped: limit.percent === null ? null : limit.percent >= CAP_PERCENT,
+    reachedText: `${label} at ${limit.percent}% · ${reset}`,
+    blockingText: `${label} · ${reset}`,
+  };
+}
+
+function blockGate(block: UsageBlock): Gate {
+  const reason = block.isBlocked ? block.reason : "usage blocked";
+  return { id: BLOCK_ID, label: reason, isCapped: block.isBlocked, reachedText: reason, blockingText: reason };
 }
 
 function joinLabels(labels: string[]): string {
@@ -96,17 +124,21 @@ function joinLabels(labels: string[]): string {
   return `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
 }
 
-function capLine(limit: KnownLimit): string {
-  return `${limitLabel(limit)} at ${limit.percent}% · ${limit.resetLong ?? limit.reset}`;
+function clearedPhrase(cleared: Gate[]): string {
+  const meters = cleared.filter((gate) => gate.id !== BLOCK_ID).map((gate) => gate.label);
+  const parts: string[] = [];
+  if (meters.length > 0) parts.push(`${joinLabels(meters)} ${meters.length === 1 ? "has" : "have"} reset`);
+  if (cleared.some((gate) => gate.id === BLOCK_ID)) parts.push("usage is no longer blocked");
+  return parts.join(" and ");
 }
 
 function reachedNotification(
   id: ProviderId,
   usage: ProviderUsage,
-  reached: KnownLimit[],
+  reached: Gate[],
   isEstimate: boolean,
 ): LimitNotification {
-  const lines = reached.map(capLine);
+  const lines = reached.map((gate) => gate.reachedText);
   if (isEstimate) lines.push("local estimate - a dashboard cookie gives exact limits");
   return {
     providerId: id,
@@ -119,38 +151,33 @@ function reachedNotification(
 function resetNotification(
   id: ProviderId,
   usage: ProviderUsage,
-  reset: KnownLimit[],
-  stillCapped: string[],
+  cleared: Gate[],
+  stillCapped: Gate[],
 ): LimitNotification {
-  const resetLabels = joinLabels(reset.map(limitLabel));
-  const verb = reset.length === 1 ? "has" : "have";
+  const phrase = clearedPhrase(cleared);
   if (stillCapped.length === 0) {
     return {
       providerId: id,
       kind: "reset",
       title: `${usage.meta.name} is ready`,
-      body: `${resetLabels} ${verb} reset - you can use it again`,
+      body: `${phrase} - you can use it again`,
     };
   }
   // A partial reset is worth hearing about, but calling the provider ready
-  // while another of its limits still blocks it would send someone back to a
-  // tool that refuses them.
-  const blocking = stillCapped.map((limitId) => {
-    const limit = usage.limits.find((candidate) => candidate.id === limitId);
-    return limit ? `${limitLabel(limit)} · ${limit.resetLong ?? limit.reset}` : limitId;
-  });
+  // while something else still blocks it would send someone back to a tool
+  // that refuses them.
   return {
     providerId: id,
     kind: "reset",
-    title: `${usage.meta.name}: ${resetLabels} reset`,
-    body: `still at the limit: ${blocking.join("; ")}`,
+    title: `${usage.meta.name}: ${phrase}`,
+    body: `still at the limit: ${stillCapped.map((gate) => gate.blockingText).join("; ")}`,
   };
 }
 
 /**
- * A limit is capped once it reads 100% and stays capped until a reading shows
- * it under. A limit with no current reading - stale, or a source that went
- * quiet - keeps its last state, since "unknown" is not evidence of a reset.
+ * A gate is capped once it reads capped and stays so until a reading shows it
+ * clear. One with no current reading - stale, or a source that went quiet -
+ * keeps its last state, since "unknown" is not evidence of a reset.
  */
 function providerChanges(
   id: ProviderId,
@@ -160,18 +187,28 @@ function providerChanges(
 ): { capped: string[]; notifications: LimitNotification[] } {
   if (!isProviderLive(connection)) return { capped: previous, notifications: [] };
 
-  const known = usage.limits.filter((limit): limit is KnownLimit => limit.percent !== null);
-  const reached = known.filter((limit) => limit.percent >= CAP_PERCENT && !previous.includes(limit.id));
-  const reset = known.filter((limit) => limit.percent < CAP_PERCENT && previous.includes(limit.id));
-  const resetIds = new Set(reset.map((limit) => limit.id));
-  const capped = [...previous.filter((limitId) => !resetIds.has(limitId)), ...reached.map((limit) => limit.id)];
+  const gates = [
+    ...usage.limits.map(meterGate),
+    ...(usage.usageBlock ? [blockGate(usage.usageBlock)] : []),
+  ];
+  const reached = gates.filter((gate) => gate.isCapped === true && !previous.includes(gate.id));
+  const cleared = gates.filter((gate) => gate.isCapped === false && previous.includes(gate.id));
+  const clearedIds = new Set(cleared.map((gate) => gate.id));
+  const capped = [...previous.filter((gateId) => !clearedIds.has(gateId)), ...reached.map((gate) => gate.id)];
 
   const notifications: LimitNotification[] = [];
   if (reached.length > 0) {
     notifications.push(reachedNotification(id, usage, reached, connection.status === "local"));
   }
-  if (reset.length > 0) {
-    notifications.push(resetNotification(id, usage, reset, capped));
+  if (cleared.length > 0) {
+    // A capped id with no gate this time - a lane that stopped being reported -
+    // still blocks, so it is named by its id rather than dropped.
+    const stillCapped = capped.map(
+      (gateId) =>
+        gates.find((gate) => gate.id === gateId) ??
+        { id: gateId, label: gateId, isCapped: null, reachedText: gateId, blockingText: gateId },
+    );
+    notifications.push(resetNotification(id, usage, cleared, stillCapped));
   }
   return { capped, notifications };
 }

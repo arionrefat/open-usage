@@ -211,6 +211,19 @@ describe("buildCodexProvider", () => {
     expect(build(account({ isOrdinaryUsageAllowed: true })).limits[0]?.alert).toBeUndefined();
   });
 
+  test("hands the same verdict to notifications, so a reset meter under a block is not ready", () => {
+    expect(build(account({ isOrdinaryUsageAllowed: false })).usageBlock).toEqual({
+      isBlocked: true,
+      reason: "included usage blocked",
+    });
+    expect(build(account({ isOrdinaryUsageAllowed: false, isSpendControlReached: true })).usageBlock)
+      .toEqual({ isBlocked: true, reason: "spend control reached" });
+    // Without the field the named causes are all there is, so a lifted spend
+    // control still reads as lifted.
+    expect(build(account({ isOrdinaryUsageAllowed: null })).usageBlock).toEqual({ isBlocked: false });
+    expect(build(null).usageBlock).toBeUndefined();
+  });
+
   test("keeps the block on screen when codex reports no window to carry it", () => {
     const provider = build(account({ isOrdinaryUsageAllowed: false, session: null, weekly: null }));
 

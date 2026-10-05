@@ -260,7 +260,7 @@ Ground truth beat the third-party docs in three places, all verified against `co
   A `false` shows "included usage blocked" in red whatever the meters read.
   A spend control or workspace block outranks it, because each names the reason the bare verdict leaves out; it outranks the grant, which rides along as a count.
   A null or missing value is unknown, not allowed.
-  Desktop notifications stay keyed on the meters, so a week that resets under a standing block can still be announced as reset; that is the one place the verdict is not consulted.
+  Desktop notifications consult it too: the same causes become the provider's `usageBlock`, so a week that resets under a standing block is announced as a partial reset rather than as ready.
 - A per-model lane is named by `limitName`, then `normalModelSlug` - the model the schema says describes the quota alias - and only then by its opaque `limitId`.
 
 `account/read` supplies the real plan name, which replaces the opencode-derived stand-in label.

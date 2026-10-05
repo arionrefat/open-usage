@@ -86,6 +86,12 @@ export interface UsageLimit {
   isCardOnly?: boolean;
 }
 
+/**
+ * The provider's own verdict on whether it is refusing usage, whatever its
+ * meters read - a backend can block an account below every cap.
+ */
+export type UsageBlock = { isBlocked: true; reason: string } | { isBlocked: false };
+
 export interface ScopeSummary {
   /** null means this provider has no cap in this window. */
   percent: number | null;
@@ -233,6 +239,8 @@ export interface ProviderUsage {
   id: ProviderId;
   meta: ProviderMeta;
   limits: UsageLimit[];
+  /** Absent when the provider gives no verdict, which is unknown rather than allowed. */
+  usageBlock?: UsageBlock;
   scopes: Record<ScopeKey, ScopeSummary>;
   burn: BurnRate;
   /**
