@@ -102,8 +102,21 @@ describe("goQuotaWeight", () => {
   test("matches the published per-model allowances", () => {
     expect(goQuotaWeight("kimi-k3")).toBe(4);
     expect(goQuotaWeight("grok-4.5")).toBe(4);
-    expect(goQuotaWeight("deepseek-v4-flash")).toBe(1);
+    // $30 a month against the $60 cap.
+    expect(goQuotaWeight("deepseek-v4-flash")).toBe(2);
+    expect(goQuotaWeight("glm-5.3-flash")).toBe(1);
     expect(goQuotaWeight(null)).toBe(1);
+  });
+
+  test("grok-4.7 fills the five-hour window on a quarter of its cap in raw cost", () => {
+    // Measured on 2026-10-05: $3.00 of raw grok-4.7 cost read $12 of $12 on
+    // the console's meter, and the next request was refused with a 429.
+    const spend = goSpendFrom(
+      spendFromRows([{ at: NOW_MS - HOUR_MS, usd: 3, model: "grok-4.7" }]),
+      NOW,
+    );
+    expect(spend.session.usd).toBe(12);
+    expect(spend.session.percent).toBe(100);
   });
 });
 

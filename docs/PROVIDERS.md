@@ -556,7 +556,12 @@ The monthly window's reset doubles as the plan's end date: the header reads `Go 
 The local estimate never states one, since its cycle anchor is inferred rather than reported.
 
 Do not reconcile a calendar-month cost total against the `go/status` monthly meter.
-That percent covers a billing cycle rather than a calendar month, and `GO_QUOTA_WEIGHTS` records that some models burn quota four times faster per raw dollar, so dollars do not map linearly onto percent.
+That percent covers a billing cycle rather than a calendar month, and `GO_QUOTA_WEIGHTS` records that some models burn quota two or four times faster per raw dollar, so dollars do not map linearly onto percent.
+
+Those weights are the $60 monthly cap over each model's published monthly allowance, read from `goModels` in `packages/console/app/src/component/go-models.ts` in `anomalyco/opencode`, the table behind the Go docs page: a $15 model weighs 4, a $30 one 2, a $60 one 1.
+The meter agrees: $3 of raw grok-4.7 cost fills the $12 five-hour window, and the next request is refused with a 429.
+The table changes as models come and go, so a model missing from `GO_QUOTA_WEIGHTS` weighs 1 and the local estimate under-reads it until the table is refreshed.
+Go Plus publishes its own per-model allowances against different caps, which the estimate does not model.
 
 ### Known fragility
 
