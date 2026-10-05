@@ -15,12 +15,12 @@ import {
   retryAfterMs,
 } from "../../../src/data/real/opencode-server";
 
-const WORKSPACE_ID = "wrk_01KWJ21MX7C6XMR8MJ01ST2Z6E";
+const WORKSPACE_ID = "wrk_test";
 const ORGS = [{ id: WORKSPACE_ID, name: "Default" }];
 
 /** Verbatim in shape from a live `GET /console/api/go/status`. */
 const GO_STATUS = {
-  subscriberUserId: "acc_01KWJ21K70PJJMDEW14AA7PPFQ",
+  subscriberUserId: "acc_test",
   useBalance: false,
   renewalPending: false,
   access: {
