@@ -22,7 +22,7 @@ export type RangeKey = "today" | "7d" | "30d" | "month";
 export const RANGE_KEYS: readonly RangeKey[] = ["today", "7d", "30d", "month"] as const;
 
 export interface PlanEnd {
-  /** e.g. "until Oct 5". Says when the paid period stops, not whether it renews. */
+  /** e.g. "until Oct 5", or "ends Oct 5" when the provider says the plan will not renew. */
   text: string;
   /** Close enough that it should stand out from the plan name beside it. */
   isSoon: boolean;

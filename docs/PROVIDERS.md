@@ -422,7 +422,8 @@ The monthly window is anchored to the day-of-month of the first spend ever recor
 `src/data/real/opencode-server.ts` calls the console's REST API with the filtered session cookie and an `x-org-id` header naming the workspace.
 `GET /console/api/orgs` discovers that id once; `GET /console/api/go/status` returns the plan.
 Its `access.meters` carries `fiveHour`, `week` and `month`, each `{ startsAt, resetsAt, limitMicroCents, usedMicroCents }`, so the percentage is computed from dollars rather than read off the wire.
-The month meter has no `resetsAt` of its own: `access.endsAt`, the plan's renewal, is what clears it, which is what the console's own card shows.
+Since 2026-10 the month meter carries a `resetsAt` equal to `access.endsAt`, the plan's renewal; a meter without one still falls back to `access.endsAt`, which is what earlier responses needed.
+`cancelAtPeriodEnd`, both at the top level and inside `access`, says the plan stops at that date instead of renewing.
 An unused five-hour window reports `resetsAt: null`, which the card states rather than inventing a reset five hours out.
 `go-limits-source.ts` polls it at most once a minute, backs off five minutes on failure, and degrades to the estimate on any error.
 
@@ -553,6 +554,7 @@ The real-money surface for a go account is `GET /console/api/billing/status` (`b
 The console publishes no metered month total, so the spend view reports the cost rows rather than a figure it was never given.
 
 The monthly window's reset doubles as the plan's end date: the header reads `Go · until Oct 9`, on the same terms as codex and only when the server reports the window.
+A plan set to cancel at period end reads `Go · ends Oct 9` instead, since "until" would imply it renews.
 The local estimate never states one, since its cycle anchor is inferred rather than reported.
 
 Do not reconcile a calendar-month cost total against the `go/status` monthly meter.

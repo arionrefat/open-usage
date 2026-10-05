@@ -364,7 +364,7 @@ function goMetaFor(
   if (!server) return meta;
   // The monthly window covers the billing cycle, so its reset is the day the
   // paid period turns over. Only the server states it; the estimate guesses.
-  const planEnd = planEndFrom(server.monthlyResetAtMs, nowMs);
+  const planEnd = planEndFrom(server.monthlyResetAtMs, nowMs, server.isCancelling === true);
   const fromServer = {
     ...meta,
     source: server.source === "api" ? "opencode go usage API" : "opencode.ai dashboard",

@@ -245,6 +245,7 @@ function go(value: unknown): GoServerLimits | null {
   const useBalance = raw?.useBalance;
   const source = raw?.source;
   const workspaceId = raw?.workspaceId;
+  const isCancelling = raw?.isCancelling;
   const rollingUsd = nullableFinite(raw?.rollingUsd);
   const rollingCapUsd = nullableFinite(raw?.rollingCapUsd);
   const weeklyUsd = nullableFinite(raw?.weeklyUsd);
@@ -262,6 +263,7 @@ function go(value: unknown): GoServerLimits | null {
     (useBalance !== undefined && useBalance !== null && typeof useBalance !== "boolean") ||
     (source !== undefined && source !== "api" && source !== "dashboard") ||
     (workspaceId !== undefined && typeof workspaceId !== "string") ||
+    (isCancelling !== undefined && typeof isCancelling !== "boolean") ||
     (raw?.rollingUsd !== undefined && raw.rollingUsd !== null && rollingUsd === null) ||
     (raw?.rollingCapUsd !== undefined && raw.rollingCapUsd !== null && rollingCapUsd === null) ||
     (raw?.weeklyUsd !== undefined && raw.weeklyUsd !== null && weeklyUsd === null) ||
@@ -290,6 +292,7 @@ function go(value: unknown): GoServerLimits | null {
     ...(raw?.monthlyCapUsd !== undefined ? { monthlyCapUsd } : {}),
     ...(source ? { source } : {}),
     ...(typeof workspaceId === "string" ? { workspaceId } : {}),
+    ...(typeof isCancelling === "boolean" ? { isCancelling } : {}),
   };
 }
 

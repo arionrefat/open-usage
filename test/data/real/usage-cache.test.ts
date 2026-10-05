@@ -223,4 +223,12 @@ describe("go workspace", () => {
       expect(readUsageCache(path)).toEqual(withWorkspace);
     });
   });
+
+  test("round-trips a plan set to end at its period", () => {
+    tempCache((path) => {
+      const cancelling: UsageCache = { ...cache, go: { ...cache.go!, isCancelling: true } };
+      writeUsageCache(path, cancelling);
+      expect(readUsageCache(path)).toEqual(cancelling);
+    });
+  });
 });

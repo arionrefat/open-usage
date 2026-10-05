@@ -108,6 +108,13 @@ describe("buildGoProvider details", () => {
     expect(build({}).provider.meta.planEnd).toBeUndefined();
   });
 
+  test("a plan cancelled at period end says it ends rather than runs until", () => {
+    expect(build({ server: { ...SERVER, isCancelling: true } }).provider.meta.planEnd).toEqual({
+      text: "ends Jan 15",
+      isSoon: true,
+    });
+  });
+
   test("shows the server balance fallback flag", () => {
     const on = build({ stats, server: { ...SERVER, useBalance: true } }).provider.details;
     const off = build({ stats, server: { ...SERVER, useBalance: false } }).provider.details;

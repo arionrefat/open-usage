@@ -244,6 +244,8 @@ export interface GoServerLimits {
   source?: "api" | "dashboard";
   /** Reused by the polling source so later reads can skip workspace discovery. */
   workspaceId?: string;
+  /** The plan stops at the monthly reset instead of renewing. */
+  isCancelling?: boolean;
 }
 
 interface MeterReading {
@@ -305,6 +307,8 @@ export function parseGoStatus(value: unknown, now: Date): GoServerLimits | null 
     fetchedAtMs: now.getTime(),
     useBalance: typeof value.useBalance === "boolean" ? value.useBalance : null,
     source: "dashboard",
+    // The console sets this both on the subscription and on its access grant.
+    isCancelling: value.cancelAtPeriodEnd === true || access.cancelAtPeriodEnd === true,
   };
 }
 

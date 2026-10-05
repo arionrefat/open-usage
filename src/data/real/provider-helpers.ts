@@ -35,10 +35,14 @@ const PLAN_END_SOON_MS = 3 * DAY_MS;
  * source only refreshes when its agent next signs in, so it cannot tell a
  * renewal from a cancellation, and saying either would be a guess.
  */
-export function planEndFrom(endsAtMs: number | null, nowMs: number): PlanEnd | undefined {
+export function planEndFrom(
+  endsAtMs: number | null,
+  nowMs: number,
+  isCancelling = false,
+): PlanEnd | undefined {
   if (endsAtMs === null || endsAtMs <= nowMs) return undefined;
   const day = new Date(endsAtMs).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  return { text: `until ${day}`, isSoon: endsAtMs - nowMs <= PLAN_END_SOON_MS };
+  return { text: `${isCancelling ? "ends" : "until"} ${day}`, isSoon: endsAtMs - nowMs <= PLAN_END_SOON_MS };
 }
 
 /** Claude's CLI appends the account's own zone to its reset prose. Every time we

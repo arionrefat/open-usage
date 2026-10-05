@@ -18,14 +18,21 @@ import {
 const WORKSPACE_ID = "wrk_test";
 const ORGS = [{ id: WORKSPACE_ID, name: "Default" }];
 
-/** Verbatim in shape from a live `GET /console/api/go/status`. */
+/** Verbatim in shape from a live `GET /console/api/go/status` on 2026-10-06, ids replaced. */
 const GO_STATUS = {
   subscriberUserId: "acc_test",
+  product: "go",
+  renewalProduct: "go",
+  paymentMethodId: "pm_test",
+  paymentMethodKind: "link",
+  renewalCurrency: "usd",
   useBalance: false,
+  cancelAtPeriodEnd: false,
   renewalPending: false,
   access: {
     startsAt: "2026-09-08T15:04:50.000Z",
     endsAt: "2026-10-08T15:04:50.000Z",
+    cancelAtPeriodEnd: false,
     meters: {
       fiveHour: {
         startsAt: null,
@@ -39,9 +46,14 @@ const GO_STATUS = {
         limitMicroCents: "3000000000",
         usedMicroCents: "1358460874",
       },
-      month: { limitMicroCents: "6000000000", usedMicroCents: "2731836592" },
+      month: {
+        resetsAt: "2026-10-08T15:04:50.000Z",
+        limitMicroCents: "6000000000",
+        usedMicroCents: "2731836592",
+      },
     },
   },
+  upgradePrice: { amountMicroCents: "3784000000", currency: "usd" },
 };
 
 const NOW = new Date("2026-09-20T12:00:00.000Z");
@@ -87,13 +99,27 @@ describe("parseGoStatus", () => {
     expect(limits?.source).toBe("dashboard");
   });
 
-  test("the plan's renewal is the month's reset, which the meter omits", () => {
+  test("the month resets with the plan's renewal, even from a meter that omits it", () => {
     const limits = parseGoStatus(GO_STATUS, NOW);
     expect(limits?.monthlyResetAtMs).toBe(Date.parse("2026-10-08T15:04:50.000Z"));
+    const { resetsAt: _omitted, ...olderMonth } = GO_STATUS.access.meters.month;
+    const older = parseGoStatus(
+      { ...GO_STATUS, access: { ...GO_STATUS.access, meters: { ...GO_STATUS.access.meters, month: olderMonth } } },
+      NOW,
+    );
+    expect(older?.monthlyResetAtMs).toBe(Date.parse("2026-10-08T15:04:50.000Z"));
     expect(limits?.weeklyResetAtMs).toBe(Date.parse("2026-09-21T00:00:00.000Z"));
     // An unused rolling window has no reset yet, which the row says outright
     // rather than inventing one five hours out.
     expect(limits?.rollingResetAtMs).toBeNull();
+  });
+
+  test("reads a cancellation from either the subscription or its access grant", () => {
+    expect(parseGoStatus(GO_STATUS, NOW)?.isCancelling).toBe(false);
+    expect(parseGoStatus({ ...GO_STATUS, cancelAtPeriodEnd: true }, NOW)?.isCancelling).toBe(true);
+    expect(
+      parseGoStatus({ ...GO_STATUS, access: { ...GO_STATUS.access, cancelAtPeriodEnd: true } }, NOW)?.isCancelling,
+    ).toBe(true);
   });
 
   test("clamps a meter that overshot its cap", () => {
