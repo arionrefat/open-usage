@@ -27,6 +27,30 @@ describe("app reducer", () => {
     expect(createInitialState({ connections }).selection).toBe(1);
   });
 
+  test("offers limit alerts on a first run and keeps the answer on a re-run", () => {
+    const firstRun = createInitialState({
+      screen: "onboarding",
+      connections: mockUsageProvider.initialConnections(),
+    });
+    expect(firstRun.isNotifyingOnLimits).toBe(false);
+    expect(firstRun.onboarding.isNotifying).toBe(true);
+
+    let state = reducer(firstRun, { type: "onboarding-begin-auth" });
+    expect(state.onboarding.step).toBe(1);
+    state = reducer(state, { type: "onboarding-toggle-notify" });
+    // The choice waits for the wizard to finish rather than applying mid-way.
+    expect(state.isNotifyingOnLimits).toBe(false);
+    state = reducer(state, { type: "onboarding-confirm-notify" });
+    expect(state.onboarding.step).toBe(2);
+    state = reducer(state, { type: "onboarding-finish" });
+    expect(state.isNotifyingOnLimits).toBe(false);
+
+    state = reducer(state, { type: "set-limit-notifications", isEnabled: true });
+    state = reducer(state, { type: "open-onboarding" });
+    expect(state.onboarding.isNotifying).toBe(true);
+    expect(state.onboarding.notificationTest).toBeNull();
+  });
+
   test("applies onboarding provider choices", () => {
     let state = reducer(initialState(), { type: "onboarding-pick", index: 0 });
     state = reducer(state, { type: "onboarding-begin-auth" });

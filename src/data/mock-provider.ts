@@ -342,6 +342,7 @@ function snapshotAt(fetchedAt: number): UsageSnapshot {
 /** Serves the design's sample figures; swap for a polling adapter to go live. */
 export const mockUsageProvider: UsageProvider = {
   scopeTitles: { session: "current session", weekly: "weekly limit" },
+  isSampleData: true,
   listMeta: () => META,
   initialConnections: () => structuredClone(INITIAL_CONNECTIONS),
   readSnapshot: () => snapshotAt(Date.now()),

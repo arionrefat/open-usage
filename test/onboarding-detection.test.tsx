@@ -64,6 +64,8 @@ describe("agent-aware onboarding", () => {
       expect(setup.captureCharFrame()).toContain("local estimate or a dashboard cookie");
       act(() => setup.mockInput.pressEnter());
       await setup.flush();
+      act(() => setup.mockInput.pressEnter());
+      await setup.flush();
       const summary = setup.captureCharFrame();
       expect(summary).toContain("dashboard cookie is optional");
       expect(summary).toContain("no API key or cookie is required to finish setup");

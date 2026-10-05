@@ -1,4 +1,5 @@
 import { APP_NAME } from "../config";
+import type { NotificationTest } from "../state/app-state";
 import { padEnd } from "../lib/text";
 import { COLORS, PROVIDER_COLORS } from "../theme";
 import { PROVIDER_IDS, STATUS_PRESENTATION, type ProviderId, type UsageSnapshot } from "../data/types";
@@ -9,6 +10,8 @@ import { Line, Rule, SplitLine, Spacer } from "../components/primitives";
 
 const NAME_COLUMN = 20;
 const STATUS_COLUMN = 24;
+const STEP_COUNT = 3;
+const EXAMPLE_COLUMN = 16;
 
 const AGENT_NAMES: Record<ProviderId, string> = {
   cl: "claude code",
@@ -136,7 +139,127 @@ function PickStep({ state, width, actions }: OnboardingProps) {
   );
 }
 
+function notificationTestSegment(test: NotificationTest): { text: string; color: string } | null {
+  if (test === null) return null;
+  if (test === "sending") return { text: "sending…", color: COLORS.textFaint };
+  if (!test.isDelivered) return { text: `▲ not sent · ${test.reason}`, color: COLORS.warn };
+  // osascript reports success even when macOS has muted it, so name where to look.
+  return process.platform === "darwin"
+    ? { text: "✓ sent · nothing? allow Script Editor in System Settings › Notifications", color: COLORS.ok }
+    : { text: "✓ sent", color: COLORS.ok };
+}
+
+function NotifyStep({ state, width, actions }: OnboardingProps) {
+  const { isNotifying, notificationTest } = state.onboarding;
+  const background = COLORS.bgRowActive;
+  const toggle = () => actions.onboardingToggleNotify();
+  const testResult = notificationTestSegment(notificationTest);
+
+  return (
+    <box flexDirection="column" flexShrink={0}>
+      <Line
+        segments={[
+          { text: "get notified about your limits", color: COLORS.textBright, isBold: true },
+        ]}
+      />
+      <Line
+        segments={[
+          {
+            text: "a desktop notification when a limit runs out, and another once it resets",
+            color: COLORS.textFaint,
+          },
+        ]}
+      />
+      <Spacer />
+      <SplitLine
+        width={width}
+        background={background}
+        left={[
+          { text: "▶ ", color: COLORS.textSoft, background, onClick: toggle },
+          {
+            text: isNotifying ? "[×]" : "[ ]",
+            color: isNotifying ? COLORS.accent : COLORS.textDisabled,
+            background,
+            isBold: true,
+            onClick: toggle,
+          },
+          {
+            text: "  notify me about limits",
+            color: COLORS.textBright,
+            background,
+            isBold: true,
+            onClick: toggle,
+          },
+        ]}
+      />
+      <Line
+        segments={[
+          { text: `     ${padEnd("limit reached", EXAMPLE_COLUMN)}`, color: COLORS.textDim },
+          { text: "claude code · weekly at 100% · resets in 2d 4h", color: COLORS.textFaint },
+        ]}
+      />
+      <Line
+        segments={[
+          { text: `     ${padEnd("ready again", EXAMPLE_COLUMN)}`, color: COLORS.textDim },
+          { text: "claude code is ready · weekly has reset", color: COLORS.textFaint },
+        ]}
+      />
+      <Spacer />
+      <Line
+        segments={[
+          {
+            text: "alerts come from open-usage while it is open, or from its background daemon:",
+            color: COLORS.textGhost,
+          },
+        ]}
+      />
+      <Line
+        segments={[
+          { text: "  ", color: COLORS.textGhost },
+          { text: `${APP_NAME} daemon start`, color: COLORS.textMuted },
+        ]}
+      />
+      <Spacer />
+      <Line
+        segments={[
+          {
+            text: " t ",
+            color: COLORS.textSoft,
+            background: COLORS.bgChip,
+            onClick: () => actions.sendTestNotification(),
+          },
+          {
+            text: " send a test notification",
+            color: COLORS.textMuted,
+            onClick: () => actions.sendTestNotification(),
+          },
+          ...(testResult ? [{ text: "   " }, testResult] : []),
+        ]}
+      />
+      <Spacer />
+      <Rule width={width} />
+      <KeyLegend
+        width={width}
+        hints={[
+          ["space", "toggle"],
+          ["t", "test"],
+        ]}
+        right={[
+          {
+            text: " ↵ continue ",
+            color: COLORS.bg,
+            background: COLORS.accent,
+            isBold: true,
+            onClick: () => actions.onboardingConfirmNotify(),
+          },
+        ]}
+      />
+    </box>
+  );
+}
+
 function SummaryStep({ state, snapshot, width, actions }: OnboardingProps) {
+  const { isNotifying } = state.onboarding;
   const connectedCount = PROVIDER_IDS.filter((id) => isProviderLive(state.connections[id])).length;
 
   return (
@@ -178,6 +301,21 @@ function SummaryStep({ state, snapshot, width, actions }: OnboardingProps) {
           />
         );
       })}
+      <Spacer />
+      <Line
+        width={width}
+        segments={[
+          {
+            text: padEnd(isNotifying ? "●" : "○", 3),
+            color: isNotifying ? COLORS.ok : COLORS.textFaint,
+          },
+          { text: padEnd("notifications", NAME_COLUMN), color: COLORS.text },
+          {
+            text: isNotifying ? "on · when a limit runs out or resets" : "off · turn on in settings",
+            color: COLORS.textFaint,
+          },
+        ]}
+      />
       <Spacer />
       <Line
         segments={[
@@ -234,11 +372,12 @@ export function Onboarding(props: OnboardingProps) {
           { text: " ▏ ", color: COLORS.rule },
           { text: "first run", color: COLORS.textFaint },
         ]}
-        right={[{ text: `step ${state.onboarding.step + 1} of 2`, color: COLORS.textGhost }]}
+        right={[{ text: `step ${state.onboarding.step + 1} of ${STEP_COUNT}`, color: COLORS.textGhost }]}
       />
       <Spacer />
       {state.onboarding.step === 0 ? <PickStep {...props} width={width} /> : null}
-      {state.onboarding.step === 1 ? <SummaryStep {...props} width={width} /> : null}
+      {state.onboarding.step === 1 ? <NotifyStep {...props} width={width} /> : null}
+      {state.onboarding.step === 2 ? <SummaryStep {...props} width={width} /> : null}
     </scrollbox>
   );
 }

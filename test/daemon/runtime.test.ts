@@ -113,6 +113,49 @@ function stopAfter(controller: AbortController, rounds: number) {
 }
 
 describe("daemon runtime", () => {
+  test("logs each limit notification and survives a notifier that fails", async () => {
+    const path = statePath();
+    const controller = new AbortController();
+    const { provider } = scriptedProvider(["ok", "ok"]);
+    const lines: string[] = [];
+    let calls = 0;
+
+    await runDaemonLoop({
+      provider,
+      statePath: path,
+      intervalMs: 60_000,
+      signal: controller.signal,
+      ownerPid: OWNER_PID,
+      now: () => new Date(5_000),
+      log: (line) => lines.push(line),
+      sleep: stopAfter(controller, 2),
+      notifyLimits: async (_snapshot, seen) => {
+        calls += 1;
+        expect(seen.cx.status).toBe("active");
+        if (calls === 2) throw new Error("lock busy");
+        return [
+          {
+            notification: { providerId: "cx", kind: "reached", title: "codex limit reached", body: "" },
+            result: { isDelivered: true },
+          },
+          {
+            notification: { providerId: "go", kind: "reset", title: "opencode go is ready", body: "" },
+            result: { isDelivered: false, reason: "notify-send not found" },
+          },
+        ];
+      },
+    });
+
+    expect(calls).toBe(2);
+    expect(lines.filter((line) => line.endsWith("poll ok"))).toHaveLength(2);
+    expect(lines).toContain("1970-01-01T00:00:05.000Z notified: codex limit reached");
+    expect(lines).toContain(
+      "1970-01-01T00:00:05.000Z notification not sent: opencode go is ready (notify-send not found)",
+    );
+    expect(lines).toContain("1970-01-01T00:00:05.000Z limit notifications failed: lock busy");
+    expect(readDaemonState(path)?.lastError).toBeNull();
+  });
+
   test("refreshes every provider on each pass and records the success", async () => {
     const path = statePath();
     const controller = new AbortController();

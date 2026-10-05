@@ -38,6 +38,7 @@ export function HelpOverlay({ width, height, isSettings = false, onClose }: Help
           return [
             ["p", "poll interval · 1m / 2m / 3m / 4m / 5m"],
             ["w", "alert threshold · 80% / 85% / 90%"],
+            ["n", "limit notifications · on / off"],
           ];
         }
         if (key === "↵") {

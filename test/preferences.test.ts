@@ -38,6 +38,7 @@ describe("preferences", () => {
       pollIntervalMinutes: 4,
       warnThreshold: 90,
       daemonIntervalMinutes: 15,
+      notifyOnLimits: true,
     } as const;
     writePreferences(path, saved);
 
@@ -65,6 +66,7 @@ describe("preferences", () => {
       pollIntervalMinutes: 9,
       warnThreshold: 95,
       daemonIntervalMinutes: 0,
+      notifyOnLimits: "on",
     }));
     expect(readPreferences(path)).toEqual(DEFAULT_PREFERENCES);
   });

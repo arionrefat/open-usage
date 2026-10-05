@@ -161,6 +161,19 @@ The Go history is the exception, because one poll of it is thirty-odd requests: 
 The usage table is walked incrementally: rows never change once written, so a poll pages back only to the newest row already held and joins by the server's row id, which turns a sixty-page walk into one or two pages.
 Everything independent in that poll goes out together - the closed months alongside the open one, pages four at a time - because the same work done in series was the thirteen seconds a refresh used to take.
 
+### Notifications (`src/notifications/`)
+
+**`limit-alerts.ts`**
+Decides what to announce after a refresh: a limit reaching 100% is "reached", and a capped limit reading under 100% again is "reset".
+A provider is only called ready once none of its limits is still capped, and a limit with no current reading keeps its last state, since unknown is not evidence of a reset.
+Which limits are capped lives in `~/.config/open-usage/limit-alerts.json`, read and written under one `withFileLock`, so a dashboard and the daemon that both see a change announce it once.
+Sample data never notifies: `UsageProvider.isSampleData` keeps mock figures inside the dashboard.
+Touch when: changing what counts as a cap, or the notification wording.
+
+**`desktop.ts`**
+Delivers through the OS's own notifier, so nothing extra is installed: `osascript` on macOS, `notify-send` on Linux, a WinRT toast through Windows PowerShell.
+Touch when: adding a platform or changing how delivery is reported.
+
 ### State layer (`src/state/`)
 
 **`app-state.ts`**
@@ -193,7 +206,7 @@ Touch when: adding a key binding or changing app lifecycle.
 | `overview-detailed.tsx` | Provider cards, summary trio, usage share, daily split; stacks columns on narrow terminals |
 | `provider-detail.tsx` | All limits, token chart, and notices for one provider |
 | `settings.tsx` | Connection rows, credentials, display toggles |
-| `onboarding.tsx` | Two-step wizard: pick providers, then a summary of what connected |
+| `onboarding.tsx` | Three-step wizard: pick providers, choose limit notifications, then a summary of what connected |
 | `help-overlay.tsx` | Modal keymap reference over a dimmed scrim |
 
 **`components/`** - shared building blocks:

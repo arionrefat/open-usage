@@ -27,11 +27,16 @@ export interface AppActions {
   /** Moves the onboarding cursor to a row and flips its checkbox. */
   onboardingPick(index: number): void;
   onboardingContinue(): void;
+  onboardingToggleNotify(): void;
+  onboardingConfirmNotify(): void;
+  sendTestNotification(): void;
   onboardingFinish(): void;
   settingsToggle(id?: ProviderId): void;
   setPollInterval(minutes: number): void;
   cyclePollInterval(): void;
   setWarnThreshold(percent: number): void;
   cycleWarnThreshold(): void;
+  setLimitNotifications(isEnabled: boolean): void;
+  toggleLimitNotifications(): void;
   quit(): void;
 }

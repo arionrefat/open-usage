@@ -615,7 +615,7 @@ describe("App interactions", () => {
   });
 
   test("onboarding completes without credentials", async () => {
-    let completed = 0;
+    const finishes: Array<{ notifyOnLimits: boolean }> = [];
     let refreshRequest: RefreshRequest | undefined;
     const setup = await testRender(
       <App
@@ -623,8 +623,8 @@ describe("App interactions", () => {
           refreshRequest = request;
         })}
         startup={{ screen: "onboarding", view: "overview", mode: "detailed" }}
-        onOnboardingFinish={() => {
-          completed += 1;
+        onOnboardingFinish={(choices) => {
+          finishes.push(choices);
         }}
       />,
       { width: 80, height: 30 },
@@ -637,15 +637,64 @@ describe("App interactions", () => {
       act(() => setup.mockInput.pressEnter());
       await new Promise((resolve) => setTimeout(resolve, 20));
       await setup.flush();
+      const notify = setup.captureCharFrame();
+      expect(notify).toContain("step 2 of 3");
+      expect(notify).toMatch(/\[×\]\s+notify me about limits/);
+      act(() => setup.mockInput.pressEnter());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await setup.flush();
       const summary = setup.captureCharFrame();
       expect(summary).toContain("Claude and Codex reuse CLI logins");
+      expect(summary).toMatch(/notifications\s+on · when a limit runs out or resets/);
       expect(summary).not.toContain("paste credential");
       act(() => setup.mockInput.pressEnter());
       await new Promise((resolve) => setTimeout(resolve, 20));
       await setup.flush();
-      expect(completed).toBe(1);
+      expect(finishes).toEqual([{ notifyOnLimits: true }]);
       expect(refreshRequest?.reason).toBe("startup");
       expect(refreshRequest?.providerIds).toEqual(["cl", "cx", "go"]);
+    } finally {
+      act(() => setup.renderer.destroy());
+    }
+  });
+
+  test("onboarding sends a test notification and can turn alerts off", async () => {
+    const finishes: Array<{ notifyOnLimits: boolean }> = [];
+    const sent: string[] = [];
+    const setup = await testRender(
+      <App
+        provider={pendingProvider()}
+        startup={{ screen: "onboarding", view: "overview", mode: "detailed" }}
+        isPollingEnabled={false}
+        onOnboardingFinish={(choices) => {
+          finishes.push(choices);
+        }}
+        sendNotification={async (title) => {
+          sent.push(title);
+          return { isDelivered: false, reason: "notify-send not found" };
+        }}
+      />,
+      { width: 100, height: 32 },
+    );
+
+    try {
+      await setup.flush();
+      act(() => setup.mockInput.pressEnter());
+      await setup.flush();
+      act(() => setup.renderer.stdin.emit("data", Buffer.from("t")));
+      await letRefreshAdvance(setup);
+      expect(sent).toEqual(["open-usage notifications are on"]);
+      expect(setup.captureCharFrame()).toContain("▲ not sent · notify-send not found");
+
+      act(() => setup.renderer.stdin.emit("data", Buffer.from(" ")));
+      await setup.flush();
+      expect(setup.captureCharFrame()).toMatch(/\[ \]\s+notify me about limits/);
+      act(() => setup.mockInput.pressEnter());
+      await setup.flush();
+      expect(setup.captureCharFrame()).toMatch(/notifications\s+off · turn on in settings/);
+      act(() => setup.mockInput.pressEnter());
+      await setup.flush();
+      expect(finishes).toEqual([{ notifyOnLimits: false }]);
     } finally {
       act(() => setup.renderer.destroy());
     }

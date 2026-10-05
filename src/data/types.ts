@@ -310,6 +310,11 @@ export interface PollOptions {
  */
 export interface UsageProvider {
   readonly scopeTitles: Record<ScopeKey, string>;
+  /**
+   * True for sample figures. They may fill the dashboard, but must never reach
+   * anything outside it, such as a desktop notification about a limit.
+   */
+  readonly isSampleData?: boolean;
   listMeta(): Record<ProviderId, ProviderMeta>;
   initialConnections(): Record<ProviderId, ProviderConnection>;
   readSnapshot(): UsageSnapshot;

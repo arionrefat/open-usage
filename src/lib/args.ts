@@ -102,5 +102,6 @@ export function startupFromFlagsAndPreferences(
     mode: flags.has("mode") ? startup.mode : preferences.defaultOverviewMode,
     pollIntervalMinutes: preferences.pollIntervalMinutes,
     warnThreshold: preferences.warnThreshold,
+    isNotifyingOnLimits: preferences.notifyOnLimits,
   };
 }

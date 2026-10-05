@@ -6,6 +6,7 @@ import { APP_VERSION } from "./config";
 import { runDaemonCommand } from "./daemon/cli";
 import { checkForUpdate } from "./data/real/update-check";
 import { selectUsageProvider } from "./data/real-provider";
+import type { ProviderConnection, ProviderId, UsageSnapshot } from "./data/types";
 import {
   isFlagEnabled,
   providerModeFromFlags,
@@ -13,6 +14,12 @@ import {
   startupFromFlagsAndPreferences,
 } from "./lib/args";
 import { helpText, versionText, wantsHelp, wantsVersion } from "./lib/cli-help";
+import { sendDesktopNotification } from "./notifications/desktop";
+import {
+  clearCappedLimits,
+  defaultLimitAlertsPath,
+  notifyLimitChanges,
+} from "./notifications/limit-alerts";
 import { defaultPreferencesPath, readPreferences, updatePreferences } from "./preferences";
 import { COLORS } from "./theme";
 
@@ -40,16 +47,33 @@ const flags = readFlags(argv);
 const preferencesPath = defaultPreferencesPath();
 let preferences = readPreferences(preferencesPath);
 const startup = startupFromFlagsAndPreferences(flags, preferences);
+const limitAlertsPath = defaultLimitAlertsPath();
 const persistPreferences = (patch: Partial<typeof preferences>) => {
+  const wasNotifying = preferences.notifyOnLimits;
   try {
     preferences = updatePreferences(preferencesPath, patch);
-    return true;
   } catch {
     // A read-only home directory must not prevent the dashboard from running.
     return false;
   }
+  if (preferences.notifyOnLimits && !wasNotifying) {
+    try {
+      clearCappedLimits(limitAlertsPath);
+    } catch {
+      // A stale record costs at most one early "ready"; not worth failing the save over.
+    }
+  }
+  return true;
 };
 const provider = selectUsageProvider(providerModeFromFlags(flags, "real"));
+// Sample figures describe nobody's account, so they never leave the dashboard.
+const notifyOnRefresh = provider.isSampleData
+  ? undefined
+  : (snapshot: UsageSnapshot, connections: Record<ProviderId, ProviderConnection>) => {
+      if (!preferences.notifyOnLimits) return;
+      // The dashboard has nowhere to report a failed delivery; the daemon logs them.
+      void notifyLimitChanges(limitAlertsPath, snapshot, connections, sendDesktopNotification).catch(() => {});
+    };
 // Stable identity: a fresh closure each render would re-run the effect behind it.
 const checkUpdate = () => checkForUpdate({ currentVersion: APP_VERSION });
 const renderer = await createCliRenderer({
@@ -78,7 +102,11 @@ createRoot(renderer).render(
     startup={startup}
     isPollingEnabled={!isFlagEnabled(flags, "no-poll")}
     checkUpdate={checkUpdate}
-    onOnboardingFinish={() => persistPreferences({ hasCompletedOnboarding: true })}
+    onOnboardingFinish={({ notifyOnLimits }) =>
+      persistPreferences({ hasCompletedOnboarding: true, notifyOnLimits })
+    }
     onPreferencesChange={persistPreferences}
+    onRefreshed={notifyOnRefresh}
+    sendNotification={sendDesktopNotification}
   />,
 );

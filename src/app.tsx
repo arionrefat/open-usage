@@ -5,6 +5,7 @@ import { FilterBar, Header, StatusBar, Tabs, UpdateBanner } from "./components/c
 import { APP_NAME } from "./config";
 import {
   PROVIDER_IDS,
+  type ProviderConnection,
   type ProviderId,
   type RefreshReason,
   type ScopeKey,
@@ -31,6 +32,8 @@ import { Settings } from "./screens/settings";
 import { COLORS } from "./theme";
 import type { AppPreferencePatch } from "./preferences";
 import type { UpdateNotice } from "./data/real/update-check";
+import type { DeliveryResult, SendNotification } from "./notifications/desktop";
+import { TEST_NOTIFICATION } from "./notifications/limit-alerts";
 
 const HORIZONTAL_PADDING = 2;
 /** Reserved so the scrollbox's gutter never steals a column from the content. */
@@ -67,8 +70,15 @@ export interface AppProps {
    * reach the registry. Absent means the check does not run at all.
    */
   checkUpdate?: () => Promise<UpdateNotice | null>;
-  onOnboardingFinish?: () => unknown;
+  onOnboardingFinish?: (choices: { notifyOnLimits: boolean }) => unknown;
   onPreferencesChange?: (patch: AppPreferencePatch) => unknown;
+  /** Receives every completed refresh, which is where limit notifications are decided. */
+  onRefreshed?: (
+    snapshot: UsageSnapshot,
+    connections: Record<ProviderId, ProviderConnection>,
+  ) => void;
+  /** Delivers the wizard's test notification. Absent, the test does nothing. */
+  sendNotification?: SendNotification;
 }
 
 export function providerIdsForRefresh(
@@ -85,6 +95,8 @@ export function App({
   checkUpdate,
   onOnboardingFinish,
   onPreferencesChange,
+  onRefreshed,
+  sendNotification,
 }: AppProps) {
   const renderer = useRenderer();
   const { width, height } = useTerminalDimensions();
@@ -117,6 +129,12 @@ export function App({
   // re-render the whole tree via `actions` and feed Bun's per-commit leak.
   const sessionRef = useRef({ connections: state.connections, fetchedAt: snapshot.fetchedAt });
   sessionRef.current = { connections: state.connections, fetchedAt: snapshot.fetchedAt };
+  // Refs for the same reason: these feed stable callbacks that must not change
+  // identity whenever a parent passes a fresh closure or the wizard re-renders.
+  const onRefreshedRef = useRef(onRefreshed);
+  onRefreshedRef.current = onRefreshed;
+  const onboardingNotifyRef = useRef(state.onboarding.isNotifying);
+  onboardingNotifyRef.current = state.onboarding.isNotifying;
 
   const refresh = useCallback((reason: RefreshReason = "manual", only?: ProviderId) => {
     if (refreshAbortRef.current) {
@@ -144,7 +162,9 @@ export function App({
       .then((nextSnapshot) => {
         if (controller.signal.aborted) return;
         setSnapshot(nextSnapshot);
-        dispatch({ type: "refresh-success", connections: provider.initialConnections() });
+        const connections = provider.initialConnections();
+        dispatch({ type: "refresh-success", connections });
+        onRefreshedRef.current?.(nextSnapshot, connections);
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -204,6 +224,7 @@ export function App({
     defaultOverviewMode: state.mode,
     pollIntervalMinutes: state.pollIntervalMinutes,
     warnThreshold: state.warnThreshold,
+    notifyOnLimits: state.isNotifyingOnLimits,
   });
   const modeRef = useRef(state.mode);
   const preferenceSaveFailedRef = useRef(false);
@@ -290,10 +311,24 @@ export function App({
       openOnboarding: () => dispatch({ type: "open-onboarding" }),
       onboardingPick: (index: number) => dispatch({ type: "onboarding-pick", index }),
       onboardingContinue: () => dispatch({ type: "onboarding-begin-auth" }),
+      onboardingToggleNotify: () => dispatch({ type: "onboarding-toggle-notify" }),
+      onboardingConfirmNotify: () => dispatch({ type: "onboarding-confirm-notify" }),
+      sendTestNotification: () => {
+        if (!sendNotification) return;
+        dispatch({ type: "notification-test-start" });
+        void sendNotification(TEST_NOTIFICATION.title, TEST_NOTIFICATION.body)
+          .catch((error: unknown): DeliveryResult => ({
+            isDelivered: false,
+            reason: error instanceof Error ? error.message : "notification failed",
+          }))
+          .then((result) => dispatch({ type: "notification-test-result", result }));
+      },
       onboardingFinish: () => {
+        const notifyOnLimits = onboardingNotifyRef.current;
         dispatch({ type: "onboarding-finish" });
+        persistedPreferencesRef.current = { ...persistedPreferencesRef.current, notifyOnLimits };
         try {
-          reportPreferenceSave(onOnboardingFinish?.());
+          reportPreferenceSave(onOnboardingFinish?.({ notifyOnLimits }));
         } catch {
           reportPreferenceSave(false);
         }
@@ -322,9 +357,27 @@ export function App({
         dispatch({ type: "cycle-warn-threshold" });
         persistPreferences({ warnThreshold });
       },
+      setLimitNotifications: (notifyOnLimits: boolean) => {
+        if (notifyOnLimits === persistedPreferencesRef.current.notifyOnLimits) return;
+        dispatch({ type: "set-limit-notifications", isEnabled: notifyOnLimits });
+        persistPreferences({ notifyOnLimits });
+      },
+      toggleLimitNotifications: () => {
+        const notifyOnLimits = !persistedPreferencesRef.current.notifyOnLimits;
+        dispatch({ type: "set-limit-notifications", isEnabled: notifyOnLimits });
+        persistPreferences({ notifyOnLimits });
+      },
       quit: () => quit(),
     }),
-    [isPollingEnabled, onOnboardingFinish, persistPreferences, quit, refresh, reportPreferenceSave],
+    [
+      isPollingEnabled,
+      onOnboardingFinish,
+      persistPreferences,
+      quit,
+      refresh,
+      reportPreferenceSave,
+      sendNotification,
+    ],
   );
 
   const handleOnboardingKey = useCallback(
@@ -339,6 +392,13 @@ export function App({
         else if (char === "a") dispatch({ type: "onboarding-select-all" });
         else if (key.name === "return") dispatch({ type: "onboarding-begin-auth" });
         else if (key.name === "escape") dispatch({ type: "onboarding-cancel" });
+        return;
+      }
+
+      if (step === 1) {
+        if (key.name === "space" || char === " " || char === "x") actions.onboardingToggleNotify();
+        else if (char === "t") actions.sendTestNotification();
+        else if (key.name === "return") actions.onboardingConfirmNotify();
         return;
       }
 
@@ -357,6 +417,10 @@ export function App({
     }
     if (char === "w") {
       actions.cycleWarnThreshold();
+      return true;
+    }
+    if (char === "n") {
+      actions.toggleLimitNotifications();
       return true;
     }
     if (key.name === "j" || key.name === "down") {

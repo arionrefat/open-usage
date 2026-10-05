@@ -30,6 +30,8 @@ export interface AppPreferences {
   warnThreshold: number;
   /** Cadence `open-usage daemon start` uses when no --interval is given. */
   daemonIntervalMinutes: number;
+  /** Desktop notification when a limit runs out, and again when it resets. */
+  notifyOnLimits: boolean;
 }
 
 export type AppPreferencePatch = Partial<Omit<AppPreferences, "hasCompletedOnboarding">>;
@@ -40,6 +42,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   pollIntervalMinutes: DEFAULT_POLL_INTERVAL_MINUTES,
   warnThreshold: DEFAULT_WARN_THRESHOLD,
   daemonIntervalMinutes: DEFAULT_DAEMON_INTERVAL_MINUTES,
+  notifyOnLimits: false,
 };
 
 export function defaultPreferencesPath(): string {
@@ -73,6 +76,10 @@ export function readPreferences(path: string): AppPreferences {
       daemonIntervalMinutes: isDaemonIntervalMinutes(parsed.daemonIntervalMinutes)
         ? parsed.daemonIntervalMinutes
         : DEFAULT_PREFERENCES.daemonIntervalMinutes,
+      notifyOnLimits:
+        typeof parsed.notifyOnLimits === "boolean"
+          ? parsed.notifyOnLimits
+          : DEFAULT_PREFERENCES.notifyOnLimits,
     };
   } catch {
     return DEFAULT_PREFERENCES;

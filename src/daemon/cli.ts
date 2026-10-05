@@ -20,6 +20,8 @@ import {
 } from "../config";
 import { hasRealSources, defaultRealProviderPaths, selectUsageProvider } from "../data/real-provider";
 import { readFlags } from "../lib/args";
+import { sendDesktopNotification } from "../notifications/desktop";
+import { defaultLimitAlertsPath, notifyLimitChanges } from "../notifications/limit-alerts";
 import { defaultPreferencesPath, readPreferences, updatePreferences } from "../preferences";
 import {
   claimDaemonState,
@@ -55,7 +57,10 @@ OPTIONS
   --lines <n>          how many log lines \`logs\` prints (default ${DEFAULT_LOG_LINES})
 
 The daemon is off until you start it, and it does not survive a reboot on its
-own - start it from your login items, launchd, or systemd if you want that.`;
+own - start it from your login items, launchd, or systemd if you want that.
+
+With notifications on (settings, or the setup wizard), the daemon also sends a
+desktop notification when a limit runs out and again when it resets.`;
 }
 
 /**
@@ -197,6 +202,8 @@ async function runInForeground(intervalMinutes: number): Promise<DaemonCommandRe
   const statePath = defaultDaemonStatePath();
   const logPath = defaultDaemonLogPath();
   const provider = selectUsageProvider("real");
+  const preferencesPath = defaultPreferencesPath();
+  const limitAlertsPath = defaultLimitAlertsPath();
   const controller = new AbortController();
   const stop = () => controller.abort();
   // Windows delivers none of these to a detached process, so `stop` there is an
@@ -226,6 +233,14 @@ async function runInForeground(intervalMinutes: number): Promise<DaemonCommandRe
         rotateOwnLog(logPath);
         process.stdout.write(`${line}\n`);
       },
+      // Read on every poll, so switching notifications in the dashboard applies
+      // without a restart. Sample figures describe nobody's account and never notify.
+      notifyLimits: provider.isSampleData
+        ? undefined
+        : async (snapshot, connections) =>
+            readPreferences(preferencesPath).notifyOnLimits
+              ? notifyLimitChanges(limitAlertsPath, snapshot, connections, sendDesktopNotification)
+              : [],
     });
   } finally {
     clearDaemonState(statePath, process.pid);

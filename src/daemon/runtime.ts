@@ -1,4 +1,11 @@
-import { PROVIDER_IDS, type UsageProvider } from "../data/types";
+import {
+  PROVIDER_IDS,
+  type ProviderConnection,
+  type ProviderId,
+  type UsageProvider,
+  type UsageSnapshot,
+} from "../data/types";
+import type { LimitDelivery } from "../notifications/limit-alerts";
 import { readDaemonState, updateDaemonState } from "./state";
 
 export interface DaemonRuntimeOptions {
@@ -12,6 +19,11 @@ export interface DaemonRuntimeOptions {
   now?: () => Date;
   log?: (line: string) => void;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Sends limit notifications for what a poll found; absent, the daemon sends none. */
+  notifyLimits?: (
+    snapshot: UsageSnapshot,
+    connections: Record<ProviderId, ProviderConnection>,
+  ) => Promise<LimitDelivery[]>;
 }
 
 /** Resolves early when aborted, so a stop does not wait out the interval. */
@@ -41,8 +53,7 @@ function describeFailure(error: unknown): string {
  * still logs `poll ok`. `expired` is a provider that is not working; `none` is
  * one that is not installed, which is nobody's fault and not worth reporting.
  */
-function standingFailures(provider: UsageProvider): string[] {
-  const connections = provider.initialConnections();
+function standingFailures(connections: Record<ProviderId, ProviderConnection>): string[] {
   return PROVIDER_IDS.filter((id) => connections[id].status === "expired").map(
     (id) => `${id}: ${connections[id].note}`,
   );
@@ -55,6 +66,13 @@ function defaultLog(line: string): void {
 
 function timestamp(at: Date): string {
   return at.toISOString();
+}
+
+function deliveryLine(delivery: LimitDelivery): string {
+  const { notification, result } = delivery;
+  return result.isDelivered
+    ? `notified: ${notification.title}`
+    : `notification not sent: ${notification.title} (${result.reason})`;
 }
 
 /**
@@ -72,10 +90,11 @@ export async function runDaemonLoop(options: DaemonRuntimeOptions): Promise<void
   while (!signal.aborted) {
     const at = now();
     try {
-      await provider.refresh({ reason: "interval", providerIds: PROVIDER_IDS, signal });
+      const snapshot = await provider.refresh({ reason: "interval", providerIds: PROVIDER_IDS, signal });
       if (signal.aborted) break;
       const atMs = at.getTime();
-      const failures = standingFailures(provider);
+      const connections = provider.initialConnections();
+      const failures = standingFailures(connections);
       if (failures.length > 0) {
         const message = failures.join(" · ");
         updateDaemonState(statePath, { lastPollAtMs: atMs, lastError: message });
@@ -87,6 +106,15 @@ export async function runDaemonLoop(options: DaemonRuntimeOptions): Promise<void
           lastError: null,
         });
         log(`${timestamp(at)} poll ok`);
+      }
+      if (options.notifyLimits) {
+        // Its own catch: a notifier that fails says nothing about the poll.
+        try {
+          const deliveries = await options.notifyLimits(snapshot, connections);
+          for (const delivery of deliveries) log(`${timestamp(now())} ${deliveryLine(delivery)}`);
+        } catch (error) {
+          log(`${timestamp(now())} limit notifications failed: ${describeFailure(error)}`);
+        }
       }
     } catch (error) {
       if (signal.aborted) break;

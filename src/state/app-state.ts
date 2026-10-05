@@ -14,6 +14,7 @@ import {
   POLL_INTERVAL_OPTIONS,
   WARN_THRESHOLD_OPTIONS,
 } from "../config";
+import type { DeliveryResult } from "../notifications/desktop";
 
 export type ViewKey = "overview" | "claude" | "codex" | "go" | "settings";
 
@@ -25,11 +26,17 @@ export type OverviewMode = "simple" | "detailed";
 
 export type Screen = "app" | "onboarding";
 
+/** Where a test notification sent from the wizard stands. */
+export type NotificationTest = "sending" | DeliveryResult | null;
+
 export interface OnboardingState {
-  /** 0 = pick providers, 1 = summary. */
-  step: 0 | 1;
+  /** 0 = pick providers, 1 = limit notifications, 2 = summary. */
+  step: 0 | 1 | 2;
   cursor: number;
   picks: Record<ProviderId, boolean>;
+  /** The notification choice, applied only once the wizard finishes. */
+  isNotifying: boolean;
+  notificationTest: NotificationTest;
 }
 
 export interface AppState {
@@ -52,6 +59,7 @@ export interface AppState {
   isDailySplitVisible: boolean;
   pollIntervalMinutes: number;
   warnThreshold: number;
+  isNotifyingOnLimits: boolean;
   connections: Record<ProviderId, ProviderConnection>;
   onboarding: OnboardingState;
 }
@@ -64,6 +72,7 @@ export interface AppStateOptions {
   isDailySplitVisible?: boolean;
   pollIntervalMinutes?: number;
   warnThreshold?: number;
+  isNotifyingOnLimits?: boolean;
   connections: Record<ProviderId, ProviderConnection>;
 }
 
@@ -79,6 +88,7 @@ function picksFromConnections(
 
 export function createInitialState(options: AppStateOptions): AppState {
   const selection = PROVIDER_IDS.findIndex((id) => options.connections[id].isEnabled);
+  const isNotifyingOnLimits = options.isNotifyingOnLimits ?? false;
   return {
     screen: options.screen ?? "app",
     view: options.view ?? "overview",
@@ -97,11 +107,16 @@ export function createInitialState(options: AppStateOptions): AppState {
     isDailySplitVisible: options.isDailySplitVisible ?? true,
     pollIntervalMinutes: options.pollIntervalMinutes ?? DEFAULT_POLL_INTERVAL_MINUTES,
     warnThreshold: options.warnThreshold ?? DEFAULT_WARN_THRESHOLD,
+    isNotifyingOnLimits,
     connections: options.connections,
     onboarding: {
       step: 0,
       cursor: 0,
       picks: picksFromConnections(options.connections),
+      // A first run offers notifications already ticked, on the screen that
+      // explains them; anyone who has been through the wizard keeps their answer.
+      isNotifying: isNotifyingOnLimits || options.screen === "onboarding",
+      notificationTest: null,
     },
   };
 }
@@ -136,6 +151,10 @@ export type AppAction =
   | { type: "onboarding-pick"; index: number }
   | { type: "onboarding-select-all" }
   | { type: "onboarding-begin-auth" }
+  | { type: "onboarding-toggle-notify" }
+  | { type: "onboarding-confirm-notify" }
+  | { type: "notification-test-start" }
+  | { type: "notification-test-result"; result: DeliveryResult }
   | { type: "onboarding-finish" }
   | { type: "onboarding-cancel" }
   | { type: "settings-move"; delta: number }
@@ -143,7 +162,8 @@ export type AppAction =
   | { type: "set-poll-interval"; minutes: number }
   | { type: "cycle-poll-interval" }
   | { type: "set-warn-threshold"; percent: number }
-  | { type: "cycle-warn-threshold" };
+  | { type: "cycle-warn-threshold" }
+  | { type: "set-limit-notifications"; isEnabled: boolean };
 
 function wrapIndex(index: number, delta: number, length: number): number {
   return (index + (delta % length) + length) % length;
@@ -344,6 +364,8 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
             step: 0,
             cursor: 0,
             picks: picksFromConnections(state.connections),
+            isNotifying: state.isNotifyingOnLimits,
+            notificationTest: null,
           },
         };
       case "onboarding-move":
@@ -381,8 +403,26 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
       case "onboarding-begin-auth": {
         return beginOnboardingAuth(state, meta);
       }
+      case "onboarding-toggle-notify":
+        return {
+          ...state,
+          onboarding: { ...state.onboarding, isNotifying: !state.onboarding.isNotifying },
+        };
+      case "onboarding-confirm-notify":
+        return state.onboarding.step === 1
+          ? { ...state, onboarding: { ...state.onboarding, step: 2 } }
+          : state;
+      case "notification-test-start":
+        return { ...state, onboarding: { ...state.onboarding, notificationTest: "sending" } };
+      case "notification-test-result":
+        return { ...state, onboarding: { ...state.onboarding, notificationTest: action.result } };
       case "onboarding-finish":
-        return { ...state, screen: "app", view: "overview" };
+        return {
+          ...state,
+          screen: "app",
+          view: "overview",
+          isNotifyingOnLimits: state.onboarding.isNotifying,
+        };
       case "onboarding-cancel":
         return { ...state, screen: "app" };
       case "settings-move":
@@ -413,6 +453,8 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
         };
       case "set-warn-threshold":
         return { ...state, warnThreshold: action.percent };
+      case "set-limit-notifications":
+        return { ...state, isNotifyingOnLimits: action.isEnabled };
       default:
         return state;
     }

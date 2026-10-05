@@ -20,6 +20,7 @@ See limits, reset times, token history, and spend in one place.
 - OpenCode Go - use a local estimate by default or opt in to exact dashboard limits.
 - Terminal UI - keyboard and mouse controls, detailed and simplified views, and responsive layouts.
 - Background refresh - keep the cache current with an optional daemon.
+- Limit notifications - get a desktop notification when a limit runs out, and another when it resets.
 - Local by default - no account to create, no key to paste, and no telemetry.
 
 ## Install
@@ -62,6 +63,9 @@ open-usage daemon stop
 ```
 
 The daemon is off until you start it and does not survive a reboot on its own.
+
+Limit notifications are offered during setup and can be switched with `n` in settings.
+They arrive while the dashboard is open, or from the daemon while it runs.
 
 ## Data and privacy
 

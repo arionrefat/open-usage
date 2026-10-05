@@ -25,6 +25,10 @@ const WARN_OPTIONS: ToggleOption<number>[] = WARN_THRESHOLD_OPTIONS.map((value) 
   label: `${value}%`,
   value,
 }));
+const NOTIFY_OPTIONS: ToggleOption<boolean>[] = [
+  { label: "on", value: true },
+  { label: "off", value: false },
+];
 
 interface SettingsProps {
   state: AppState;
@@ -225,6 +229,18 @@ export function Settings(props: SettingsProps) {
         hint={[
           { text: "[w]", color: COLORS.info, isBold: true },
           { text: " cycle options  ·  red at this level", color: COLORS.textMuted },
+        ]}
+      />
+      <Spacer />
+      <SettingOptions
+        width={width}
+        label="notifications"
+        options={NOTIFY_OPTIONS}
+        current={state.isNotifyingOnLimits}
+        onSelect={actions.setLimitNotifications}
+        hint={[
+          { text: "[n]", color: COLORS.info, isBold: true },
+          { text: " toggle  ·  when a limit runs out, and when it resets", color: COLORS.textMuted },
         ]}
       />
       <Spacer />
