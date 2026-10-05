@@ -303,8 +303,6 @@ describe("buildClaudeProvider", () => {
       },
     });
 
-    // Every row counts down once it has a time, so rows sitting one above the
-    // other never mix the CLI's date prose with a countdown.
     expect(provider.limits.map((limit) => limit.reset)).toEqual([
       "resets in 1h 0m",
       "resets in 10h 0m",

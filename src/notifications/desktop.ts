@@ -5,7 +5,6 @@ const SEND_TIMEOUT_MS = 5_000;
 
 export interface NotificationCommand {
   argv: string[];
-  /** Carries the text on platforms where splicing it into a script would need quoting. */
   env?: Record<string, string>;
 }
 
@@ -13,11 +12,7 @@ export type DeliveryResult = { isDelivered: true } | { isDelivered: false; reaso
 
 export type SendNotification = (title: string, body: string) => Promise<DeliveryResult>;
 
-/**
- * PowerShell ships no toast cmdlet, but WinRT's notifier works from Windows
- * PowerShell given an app id Windows already knows, and PowerShell's own is the
- * one every install has.
- */
+// No stock toast cmdlet exists; WinRT shows one under PowerShell's own app id.
 const WINDOWS_TOAST_SCRIPT = [
   "$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]",
   "$template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)",
@@ -28,7 +23,6 @@ const WINDOWS_TOAST_SCRIPT = [
   "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($template))",
 ].join("; ");
 
-/** The OS's own notifier, so delivery needs nothing installed beyond the system itself. */
 export function desktopNotificationCommand(
   title: string,
   body: string,

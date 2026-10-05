@@ -30,7 +30,6 @@ export interface AppPreferences {
   warnThreshold: number;
   /** Cadence `open-usage daemon start` uses when no --interval is given. */
   daemonIntervalMinutes: number;
-  /** Desktop notification when a limit runs out, and again when it resets. */
   notifyOnLimits: boolean;
 }
 

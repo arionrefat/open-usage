@@ -72,12 +72,10 @@ export interface AppProps {
   checkUpdate?: () => Promise<UpdateNotice | null>;
   onOnboardingFinish?: (choices: { notifyOnLimits: boolean }) => unknown;
   onPreferencesChange?: (patch: AppPreferencePatch) => unknown;
-  /** Receives every completed refresh, which is where limit notifications are decided. */
   onRefreshed?: (
     snapshot: UsageSnapshot,
     connections: Record<ProviderId, ProviderConnection>,
   ) => void;
-  /** Delivers the wizard's test notification. Absent, the test does nothing. */
   sendNotification?: SendNotification;
 }
 
@@ -129,8 +127,7 @@ export function App({
   // re-render the whole tree via `actions` and feed Bun's per-commit leak.
   const sessionRef = useRef({ connections: state.connections, fetchedAt: snapshot.fetchedAt });
   sessionRef.current = { connections: state.connections, fetchedAt: snapshot.fetchedAt };
-  // Refs for the same reason: these feed stable callbacks that must not change
-  // identity whenever a parent passes a fresh closure or the wizard re-renders.
+  // Refs for the same reason: the callbacks below must keep their identity.
   const onRefreshedRef = useRef(onRefreshed);
   onRefreshedRef.current = onRefreshed;
   const onboardingNotifyRef = useRef(state.onboarding.isNotifying);

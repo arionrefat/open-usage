@@ -18,13 +18,11 @@ import type { DeliveryResult, SendNotification } from "./desktop";
 
 const CAP_PERCENT = 100;
 
-/** Sent from the setup wizard, so permission problems surface before a real alert is missed. */
 export const TEST_NOTIFICATION = {
   title: "open-usage notifications are on",
   body: "you will hear from us when a limit runs out, and again when it resets",
 };
 
-/** Limit ids each provider last reported at or past its cap. */
 export type CappedLimits = Record<ProviderId, string[]>;
 
 export interface LimitNotification {
@@ -74,31 +72,21 @@ function writeCappedLimitsFile(path: string, capped: CappedLimits): void {
   }
 }
 
-/**
- * Forgets every recorded cap. Run when notifications are switched on, because
- * a record left from before they were switched off would otherwise announce a
- * reset that happened while nobody was watching.
- */
+/** Run when notifications are switched on, so a cap recorded earlier cannot announce an unseen reset. */
 export function clearCappedLimits(path: string): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   withFileLock(path, () => writeCappedLimitsFile(path, emptyCappedLimits()));
 }
 
-/** The record's id for a provider-wide block, kept apart from every meter id. */
 const BLOCK_ID = "usage-block";
 
-/**
- * Anything that can stop a provider: one of its meters, or its own verdict
- * that it is refusing usage, which can outlive every meter's reset.
- */
+/** A meter, or the provider's own block verdict, which can outlive every meter's reset. */
 interface Gate {
   id: string;
   label: string;
   /** null when there is no current reading. */
   isCapped: boolean | null;
-  /** The line announcing it reached. */
   reachedText: string;
-  /** The line naming it as what still blocks a partial reset. */
   blockingText: string;
 }
 
@@ -163,9 +151,7 @@ function resetNotification(
       body: `${phrase} - you can use it again`,
     };
   }
-  // A partial reset is worth hearing about, but calling the provider ready
-  // while something else still blocks it would send someone back to a tool
-  // that refuses them.
+  // Never "ready" while something else still blocks the provider.
   return {
     providerId: id,
     kind: "reset",
@@ -174,11 +160,7 @@ function resetNotification(
   };
 }
 
-/**
- * A gate is capped once it reads capped and stays so until a reading shows it
- * clear. One with no current reading - stale, or a source that went quiet -
- * keeps its last state, since "unknown" is not evidence of a reset.
- */
+/** Unknown is not evidence of a reset, so a gate with no current reading keeps its state. */
 function providerChanges(
   id: ProviderId,
   previous: string[],
@@ -201,8 +183,7 @@ function providerChanges(
     notifications.push(reachedNotification(id, usage, reached, connection.status === "local"));
   }
   if (cleared.length > 0) {
-    // A capped id with no gate this time - a lane that stopped being reported -
-    // still blocks, so it is named by its id rather than dropped.
+    // A lane no longer reported still blocks, so it is named by its id.
     const stillCapped = capped.map(
       (gateId) =>
         gates.find((gate) => gate.id === gateId) ??
@@ -234,10 +215,8 @@ function isSameCapped(left: CappedLimits, right: CappedLimits): boolean {
 }
 
 /**
- * Compares a fresh snapshot against the shared record and sends whatever
- * changed. The dashboard and the daemon both call this after every refresh;
- * the record is read and written under one lock, so whichever sees a change
- * first announces it and the other finds it already recorded.
+ * The dashboard and the daemon both call this after a refresh; one lock around
+ * the read and write means whichever sees a change first announces it.
  */
 export async function notifyLimitChanges(
   path: string,

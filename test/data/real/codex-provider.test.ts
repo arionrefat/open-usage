@@ -218,8 +218,6 @@ describe("buildCodexProvider", () => {
     });
     expect(build(account({ isOrdinaryUsageAllowed: false, isSpendControlReached: true })).usageBlock)
       .toEqual({ isBlocked: true, reason: "spend control reached" });
-    // Without the field the named causes are all there is, so a lifted spend
-    // control still reads as lifted.
     expect(build(account({ isOrdinaryUsageAllowed: null })).usageBlock).toEqual({ isBlocked: false });
     expect(build(null).usageBlock).toBeUndefined();
   });

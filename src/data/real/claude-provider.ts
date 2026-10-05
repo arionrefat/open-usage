@@ -88,11 +88,6 @@ interface ClaudeWindow extends RateWindowReading {
   resetLabel?: string;
 }
 
-/**
- * The timestamp comes from the CLI's structured report where it carried one,
- * else from a fresh statusline snapshot, so the countdown and projection work
- * with either source alone. The CLI's prose is kept for when neither has one.
- */
 function cliWindow(
   window: ClaudeUsageWindow,
   snapshotWindow: RateWindowReading | null,
@@ -104,11 +99,7 @@ function cliWindow(
   };
 }
 
-/**
- * A countdown wherever a timestamp exists, so rows sitting one above the other
- * never mix the CLI's date prose with our own countdown; the prose only
- * stands in when no source gave a time.
- */
+/** A countdown whenever a time is known, so stacked rows never mix it with the CLI's prose. */
 function windowReset(window: ClaudeWindow, nowMs: number): string {
   if (window.resetsAtMs !== null) return resetText(window.resetsAtMs, nowMs);
   return window.resetLabel ?? resetText(null, nowMs);
@@ -172,7 +163,6 @@ function weeklyLimit(
   return limit;
 }
 
-/** A weekly lane scoped to one model or surface; its id comes from the scope, so it holds across polls. */
 function scopedLimit(
   window: ClaudeScopedWindow,
   isFresh: boolean,
@@ -245,7 +235,6 @@ interface ClaudeProviderInput {
   /** Money and per-model history; absent when neither source has anything. */
   spend?: SpendSummary;
   weeklyBreakdown?: ClaudeWeeklyBreakdown | null;
-  /** From `~/.claude.json`, e.g. "default_claude_max_20x"; the CLI's own plan field lacks it. */
   rateLimitTier?: string | null;
 }
 
@@ -282,7 +271,6 @@ function sessionDetails(snapshotFile: SnapshotFile | null): DetailSection | null
   return rows.length > 0 ? { title: "session", rows } : null;
 }
 
-/** Only present while extra usage is switched on; the parser drops it otherwise. */
 function extraUsageDetails(live: ClaudeCliUsage | null): DetailSection | null {
   const extra = live?.extraUsage;
   if (!extra) return null;
@@ -301,7 +289,6 @@ function extraUsageDetails(live: ClaudeCliUsage | null): DetailSection | null {
 
 const WEEK_MS = 7 * DAY_MS;
 
-/** The server's split of this week across surfaces, dropped once that week has ended. */
 function surfaceDetails(breakdown: ClaudeWeeklyBreakdown | null, nowMs: number): DetailSection | null {
   if (!breakdown || nowMs >= breakdown.windowStartedAtMs + WEEK_MS) return null;
   return {
@@ -351,10 +338,7 @@ function transcriptDetails(transcripts: TranscriptAggregate): DetailSection[] {
   return [models, tokens].filter((section): section is DetailSection => section !== null);
 }
 
-/**
- * Only tiers known to name a Max multiplier. The same tier strings also appear
- * on Team seats, so they refine a "max" subscription and nothing else.
- */
+// Team seats share these tier strings, so they only refine a "max" subscription.
 const MAX_TIER_LABELS = new Map([
   ["default_claude_max_5x", "Max 5x"],
   ["default_claude_max_20x", "Max 20x"],
@@ -400,9 +384,8 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
         : live
           ? cliWindow(live.weekly, null)
           : null;
-  // Scoped lanes have no statusline equivalent, so the CLI polls for them on a
-  // slower cadence than the session and weekly windows. Judging them by their
-  // staleness window would brand a perfectly current reading as stale.
+  // Scoped lanes are polled more slowly than the statusline windows, so the
+  // session window's staleness limit would call a current reading stale.
   const scopedIsFresh = live !== null && nowMs - live.fetchedAtMs <= CLAUDE_SCOPED_STALE_MS;
   const isFresh = liveIsFresh || snapshotIsFresh;
   const trendAtMs =

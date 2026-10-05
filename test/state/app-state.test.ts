@@ -38,7 +38,6 @@ describe("app reducer", () => {
     let state = reducer(firstRun, { type: "onboarding-begin-auth" });
     expect(state.onboarding.step).toBe(1);
     state = reducer(state, { type: "onboarding-toggle-notify" });
-    // The choice waits for the wizard to finish rather than applying mid-way.
     expect(state.isNotifyingOnLimits).toBe(false);
     state = reducer(state, { type: "onboarding-confirm-notify" });
     expect(state.onboarding.step).toBe(2);

@@ -57,7 +57,6 @@ function blendedTokens(usage: unknown): number | null {
   return breakdownTokens(usage) ?? positiveNumber(usage.total_tokens);
 }
 
-/** The blended figure, or null when the breakdown is missing. */
 function breakdownTokens(usage: unknown): number | null {
   if (!isRecord(usage)) return null;
   const input = positiveNumber(usage.input_tokens);
@@ -68,12 +67,9 @@ function breakdownTokens(usage: unknown): number | null {
 }
 
 /**
- * Legacy rollouts only: the `last_token_usage` of a `token_count` is not a
- * delta that can be summed, because codex re-emits the event with a stale
- * `last` value - summing it over-counted sessions by up to 12%. The step in
- * the cumulative total is exact instead. The first event uses its own `last`,
- * since a forked session's total opens on the parent's usage, which the
- * parent's rollout already counts; a total that falls starts over the same way.
+ * Legacy rollouts: codex re-emits `token_count` with a stale `last`, so the step
+ * in the cumulative total is used instead. The first event uses its own `last`,
+ * since a forked session's total opens on its parent's usage.
  */
 function tokenCountDelta(info: unknown, previousTotal: number | null): { tokens: number | null; total: number | null } {
   if (!isRecord(info)) return { tokens: null, total: previousTotal };
@@ -85,12 +81,9 @@ function tokenCountDelta(info: unknown, previousTotal: number | null): { tokens:
 }
 
 /**
- * A rollout written by codex-cli 0.153.4 or later carries one
- * `token_usage_record` per model response, including the compaction calls no
- * `token_count` reports, so a session that compacted was under-counted by up
- * to a fifth. Once a file has its first record only records count: a record
- * precedes its own `token_count`, so the counts before it belong to an older
- * CLI that wrote none, and the counts after it would double the records.
+ * Since codex-cli 0.153.4 every model response, compaction included, has a
+ * `token_usage_record`. Once a file has one only records count: earlier
+ * `token_count`s come from an older CLI, later ones would double count.
  */
 function parseRolloutLines(lines: Iterable<string>): { events: RolloutEvent[]; latestMs: number } {
   const events: RolloutEvent[] = [];
@@ -123,10 +116,8 @@ function parseRolloutLines(lines: Iterable<string>): { events: RolloutEvent[]; l
 
     let tokens: number | null;
     if (isUsageRecord && parsed.type === "token_usage_record") {
-      // Every record carries the breakdown, so one without it is drift, not
-      // an old shape: it must neither pass a cache-inclusive total off as the
-      // blended figure nor switch the file off its token counts, which would
-      // chart the session as idle.
+      // A record without the breakdown is drift: skip it rather than count a
+      // cache-inclusive total or switch the file off its token counts.
       tokens = breakdownTokens(payload.usage);
       if (tokens === null) continue;
       hasUsageRecords = true;

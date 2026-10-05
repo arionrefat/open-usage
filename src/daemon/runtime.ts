@@ -19,7 +19,6 @@ export interface DaemonRuntimeOptions {
   now?: () => Date;
   log?: (line: string) => void;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
-  /** Sends limit notifications for what a poll found; absent, the daemon sends none. */
   notifyLimits?: (
     snapshot: UsageSnapshot,
     connections: Record<ProviderId, ProviderConnection>,
@@ -108,7 +107,7 @@ export async function runDaemonLoop(options: DaemonRuntimeOptions): Promise<void
         log(`${timestamp(at)} poll ok`);
       }
       if (options.notifyLimits) {
-        // Its own catch: a notifier that fails says nothing about the poll.
+        // A notifier failure is not a failed poll.
         try {
           const deliveries = await options.notifyLimits(snapshot, connections);
           for (const delivery of deliveries) log(`${timestamp(now())} ${deliveryLine(delivery)}`);

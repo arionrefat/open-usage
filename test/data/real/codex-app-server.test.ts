@@ -441,7 +441,6 @@ describe("parseRateLimits", () => {
 
     expect(lane({ normalModelSlug: "gpt-6.1-sol" })).toEqual(["gpt-6.1-sol"]);
     expect(lane({ limitName: "GPT-6.1-Sol Fast", normalModelSlug: "gpt-6.1-sol" })).toEqual(["GPT-6.1-Sol Fast"]);
-    // A blank name is no name: fall through to the next rather than drop the lane.
     expect(lane({ limitName: " ", normalModelSlug: "" })).toEqual(["codex_bengalfox"]);
     expect(lane({ limitName: null, normalModelSlug: null, limitId: null })).toEqual(["codex_bengalfox"]);
   });

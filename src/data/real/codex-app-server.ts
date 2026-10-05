@@ -57,10 +57,7 @@ export interface CodexAccountLimits {
   resetCreditsExpireAtMs: number | null;
   /** A spend control can block the account well below its percentage cap. */
   isSpendControlReached: boolean;
-  /**
-   * The backend's own verdict on included usage; null when it gives none.
-   * Its schema forbids inferring recovery from percentages or reset times.
-   */
+  /** The backend's own verdict on included usage; null when it gives none. */
   isOrdinaryUsageAllowed?: boolean | null;
   /** Backend classification for exhausted rate, workspace-credit, or usage limits. */
   rateLimitReachedType?: string | null;
@@ -121,11 +118,8 @@ function durationSuffix(window: CodexWindow, fallback: "primary" | "secondary"):
 }
 
 /**
- * A limit id is an opaque meter key, so the human names come first:
- * `limitName`, then `normalModelSlug`, the model that the schema says
- * describes this quota alias. Its display name would need a `model/list`
- * call, so the slug stands in. A blank name falls through rather than
- * dropping the lane.
+ * Human names before the opaque id: `limitName`, then `normalModelSlug`, whose
+ * display name would need `model/list`. A blank name falls through.
  */
 function laneName(id: string, item: Record<string, unknown>): string | null {
   const candidates = [item.limitName, item.normalModelSlug, item.modelName, item.model, item.limitId, id];

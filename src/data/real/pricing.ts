@@ -99,8 +99,7 @@ export function priceTokens(
   if (!price) return { usd: null, model: canonical };
 
   const { input, output } = ratesFor(price, usage.speed);
-  // Cache multipliers stack on top of fast-mode rates, so a published read rate
-  // scales with the input rate rather than staying at its standard figure.
+  // Cache multipliers stack on fast-mode rates, so a published read rate scales too.
   const cacheRead =
     price.cacheRead === undefined
       ? input * CACHE_READ_MULTIPLIER

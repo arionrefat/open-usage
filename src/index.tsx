@@ -66,7 +66,6 @@ const persistPreferences = (patch: Partial<typeof preferences>) => {
   return true;
 };
 const provider = selectUsageProvider(providerModeFromFlags(flags, "real"));
-// Sample figures describe nobody's account, so they never leave the dashboard.
 const notifyOnRefresh = provider.isSampleData
   ? undefined
   : (snapshot: UsageSnapshot, connections: Record<ProviderId, ProviderConnection>) => {

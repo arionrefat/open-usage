@@ -233,8 +233,7 @@ async function runInForeground(intervalMinutes: number): Promise<DaemonCommandRe
         rotateOwnLog(logPath);
         process.stdout.write(`${line}\n`);
       },
-      // Read on every poll, so switching notifications in the dashboard applies
-      // without a restart. Sample figures describe nobody's account and never notify.
+      // Read each poll so switching notifications applies without a restart.
       notifyLimits: provider.isSampleData
         ? undefined
         : async (snapshot, connections) =>

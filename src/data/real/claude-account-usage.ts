@@ -31,26 +31,20 @@ export interface ClaudeExtraUsage {
 }
 
 export interface ClaudeSurfaceShare {
-  /** The server's stable key, e.g. "claude_code". */
   key: string;
-  /** The server's label, e.g. "Claude Code". */
   label: string;
-  /** Share of the week's usage, 0-100. */
   percent: number;
 }
 
-/** How the current week's usage splits across surfaces: Claude Code, chats, Cowork. */
 export interface ClaudeWeeklyBreakdown {
   asOfMs: number;
   windowStartedAtMs: number;
-  /** In the server's order. */
   rows: ClaudeSurfaceShare[];
 }
 
 export interface ClaudeAccountUsage {
   spend: ClaudeSpend;
   extraUsage: ClaudeExtraUsage;
-  /** null on any mismatch with the shape it was built against. */
   weeklyBreakdown: ClaudeWeeklyBreakdown | null;
   /** When Claude Code last refreshed this from the server. */
   fetchedAtMs: number | null;
@@ -112,11 +106,8 @@ function parseSurfaceShare(value: unknown): ClaudeSurfaceShare | null {
 }
 
 /**
- * `seven_day_breakdown` is the server's raw reply passed through untouched -
- * Claude Code itself never reads it - so nothing upstream holds its shape
- * steady. Every field is checked and any mismatch drops the whole breakdown,
- * including shares that no longer sum to a whole, which is what a change of
- * unit would look like.
+ * A raw server passthrough Claude Code itself never reads, so any mismatch -
+ * including shares that stop summing to 100 - drops the whole breakdown.
  */
 export function parseWeeklyBreakdown(value: unknown): ClaudeWeeklyBreakdown | null {
   if (!isRecord(value) || !Array.isArray(value.rows) || value.rows.length === 0) return null;
@@ -129,8 +120,7 @@ export function parseWeeklyBreakdown(value: unknown): ClaudeWeeklyBreakdown | nu
     if (!row || rows.some((existing) => existing.key === row.key)) return null;
     rows.push(row);
   }
-  // Whole-number shares round independently, so the total may miss 100 by up
-  // to half a point per row.
+  // Whole-number shares round independently, half a point each at most.
   const total = rows.reduce((sum, row) => sum + row.percent, 0);
   if (Math.abs(total - 100) > rows.length / 2) return null;
   return { asOfMs, windowStartedAtMs, rows };
@@ -152,11 +142,7 @@ export function parseClaudeAccountUsage(value: unknown): ClaudeAccountUsage | nu
 
 const RATE_LIMIT_TIER = /^[a-z][a-z0-9_]{0,63}$/;
 
-/**
- * The account's rate-limit tier, e.g. "default_claude_max_20x", which is what
- * tells Max 5x from Max 20x. A user-level tier that disagrees with the
- * organisation's leaves the tier unknown rather than picking one.
- */
+/** A user-level tier that disagrees with the organisation's leaves the tier unknown. */
 export function parseRateLimitTier(value: unknown): string | null {
   if (!isRecord(value) || !isRecord(value.oauthAccount)) return null;
   const { organizationRateLimitTier: tier, userRateLimitTier: userTier } = value.oauthAccount;
@@ -165,7 +151,6 @@ export function parseRateLimitTier(value: unknown): string | null {
   return tier;
 }
 
-/** The parts of `~/.claude.json` open-usage reads, from one parse of the file. */
 export interface ClaudeConfig {
   usage: ClaudeAccountUsage | null;
   rateLimitTier: string | null;

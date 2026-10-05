@@ -86,10 +86,7 @@ export interface UsageLimit {
   isCardOnly?: boolean;
 }
 
-/**
- * The provider's own verdict on whether it is refusing usage, whatever its
- * meters read - a backend can block an account below every cap.
- */
+/** The provider's own verdict that it refuses usage, which can hold below every cap. */
 export type UsageBlock = { isBlocked: true; reason: string } | { isBlocked: false };
 
 export interface ScopeSummary {
@@ -318,10 +315,7 @@ export interface PollOptions {
  */
 export interface UsageProvider {
   readonly scopeTitles: Record<ScopeKey, string>;
-  /**
-   * True for sample figures. They may fill the dashboard, but must never reach
-   * anything outside it, such as a desktop notification about a limit.
-   */
+  /** Sample figures fill the dashboard but must never reach a desktop notification. */
   readonly isSampleData?: boolean;
   listMeta(): Record<ProviderId, ProviderMeta>;
   initialConnections(): Record<ProviderId, ProviderConnection>;

@@ -176,7 +176,6 @@ describe("usage cache", () => {
       expect(restored?.weekly?.usedPercent).toBe(38);
       expect(restored?.resetCreditsExpireAtMs).toBeNull();
       expect(restored?.isSpendControlReached).toBe(false);
-      // Unknown, not allowed: a missing verdict must not read as either one.
       expect(restored?.isOrdinaryUsageAllowed).toBeNull();
       expect(restored?.rateLimitReachedType).toBeNull();
       expect(restored?.spendControl).toBeNull();

@@ -42,8 +42,7 @@ function claudeWindow(value: unknown): ClaudeUsageWindow | null {
   const raw = record(value);
   const percent = finite(raw?.percent);
   if (percent === null || typeof raw?.reset !== "string") return null;
-  // Absent on entries parsed from the text alone, and on every entry written
-  // before the structured report was read.
+  // Absent on text-only readings and on entries cached before the structured report.
   if (raw.resetsAtMs === undefined) return { percent, reset: raw.reset };
   const resetsAtMs = finite(raw.resetsAtMs);
   return resetsAtMs === null ? null : { percent, reset: raw.reset, resetsAtMs };

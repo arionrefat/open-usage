@@ -104,11 +104,8 @@ function codexDetails(limits: CodexAccountLimits, dates: string[]): DetailSectio
 }
 
 /**
- * Turns the CLI's wire enum into a plan label rather than exposing underscores.
- * The wire names are not the marketed ones: `prolite`, `pro` and `promax` are
- * sold as Pro 100, Pro 200 and Pro 500, and `team` is now ChatGPT Business.
- * Those and Business Premium are what codex's own `/status` prints
- * (codex-rs/tui/src/subscription.rs), so the card agrees with the CLI.
+ * Turns the CLI's wire enum into the marketed plan name, as codex's own
+ * `/status` prints it (codex-rs/tui/src/subscription.rs).
  */
 function withPlan(meta: ProviderMeta, planType: string, planEnd: PlanEnd | undefined): ProviderMeta {
   const known: Record<string, string> = {
@@ -176,8 +173,7 @@ function codexLimitLines(limits: CodexAccountLimits, nowMs: number): UsageLimit[
     });
   }
   const alert = codexAlert(limits, nowMs);
-  // A blocked account may report no window at all, and the alert needs a row
-  // to ride on or the one line that explains the refusal is dropped.
+  // A blocked account may report no window, and the alert needs a row to ride on.
   if (lines.length === 0 && alert) {
     lines.push(
       capLessLimit("weekly", "weekly limit", "weekly usage limit", "limit not reported", "limit not reported"),
@@ -195,21 +191,10 @@ function resetGrants(count: number): string {
 const INCLUDED_USAGE_BLOCKED = "included usage blocked";
 
 /**
- * Why codex refuses usage whatever its meters read, as a verdict the card and
- * notifications share - a reset meter under a standing block must not be
- * announced as ready.
- *
- * A spend control outranks everything: it blocks the account at any
- * percentage, so the meter beside it cannot explain why codex refuses to run.
- * Only the classifications that actually mean "blocked" count; an unrecognized
- * value is far more likely to be a not-reached sentinel than a new block, and
- * a false red banner on a healthy account is the worse mistake.
- *
- * `ordinaryUsageAllowed: false` is the backend saying the same thing without
- * the reason, so a named cause outranks it. Without that field the named
- * causes are all there is, so their absence reads as unblocked rather than
- * unknown - otherwise a lifted spend control would never be announced on an
- * account whose CLI omits it.
+ * Why codex refuses usage below its caps, shared by the card and notifications.
+ * Unrecognized reached-types stay quiet: a false red banner on a healthy account
+ * is the worse mistake. Without `ordinaryUsageAllowed` the named causes are all
+ * there is, so their absence reads as unblocked.
  */
 function codexUsageBlock(limits: CodexAccountLimits): UsageBlock {
   const reachedType = limits.rateLimitReachedType;
@@ -224,12 +209,7 @@ function codexUsageBlock(limits: CodexAccountLimits): UsageBlock {
   return { isBlocked: false };
 }
 
-/**
- * A block outranks a grant: a green line on an account the backend refuses is
- * the worse mistake. The bare verdict still carries the grant count, since a
- * reset is the way out of a capped window; a named cause is not one a rate
- * limit reset can lift.
- */
+/** Only the bare verdict carries the grant count: a reset lifts a capped window, not a named cause. */
 function codexAlert(limits: CodexAccountLimits, nowMs: number): LimitAlert | undefined {
   const count = limits.resetCredits;
   const block = codexUsageBlock(limits);

@@ -37,7 +37,6 @@ function limit(id: string, label: string, percent: number | null): UsageLimit {
   return { id, label, percent, reset: `${id} resets in 2h` };
 }
 
-/** The sample snapshot with every provider's limits replaced by the ones given. */
 function snapshotWith(limits: Partial<Record<ProviderId, UsageLimit[]>>): UsageSnapshot {
   const snapshot = structuredClone(mockUsageProvider.readSnapshot());
   for (const id of ["cl", "cx", "go"] as const) {

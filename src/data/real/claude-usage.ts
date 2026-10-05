@@ -8,34 +8,28 @@ export interface ClaudeUsageWindow {
   percent: number;
   /** First-party display text, including the leading "resets". */
   reset: string;
-  /** From the structured report; absent on readings parsed from the text alone. */
   resetsAtMs?: number;
 }
 
 export type ClaudeLimitScope = "model" | "surface";
 
-/** A weekly lane the server scopes to one model or one surface, such as Fable. */
 export interface ClaudeScopedWindow extends ClaudeUsageWindow {
-  /** Derived from the scope alone, so it stays stable across polls; notifications key on it. */
+  /** Stable across polls, since notifications key on it. */
   id: string;
   scope: ClaudeLimitScope;
-  /** The server's display label, e.g. "Fable". */
   name: string;
 }
 
-/** Extra-usage spend for the billing period, carried only while it is switched on. */
 export interface ClaudeExtraUsageSpend {
   used: Money;
   /** null when the plan sets no monthly cap. */
   monthlyLimit: Money | null;
-  /** 0-100, as reported. */
   utilization: number | null;
 }
 
 export interface ClaudeCliUsage {
   session: ClaudeUsageWindow;
   weekly: ClaudeUsageWindow;
-  /** In the server's order. */
   scoped: ClaudeScopedWindow[];
   extraUsage?: ClaudeExtraUsageSpend;
   fetchedAtMs: number;
@@ -56,10 +50,7 @@ export class ClaudeUsageError extends Error {
 
 const RESERVED_LIMIT_IDS = new Set(["session", "weekly"]);
 
-/**
- * "Fable" becomes `fable`, which is the id the Fable lane has always had, so
- * a recorded notification state survives the move to the structured report.
- */
+/** "Fable" stays `fable`, the id that lane has always had. */
 export function scopedWindowId(scope: ClaudeLimitScope, name: string): string | null {
   const slug = name
     .toLowerCase()
@@ -90,7 +81,6 @@ function clampPercent(percent: number): number {
   return Math.min(100, Math.max(0, percent));
 }
 
-/** What a window that has not started accruing says instead of a reset time. */
 function unstartedReset(isSession: boolean): string {
   return isSession ? "starts when a message is sent" : "no usage yet";
 }
@@ -181,8 +171,6 @@ function parseReportRow(value: unknown): ReportRow | typeof MALFORMED {
 }
 
 function reportWindow(row: ReportRow, prose: ClaudeUsageWindow | null, isSession: boolean): ClaudeUsageWindow {
-  // The text twin's prose is kept where it exists, so the reset reads as it
-  // always has; the timestamp is what the countdown and projection use.
   const reset =
     prose?.reset ??
     (row.resetsAtMs !== null
@@ -227,11 +215,9 @@ function parseExtraUsage(value: unknown): ClaudeExtraUsageSpend | undefined {
 }
 
 /**
- * Reads the structured twin Claude Code attaches to `/usage` in stream-json
- * mode. Rows are classified on `kind`, never on their label, as its schema
- * asks. The twin is marked experimental, so anything short of a well-formed
- * session and all-models row reads as absent and the caller falls back to the
- * text, which stays the canonical form.
+ * Rows are classified on `kind`, never on their label, as the schema asks. The
+ * report is experimental, so anything short of well-formed session and weekly
+ * rows reads as absent and the caller falls back to the text.
  */
 export function parseUsageReport(
   report: unknown,
@@ -247,8 +233,7 @@ export function parseUsageReport(
   let weekly: ClaudeUsageWindow | null = null;
   const scoped: ClaudeScopedWindow[] = [];
   for (const value of limits) {
-    // A meter of a kind we do not render yet is skipped unread; a malformed
-    // row of a kind we do render means the shape moved under us.
+    // Unknown kinds are skipped; a malformed known kind means the shape moved.
     if (isRecord(value) && typeof value.kind === "string" && !RENDERED_KINDS.has(value.kind)) continue;
     const row = parseReportRow(value);
     if (row === MALFORMED) return null;
@@ -280,9 +265,8 @@ export function parseUsageReport(
 }
 
 /**
- * Parses `--output-format stream-json` output: the structured report rides on
- * the assistant line and the text on the result line. A single JSON object,
- * the older `--output-format json` shape, reads as one line carrying text only.
+ * The report rides on the assistant line and the text on the result line; the
+ * older single-object json output reads as text only.
  */
 export function parseClaudeUsageMessages(messages: unknown[], fetchedAtMs: number): ClaudeCliUsage | null {
   const textMessage = messages.find(
@@ -304,7 +288,7 @@ function decodeJsonLines(output: string): unknown[] {
     try {
       messages.push(JSON.parse(line));
     } catch {
-      // One unreadable line must not hide the others; none at all is reported by the caller.
+      // A line that is not JSON is skipped; an empty result is the caller's to report.
     }
   }
   return messages;

@@ -26,7 +26,6 @@ export type OverviewMode = "simple" | "detailed";
 
 export type Screen = "app" | "onboarding";
 
-/** Where a test notification sent from the wizard stands. */
 export type NotificationTest = "sending" | DeliveryResult | null;
 
 export interface OnboardingState {
@@ -113,8 +112,7 @@ export function createInitialState(options: AppStateOptions): AppState {
       step: 0,
       cursor: 0,
       picks: picksFromConnections(options.connections),
-      // A first run offers notifications already ticked, on the screen that
-      // explains them; anyone who has been through the wizard keeps their answer.
+      // Ticked by default on a first run; a re-run keeps the saved answer.
       isNotifying: isNotifyingOnLimits || options.screen === "onboarding",
       notificationTest: null,
     },
