@@ -303,8 +303,13 @@ describe("buildClaudeProvider", () => {
       },
     });
 
-    // The CLI's own prose still heads the row; the timestamp adds the countdown.
-    expect(provider.limits[1]?.reset).toBe("resets Jan 16 at 10pm");
+    // Every row counts down once it has a time, so rows sitting one above the
+    // other never mix the CLI's date prose with a countdown.
+    expect(provider.limits.map((limit) => limit.reset)).toEqual([
+      "resets in 1h 0m",
+      "resets in 10h 0m",
+      "resets in 10h 0m",
+    ]);
     expect(provider.limits[1]?.resetLong).toStartWith("resets in 10h 0m");
     expect(provider.limits[0]?.resetLong).toStartWith("resets in 1h 0m");
     expect(provider.limits[2]?.resetLong).toStartWith("resets in 10h 0m");

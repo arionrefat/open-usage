@@ -89,9 +89,9 @@ interface ClaudeWindow extends RateWindowReading {
 }
 
 /**
- * Keeps the CLI's reset prose for display. The timestamp comes from the CLI's
- * structured report where it carried one, else from a fresh statusline
- * snapshot, so the countdown and projection work with either source alone.
+ * The timestamp comes from the CLI's structured report where it carried one,
+ * else from a fresh statusline snapshot, so the countdown and projection work
+ * with either source alone. The CLI's prose is kept for when neither has one.
  */
 function cliWindow(
   window: ClaudeUsageWindow,
@@ -102,6 +102,16 @@ function cliWindow(
     resetsAtMs: window.resetsAtMs ?? snapshotWindow?.resetsAtMs ?? null,
     resetLabel: trimResetProse(window.reset),
   };
+}
+
+/**
+ * A countdown wherever a timestamp exists, so rows sitting one above the other
+ * never mix the CLI's date prose with our own countdown; the prose only
+ * stands in when no source gave a time.
+ */
+function windowReset(window: ClaudeWindow, nowMs: number): string {
+  if (window.resetsAtMs !== null) return resetText(window.resetsAtMs, nowMs);
+  return window.resetLabel ?? resetText(null, nowMs);
 }
 
 function sessionLimit(
@@ -118,10 +128,8 @@ function sessionLimit(
     id: "session",
     label: "current session",
     percent: Math.round(five.percent),
-    reset: five.resetLabel ?? resetText(five.resetsAtMs, nowMs),
+    reset: windowReset(five, nowMs),
   };
-  // Matches the weekly line so the card does not mix the CLI's date prose with
-  // our own countdown on rows sitting one above the other.
   if (five.resetsAtMs !== null) {
     limit.resetLong = `${resetText(five.resetsAtMs, nowMs)} · ${formatClock(five.resetsAtMs)}`;
   }
@@ -150,7 +158,7 @@ function weeklyLimit(
     id: "weekly",
     label: "weekly · all models",
     percent: Math.round(seven.percent),
-    reset: seven.resetLabel ?? resetText(seven.resetsAtMs, nowMs),
+    reset: windowReset(seven, nowMs),
   };
   if (seven.resetsAtMs !== null) {
     limit.resetLong = `${resetText(seven.resetsAtMs, nowMs)} · ${formatClock(seven.resetsAtMs)}`;
@@ -175,7 +183,8 @@ function scopedLimit(
     id: window.id,
     label: `weekly · ${window.name}`,
     percent: Math.round(window.percent),
-    reset: trimResetProse(window.reset),
+    reset:
+      window.resetsAtMs !== undefined ? resetText(window.resetsAtMs, nowMs) : trimResetProse(window.reset),
   };
   if (window.resetsAtMs !== undefined) {
     limit.resetLong = `${resetText(window.resetsAtMs, nowMs)} · ${formatClock(window.resetsAtMs)}`;
