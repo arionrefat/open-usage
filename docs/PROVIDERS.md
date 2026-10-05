@@ -399,7 +399,7 @@ The subscription fields are a snapshot the auth server re-checks on its own sche
 | --- | --- | --- | --- | --- |
 | `~/.local/share/opencode/opencode.db` | SQLite | none | `session` table: `cost` (USD), `tokens_input/output/reasoning/cache_*`, `model`, `time_created`; `message`/`part` JSON blobs | Official local store, already read by the app; 154MB and active on this machine |
 | Published Go plan caps | docs | none | $12 per 5h, $30 per week, $60 per month (Go plan, 2026 pricing; verify against the dashboard before shipping) | Documented but must be re-checked when plans change |
-| `https://opencode.ai/console/api` | Console REST API | browser session cookie | Go meters in dollars with their resets; per-day cost, tokens and requests; per-request usage rows; balance and auto-recharge | Exact console values; the routes are the console's own and can change on deploy |
+| `https://opencode.ai/console/api` | Console REST API | browser session cookie | Go meters in dollars with their resets; per-day cost, tokens and requests; the per-request log; balance and auto-recharge | Exact console values; the routes are the console's own and can change on deploy |
 | Gateway `x-ratelimit-*` headers | HTTP | API key | undocumented | Unverified; capture opportunistically if we ever proxy a request, do not depend on it |
 
 ### Key finding
@@ -465,8 +465,6 @@ Two console routes feed the history: the per-day cost chart for money, and the r
 Both were re-verified against live responses on 2026-10-06, after the console's backend move broke each of them in a different way.
 
 #### The request log replaced the usage table
-
-Verified against live responses on 2026-10-06.
 
 `GET /console/api/usage/rows` now answers `404` with an empty body.
 The console's request log took its place: `GET /console/api/request-logs?since=<epoch ms>&category=inference&limit=<1-100>`.
@@ -544,7 +542,7 @@ A failure part way through fails the walk and keeps the rows already held: retur
 If the log changes shape the held rows stay on screen and the card says "opencode request log changed - showing saved activity"; that flag is persisted with the reading, so a dashboard adopting the daemon's reading says so too.
 On a live Go account cache reads ran to several times the blended total, which is why they are held out of it.
 
-Two wire details are easy to miss and both silently empty the result: a month with no traffic answers `usage:[]`, which is a valid response rather than a parse failure, and booleans are minified to `!0` / `!1` rather than `true` / `false`.
+A window with no traffic answers the chart with `[]` and the log with `items: []`, both valid responses rather than parse failures.
 
 **These dollars are usage value, not money charged.**
 `plan` decides which: `payg` rows are billed, while `sub` and `lite` rows are allowance consumption against a subscription that was already paid for at a flat rate.
@@ -571,6 +569,8 @@ Go Plus publishes its own per-model allowances against different caps, which the
 
 The console's routes and response shapes are its own, not a published API, and the September 2026 migration showed how completely they can change.
 When a route moves or a field is renamed, the parse fails, the UI falls back to the estimate with the drift note, and the paths in `opencode-server.ts` need refreshing against a logged-in console tab.
+The history routes fail the same way but keep their last good months and activity on screen, with a note naming which route changed, since the limits beside them share the cookie and host and already report credential and network trouble.
+The October 2026 backend move showed a quieter kind of drift too: a route that still answers, just with less, which is why a cost reply is merged into banked days rather than trusted to replace them.
 
 There is no self-healing here, and deliberately so: the ids that once justified it are gone, and a REST path cannot be re-derived the way a content hash could.
 What the client does instead is keep the three failure classes apart, since only one of them is drift.
