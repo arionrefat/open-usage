@@ -180,6 +180,14 @@ const SNAPSHOT: UsageSnapshot = {
             { label: "cache read", value: "96.4M" },
           ],
         },
+        {
+          title: "weekly share by surface",
+          rows: [
+            { label: "Claude Code", value: "88%", percent: 88 },
+            { label: "Chats", value: "7%", percent: 7 },
+            { label: "Cowork", value: "5%", percent: 5 },
+          ],
+        },
       ],
     },
     cx: {

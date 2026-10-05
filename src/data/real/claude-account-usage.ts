@@ -30,9 +30,28 @@ export interface ClaudeExtraUsage {
   utilization: number | null;
 }
 
+export interface ClaudeSurfaceShare {
+  /** The server's stable key, e.g. "claude_code". */
+  key: string;
+  /** The server's label, e.g. "Claude Code". */
+  label: string;
+  /** Share of the week's usage, 0-100. */
+  percent: number;
+}
+
+/** How the current week's usage splits across surfaces: Claude Code, chats, Cowork. */
+export interface ClaudeWeeklyBreakdown {
+  asOfMs: number;
+  windowStartedAtMs: number;
+  /** In the server's order. */
+  rows: ClaudeSurfaceShare[];
+}
+
 export interface ClaudeAccountUsage {
   spend: ClaudeSpend;
   extraUsage: ClaudeExtraUsage;
+  /** null on any mismatch with the shape it was built against. */
+  weeklyBreakdown: ClaudeWeeklyBreakdown | null;
   /** When Claude Code last refreshed this from the server. */
   fetchedAtMs: number | null;
 }
@@ -76,6 +95,47 @@ function parseExtraUsage(value: unknown): ClaudeExtraUsage {
   };
 }
 
+function isoMs(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseSurfaceShare(value: unknown): ClaudeSurfaceShare | null {
+  if (!isRecord(value)) return null;
+  const { key, display_name: label } = value;
+  const percent = finite(value.percent);
+  if (typeof key !== "string" || key.length === 0) return null;
+  if (typeof label !== "string" || label.trim().length === 0) return null;
+  if (percent === null || percent < 0 || percent > 100) return null;
+  return { key, label: label.trim(), percent };
+}
+
+/**
+ * `seven_day_breakdown` is the server's raw reply passed through untouched -
+ * Claude Code itself never reads it - so nothing upstream holds its shape
+ * steady. Every field is checked and any mismatch drops the whole breakdown,
+ * including shares that no longer sum to a whole, which is what a change of
+ * unit would look like.
+ */
+export function parseWeeklyBreakdown(value: unknown): ClaudeWeeklyBreakdown | null {
+  if (!isRecord(value) || !Array.isArray(value.rows) || value.rows.length === 0) return null;
+  const asOfMs = isoMs(value.as_of);
+  const windowStartedAtMs = isoMs(value.window_started_at);
+  if (asOfMs === null || windowStartedAtMs === null || windowStartedAtMs > asOfMs) return null;
+  const rows: ClaudeSurfaceShare[] = [];
+  for (const item of value.rows) {
+    const row = parseSurfaceShare(item);
+    if (!row || rows.some((existing) => existing.key === row.key)) return null;
+    rows.push(row);
+  }
+  // Whole-number shares round independently, so the total may miss 100 by up
+  // to half a point per row.
+  const total = rows.reduce((sum, row) => sum + row.percent, 0);
+  if (Math.abs(total - 100) > rows.length / 2) return null;
+  return { asOfMs, windowStartedAtMs, rows };
+}
+
 export function parseClaudeAccountUsage(value: unknown): ClaudeAccountUsage | null {
   if (!isRecord(value)) return null;
   const cached = value.cachedUsageUtilization;
@@ -85,6 +145,7 @@ export function parseClaudeAccountUsage(value: unknown): ClaudeAccountUsage | nu
   return {
     spend: parseSpend(utilization.spend),
     extraUsage: parseExtraUsage(utilization.extra_usage),
+    weeklyBreakdown: parseWeeklyBreakdown(utilization.seven_day_breakdown),
     fetchedAtMs: finite(cached.fetchedAtMs),
   };
 }

@@ -9,7 +9,8 @@ import type {
   SpendSummary,
   UsageLimit,
 } from "../types";
-import { HOUR_MS, formatAge, formatClock, formatCountdown, formatRate, seriesFromBuckets, toMillions, tokensPerHour } from "./aggregate";
+import { DAY_MS, HOUR_MS, formatAge, formatClock, formatCountdown, formatRate, seriesFromBuckets, toMillions, tokensPerHour } from "./aggregate";
+import type { ClaudeWeeklyBreakdown } from "./claude-account-usage";
 import type { HistoryStats } from "./claude-history";
 import type { TranscriptAggregate } from "./claude-transcripts";
 import {
@@ -234,6 +235,7 @@ interface ClaudeProviderInput {
   authSource?: ClaudeAuthSource;
   /** Money and per-model history; absent when neither source has anything. */
   spend?: SpendSummary;
+  weeklyBreakdown?: ClaudeWeeklyBreakdown | null;
 }
 
 function sessionDetails(snapshotFile: SnapshotFile | null): DetailSection | null {
@@ -283,6 +285,21 @@ function extraUsageDetails(live: ClaudeCliUsage | null): DetailSection | null {
         percent: extra.utilization,
       },
     ],
+  };
+}
+
+const WEEK_MS = 7 * DAY_MS;
+
+/** The server's split of this week across surfaces, dropped once that week has ended. */
+function surfaceDetails(breakdown: ClaudeWeeklyBreakdown | null, nowMs: number): DetailSection | null {
+  if (!breakdown || nowMs >= breakdown.windowStartedAtMs + WEEK_MS) return null;
+  return {
+    title: "weekly share by surface",
+    rows: breakdown.rows.map((row) => ({
+      label: row.label,
+      value: `${Math.round(row.percent)}%`,
+      percent: row.percent,
+    })),
   };
 }
 
@@ -375,6 +392,7 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
   const details = [
     sessionDetails(snapshotFile),
     scopedIsFresh ? extraUsageDetails(live) : null,
+    surfaceDetails(input.weeklyBreakdown ?? null, nowMs),
     ...transcriptDetails(transcripts),
   ].filter(
     (section): section is DetailSection => section !== null,

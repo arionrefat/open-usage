@@ -464,6 +464,7 @@ function buildSnapshot(
     history,
     snapshotFile,
     spend,
+    weeklyBreakdown: account?.weeklyBreakdown ?? null,
     limitsSource: claudeLimits,
     hasStatusline: hasStatuslineConfigured(paths.claudeSettings),
     trend,

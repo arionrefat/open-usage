@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   hasSpendFigure,
   parseClaudeAccountUsage,
+  parseWeeklyBreakdown,
   readClaudeAccountUsage,
 } from "../../../src/data/real/claude-account-usage";
 
@@ -99,6 +100,76 @@ describe("parseClaudeAccountUsage", () => {
 
     expect(usage?.extraUsage.isEnabled).toBe(true);
     expect(usage?.extraUsage.isSpendLimitReached).toBe(true);
+  });
+});
+
+/** `seven_day_breakdown` in the shape `~/.claude.json` carries it. */
+const BREAKDOWN = {
+  as_of: "2026-10-05T21:38:20.621254+00:00",
+  window_started_at: "2026-09-29T23:59:59.538998+00:00",
+  rows: [
+    { key: "claude_code", display_name: "Claude Code", percent: 88 },
+    { key: "chat", display_name: "Chats", percent: 7 },
+    { key: "cowork", display_name: "Cowork", percent: 5 },
+    { key: "other", display_name: "Other", percent: 0 },
+  ],
+};
+
+function withBreakdown(breakdown: unknown): unknown {
+  return {
+    cachedUsageUtilization: {
+      ...CREDITS_OFF.cachedUsageUtilization,
+      utilization: { ...CREDITS_OFF.cachedUsageUtilization.utilization, seven_day_breakdown: breakdown },
+    },
+  };
+}
+
+describe("parseWeeklyBreakdown", () => {
+  test("reads the share of the week by surface, in the server's order", () => {
+    expect(parseClaudeAccountUsage(withBreakdown(BREAKDOWN))?.weeklyBreakdown).toEqual({
+      asOfMs: Date.parse("2026-10-05T21:38:20.621254+00:00"),
+      windowStartedAtMs: Date.parse("2026-09-29T23:59:59.538998+00:00"),
+      rows: [
+        { key: "claude_code", label: "Claude Code", percent: 88 },
+        { key: "chat", label: "Chats", percent: 7 },
+        { key: "cowork", label: "Cowork", percent: 5 },
+        { key: "other", label: "Other", percent: 0 },
+      ],
+    });
+  });
+
+  test("tolerates the rounding of whole-number shares", () => {
+    const rows = [
+      { key: "a", display_name: "A", percent: 34 },
+      { key: "b", display_name: "B", percent: 33 },
+      { key: "c", display_name: "C", percent: 34 },
+    ];
+    expect(parseWeeklyBreakdown({ ...BREAKDOWN, rows })?.rows).toHaveLength(3);
+  });
+
+  test("any mismatch drops the whole breakdown without touching the spend", () => {
+    const row = BREAKDOWN.rows[0]!;
+    const mismatches: unknown[] = [
+      undefined,
+      null,
+      { ...BREAKDOWN, rows: [] },
+      { ...BREAKDOWN, rows: "Claude Code 88%" },
+      { ...BREAKDOWN, as_of: undefined },
+      { ...BREAKDOWN, window_started_at: "last monday" },
+      { ...BREAKDOWN, window_started_at: "2026-10-06T00:00:00+00:00" },
+      { ...BREAKDOWN, rows: [{ ...row, percent: "88" }, ...BREAKDOWN.rows.slice(1)] },
+      { ...BREAKDOWN, rows: [{ ...row, display_name: "" }, ...BREAKDOWN.rows.slice(1)] },
+      { ...BREAKDOWN, rows: [{ ...row, key: 7 }, ...BREAKDOWN.rows.slice(1)] },
+      { ...BREAKDOWN, rows: [...BREAKDOWN.rows, row] },
+      // Shares reported as fractions would be a change of unit.
+      { ...BREAKDOWN, rows: BREAKDOWN.rows.map((item) => ({ ...item, percent: item.percent / 100 })) },
+      { ...BREAKDOWN, rows: [{ ...row, percent: 188 }, ...BREAKDOWN.rows.slice(1)] },
+    ];
+    for (const breakdown of mismatches) {
+      const usage = parseClaudeAccountUsage(withBreakdown(breakdown));
+      expect(usage?.weeklyBreakdown).toBeNull();
+      expect(usage?.spend.used?.amountMinor).toBe(0);
+    }
   });
 });
 

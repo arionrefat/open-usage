@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { HOUR_MS } from "../../../src/data/real/aggregate";
 import { buildClaudeProvider, createClaudeMeta } from "../../../src/data/real/claude-provider";
+import type { ClaudeWeeklyBreakdown } from "../../../src/data/real/claude-account-usage";
 import type { SnapshotFile, WeeklyTrend } from "../../../src/data/real/statusline-snapshot";
 import {
   dormantClaudeLimitsSource,
@@ -66,6 +67,7 @@ function build(options: {
   historyAvailable?: boolean;
   live?: ClaudeCliUsage | null;
   subscriptionType?: string | null;
+  weeklyBreakdown?: ClaudeWeeklyBreakdown | null;
 } = {}) {
   return buildClaudeProvider({
     meta: createClaudeMeta(),
@@ -99,6 +101,7 @@ function build(options: {
     trend: trend(options.trendRate ?? null),
     dates: ["2026-01-15"],
     now: NOW,
+    weeklyBreakdown: options.weeklyBreakdown ?? null,
     ...(options.subscriptionType === undefined
       ? {}
       : {
@@ -344,6 +347,28 @@ describe("buildClaudeProvider", () => {
     ]);
     expect(section(liveUsage("resets later"))).toBeUndefined();
     expect(section({ ...withExtra, fetchedAtMs: NOW_MS - 2 * HOUR_MS })).toBeUndefined();
+  });
+
+  test("shows the week's share by surface until that week ends", () => {
+    const breakdown = (windowStartedAtMs: number): ClaudeWeeklyBreakdown => ({
+      asOfMs: NOW_MS - HOUR_MS,
+      windowStartedAtMs,
+      rows: [
+        { key: "claude_code", label: "Claude Code", percent: 88 },
+        { key: "chat", label: "Chats", percent: 7 },
+      ],
+    });
+    const section = (value: ClaudeWeeklyBreakdown | null) =>
+      build({ weeklyBreakdown: value }).details?.find(
+        (candidate) => candidate.title === "weekly share by surface",
+      );
+
+    expect(section(breakdown(NOW_MS - 2 * 24 * HOUR_MS))?.rows).toEqual([
+      { label: "Claude Code", value: "88%", percent: 88 },
+      { label: "Chats", value: "7%", percent: 7 },
+    ]);
+    expect(section(breakdown(NOW_MS - 8 * 24 * HOUR_MS))).toBeUndefined();
+    expect(section(null)).toBeUndefined();
   });
 
   test("a missing snapshot yields capless session and weekly limits", () => {

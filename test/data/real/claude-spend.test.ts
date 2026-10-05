@@ -32,6 +32,7 @@ function creditAccount(usedMinor: number): ClaudeAccountUsage {
       wasEverEnabled: true,
       utilization: 37,
     },
+    weeklyBreakdown: null,
     fetchedAtMs: NOW.getTime(),
   };
 }
