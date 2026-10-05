@@ -464,6 +464,55 @@ describe("fetchGoUsageRows", () => {
     }
   });
 
+  /** Answers each page after `delayMs`, or rejects as fetch does once the request is aborted. */
+  function slowConsole(delayMs: number, pageCount: number) {
+    let pages = 0;
+    return spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        (_input: string | URL | Request, init?: RequestInit | BunFetchRequestInit) =>
+          new Promise<Response>((resolve, reject) => {
+            const timer = setTimeout(() => {
+              pages += 1;
+              const nextCursor = pages < pageCount ? `page_${pages}` : null;
+              resolve(json({ items: [rowAt(pages, NOW.getTime())], nextCursor, until: 1 }));
+            }, delayMs);
+            init?.signal?.addEventListener("abort", () => {
+              clearTimeout(timer);
+              reject(init.signal?.reason);
+            });
+          }),
+        { preconnect: (_url: string | URL) => undefined },
+      ),
+    );
+  }
+
+  test("a walk longer than one page's deadline still finishes", async () => {
+    const fetchSpy = slowConsole(30, 4);
+    try {
+      const rows = await fetchGoUsageRows("auth=secret", WORKSPACE_ID, {
+        sinceMs: NOW.getTime() - 86_400_000,
+        pageTimeoutMs: 60,
+      });
+      expect(rows).toHaveLength(4);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("a single stuck page fails the walk as a network failure", async () => {
+    const fetchSpy = slowConsole(200, 1);
+    try {
+      const failure = await fetchGoUsageRows("auth=secret", WORKSPACE_ID, {
+        sinceMs: NOW.getTime() - 86_400_000,
+        pageTimeoutMs: 20,
+      }).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(OpencodeServerError);
+      expect(failure).toMatchObject({ kind: "network" });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   test("stops at the page cap rather than walking indefinitely", async () => {
     let pages = 0;
     const fetchSpy = mockConsole(() => {

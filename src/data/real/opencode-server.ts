@@ -437,7 +437,10 @@ export async function fetchGoUsageHistory(
 const USAGE_PAGE_SIZE = 100;
 /** Backstop only, sized for two hundred requests a day; a busier month is truncated. */
 const MAX_USAGE_PAGES = 60;
-const USAGE_ROWS_TIMEOUT_MS = 45_000;
+/** Per page: the walk is sequential, and live pages take anywhere from one to eight seconds. */
+const USAGE_PAGE_TIMEOUT_MS = 20_000;
+/** A cold 30-day walk measured 13 pages in 32s, so the whole walk gets several times that. */
+const USAGE_WALK_TIMEOUT_MS = 180_000;
 
 /**
  * Pages the request log back to `sinceMs`, newest first. Later pages repeat the
@@ -446,10 +449,16 @@ const USAGE_ROWS_TIMEOUT_MS = 45_000;
 export async function fetchGoUsageRows(
   cookieHeader: string,
   workspaceId: string,
-  options: { sinceMs: number; signal?: AbortSignal; timeoutMs?: number; maxPages?: number },
+  options: {
+    sinceMs: number;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    pageTimeoutMs?: number;
+    maxPages?: number;
+  },
 ): Promise<GoUsageRow[]> {
   const cookie = requireCookie(cookieHeader);
-  const signal = deadlineSignal(options.timeoutMs ?? USAGE_ROWS_TIMEOUT_MS, options.signal);
+  const walkSignal = deadlineSignal(options.timeoutMs ?? USAGE_WALK_TIMEOUT_MS, options.signal);
   const maxPages = options.maxPages ?? MAX_USAGE_PAGES;
   const query = {
     since: String(Math.max(0, Math.floor(options.sinceMs))),
@@ -463,7 +472,7 @@ export async function fetchGoUsageRows(
     const payload: unknown = await consoleJson("/request-logs", {
       cookie,
       orgId: workspaceId,
-      signal,
+      signal: deadlineSignal(options.pageTimeoutMs ?? USAGE_PAGE_TIMEOUT_MS, walkSignal),
       query: next === null ? query : { ...query, ...next },
     });
     const parsed = parseUsagePage(payload);
