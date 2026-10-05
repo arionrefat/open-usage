@@ -37,23 +37,49 @@ const reading: GoHistoryReading = {
   ],
   rows: [
     {
-      id: "usg_1",
-      sessionId: "ses_1",
-      keyId: null,
+      id: "rlg_test1",
+      sessionId: "ses_test1",
       atMs: fetchedAtMs,
       model: "kimi-k3",
+      isRejected: false,
       inputTokens: 1,
       outputTokens: 2,
       reasoningTokens: 0,
       cacheReadTokens: 0,
-      cacheWrite5mTokens: 0,
-      cacheWrite1hTokens: 0,
+      cacheWriteTokens: 0,
       usd: 0,
       plan: "lite",
-      isByok: false,
     },
   ],
+  hasRequestLogDrift: false,
   fetchedAtMs,
+};
+
+/** What the release before the request log wrote, rows from the retired usage table included. */
+const VERSION_1_FILE = {
+  version: 1,
+  reading: {
+    months: reading.months,
+    rows: [
+      {
+        id: "2095385180",
+        sessionId: null,
+        keyId: null,
+        atMs: fetchedAtMs,
+        model: "glm-5.3-flash",
+        inputTokens: 2981,
+        outputTokens: 55,
+        reasoningTokens: 0,
+        cacheReadTokens: 41344,
+        cacheWrite5mTokens: 0,
+        cacheWrite1hTokens: 0,
+        usd: 0.00171497,
+        plan: "lite",
+        isByok: false,
+      },
+    ],
+    fetchedAtMs,
+  },
 };
 
 describe("go history cache", () => {
@@ -81,8 +107,22 @@ describe("go history cache", () => {
       expect(readGoHistoryCache(path)).toBeNull();
       writeFileSync(path, "not json");
       expect(readGoHistoryCache(path)).toBeNull();
-      writeFileSync(path, JSON.stringify({ version: 2, reading }));
+      writeFileSync(path, JSON.stringify({ version: 3, reading }));
       expect(readGoHistoryCache(path)).toBeNull();
+    });
+  });
+
+  test("an older file keeps its months and drops rows the request log cannot join", () => {
+    tempCache((path) => {
+      writeFileSync(path, JSON.stringify(VERSION_1_FILE));
+
+      const migrated = readGoHistoryCache(path);
+      expect(migrated?.months).toEqual(reading.months);
+      // Old table ids share nothing with request log ids, so keeping these
+      // would count every request twice once the log is walked.
+      expect(migrated?.rows).toBeNull();
+      // Stamped as never fetched, so the first poll walks the log at once.
+      expect(migrated?.fetchedAtMs).toBe(0);
     });
   });
 });

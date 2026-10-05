@@ -516,6 +516,7 @@ function buildSnapshot(
     history: goHistory.read(),
     billing: goHistory.billing(),
     activity: goHistory.activity(),
+    historyNote: goHistory.note(),
   });
   const fetchedAt = latestSourceTimestamp(nowMs, [
     claudeLimits.read()?.fetchedAtMs ?? 0,

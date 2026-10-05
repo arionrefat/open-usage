@@ -122,18 +122,19 @@ function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: nu
 function sessionsFooter(
   stats: OpencodeSessionStats | undefined,
   server: GoServerLimits | null,
+  isWorkspace: boolean,
 ): string | undefined {
+  const origin = isWorkspace ? "the opencode console" : "opencode.db";
   if (!stats || stats.sessions <= 0) {
-    // The console reports requests rather than sessions, so workspace history
-    // arrives with tokens and no session count. Calling that "no history" would
-    // deny a chart the reader is looking at.
+    // A request the log could not tie to a session still spent tokens, and
+    // calling that "no history" would deny a chart the reader is looking at.
     if (stats && stats.tokens > 0) {
-      return `tokens 30d ${formatTokenCount(stats.tokens)} ▏ workspace-wide ▏ tokens from the opencode console`;
+      return `tokens 30d ${formatTokenCount(stats.tokens)} ▏ workspace-wide ▏ tokens from ${origin}`;
     }
     if (!server) return undefined;
     return `no local history ▏ limits from ${server.source === "api" ? "API" : "dashboard"}`;
   }
-  return `sessions 30d ${stats.sessions} ▏ avg per session ${formatTokenCount(stats.tokens / stats.sessions)} ▏ tokens from opencode.db`;
+  return `sessions 30d ${stats.sessions} ▏ avg per session ${formatTokenCount(stats.tokens / stats.sessions)} ▏ tokens from ${origin}`;
 }
 
 /**
@@ -340,6 +341,8 @@ interface GoProviderInput {
   /** Workspace-wide activity from the dashboard; outranks the local buckets. */
   activity?: GoActivity | null;
   billing?: GoBilling | null;
+  /** Why the history shown is the last good copy rather than a fresh one. */
+  historyNote?: string | null;
 }
 
 interface GoProviderResult {
@@ -382,7 +385,10 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
   // Only when there are no server limits to show: a workspace still reporting
   // its windows has a plan, whatever a cached billing record says.
   const planNotice = server ? null : unsubscribedNotice(billing ?? null);
-  const noticeText = planNotice ?? goNoticeText(note, limitsSource.cookieExpiresAtMs(), nowMs);
+  const noticeText =
+    [planNotice ?? goNoticeText(note, limitsSource.cookieExpiresAtMs(), nowMs), input.historyNote ?? null]
+      .filter((text): text is string => text !== null)
+      .join(" · ") || null;
   const usesEstimate =
     !server || (spend !== null && (server.weeklyPercent === null || server.monthlyPercent === null));
   return {
@@ -413,7 +419,7 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
             },
           }
         : {}),
-      detailFooter: sessionsFooter(stats, server),
+      detailFooter: sessionsFooter(stats, server, workspace !== null),
     },
   };
 }

@@ -465,32 +465,63 @@ Verified against live responses on 2026-09-21.
 A row is `{ date: "YYYY-MM-DD", totalCostMicroCents, totalTokens, totalRequests }`, and one call covers the whole span, so three months of history cost one request rather than three.
 It names no model, which is why a closed month's cost rows carry `model: null` rather than a guess.
 
-`GET /console/api/usage/rows?since=<ISO>&pageSize=100&cursor=<cursor>` backs the usage table, 100 rows a page and cursor-paged.
-A row is `{ id, orgId, userId, principalType, serviceUserId, serviceApiKeyId, appReferrer, provider, model, inputTokens, outputTokens, reasoningTokens, cacheReadTokens, cacheWrite5mTokens, cacheWrite1hTokens, billingSource, costMicroCents, createdAt }`.
-`billingSource` is one of `managed-inference`, `free`, `byok`, `go`, `credit`, `seat-credit`; only the money-backed three are reported as spend, and the rest as allowance.
-There is no session id any more, so the workspace card reports tokens and models but not a session count.
-`GET /console/api/usage/models` gives the same totals per model when only a breakdown is wanted.
+#### The request log replaced the usage table
 
-`since` takes `YYYY-MM-DDTHH:MM:SSZ` and rejects a value carrying milliseconds; `range` is one of `24h`, `7d`, `30d`; `pageSize` above 100 is refused.
+Verified against live responses on 2026-10-06.
 
-**Money is micro-cents everywhere: `1e8` to the dollar.** Taking `costMicroCents` at face value overstates by a factor of 100 million.
+`GET /console/api/usage/rows` now answers `404` with an empty body.
+The console's request log took its place: `GET /console/api/request-logs?since=<epoch ms>&category=inference&limit=<1-100>`.
+A page is `{ items, nextCursor, until, retentionDays: 30 }`, newest first.
+The next page repeats `cursor=<nextCursor>` together with `until=<until>` from the first page, which is how the console's own "older" button pins the walk so a request landing mid-walk cannot shift every later page by a row.
+A cursor the server no longer honours answers `409 RequestLogCursorRestartRequired`, which the client treats as a transient failure and walks again on the next poll.
+A light workspace's 30 days take about a dozen pages.
+
+An item carries `id` and `requestID` (both unique per request), `startedAt` and `finishedAt` in epoch milliseconds, `sessionID`, `model` and `requestedModel`, `product`, `app`, `statusCode`, `outcome`, `errorCode`, `durationMs`, `timeToFirstTokenMs`, `inputTokens`, `outputTokens`, `reasoningTokens`, `cacheReadTokens`, `cacheWriteTokens`, `cacheWrite1hTokens` and `cost`, plus request metadata the client never reads.
+Unlike the cost chart, counts are numbers and `cost` is plain dollars (`0.16084381`), not micro-cents.
+The walk joins rows across polls by `id`, as it joined the old table's row ids.
+Old table ids share nothing with request ids, so the cache moved to version 2 and a version 1 file keeps its cost months but drops its rows.
+
+`outcome` is `succeeded`, `failed` or `rejected`.
+A rejected request is refused before inference ran, such as the `429` at a Go cap, and carries no counts and no cost.
+A succeeded request missing its counts fails the page as drift, since a renamed field would otherwise read as a month of zero usage.
+
+`reasoningTokens` is part of `outputTokens`, not a sibling: across 506 live requests that reported reasoning it never exceeded output, and one grok-4.7 request reported 16855 of its 16926 output tokens as reasoning.
+The parser stores output net of reasoning, which is the shape `opencode.db` uses, so every downstream sum stays exact and nothing is counted twice.
+The console lists `cacheWriteTokens` and `cacheWrite1hTokens` on separate lines, as the old table's 5m and 1h fields were, and the client adds them.
+No Go model has reported a cache write yet, so that the two never overlap is the console's presentation rather than a measurement.
+
+There is no billing source any more; `product` names what served the request.
+Every request seen on a Go plan is `go`.
+The console's own code treats `standard`, `go` and `go-plus` as opencode-served and every other product as a request through the workspace's own provider connection.
+So `standard`, Zen's pay-as-you-go drawn from credit, is reported as billed, and everything else as allowance: `go` and `go-plus` consume a subscription already paid for, and opencode does not bill a request routed through the workspace's own provider.
+Whether a request served from credit after a Go cap ("extra usage", `useBalance`) is labelled `go` or `standard` has not been observed.
+
+The log's retention is 30 days, but it only reached back to the console migration on 2026-09-20; earlier requests are in the cost chart's totals and nowhere else.
+
+#### The cost chart
+
+`since` takes `YYYY-MM-DDTHH:MM:SSZ` and rejects a value carrying milliseconds; `range` is one of `24h`, `7d`, `30d`.
+
+**Money is micro-cents on the chart: `1e8` to the dollar.** Taking `totalCostMicroCents` at face value overstates by a factor of 100 million.
 Token counts and costs both arrive as decimal strings, not numbers.
-The dashboard counts cache reads and both cache writes as input: `inputTokens + cacheReadTokens + cacheWrite5mTokens + cacheWrite1hTokens`.
 
 These are parsed by `src/data/real/opencode-usage.ts`, assembled by `go-spend-summary.ts`, and polled by `go-history-source.ts` every 30 minutes for the open month plus two closed ones.
-Money for every month comes from the day chart, which covers all three; the per-model breakdown comes from the usage rows, which reach back 30 days, so the open month names its models and closed ones report totals alone.
+Money for every month comes from the day chart; the per-model breakdown comes from the request log, which reaches back 30 days, so the open month names its models and closed ones report totals alone.
 
 `usage.list`, the console table's predecessor, was parsed but never fetched until 2026-08-26, which left the cookie a second-class source: it reported exact limits and per-day cost, and then said "no history" because `opencode.db` was the only thing wired to `series`.
 That database does not exist until opencode has been installed and used, so a cookie-only setup - which the dashboard fully supports - had no activity chart at all.
-`fetchGoUsageRows` now walks the table back over the 30-day window and `go-activity.ts` folds it into the same shape `opencode.db` produces, so one rendering path serves both.
+`fetchGoUsageRows` now walks the request log back over the 30-day window and `go-activity.ts` folds it into the same shape `opencode.db` produces, so one rendering path serves both.
 
 Two properties make this safe to put on the shared axis.
-The table reports every token kind separately, so the blended basis is computed exactly rather than approximated - `input + output + reasoning + cacheWrite5m + cacheWrite1h`, matching the local `TOKENS_SQL` term for term, with cache reads carried in `cacheRead30d` as they are everywhere else.
+The log reports every token kind separately, so the blended basis is computed exactly rather than approximated - `input + output + cacheWrite + cacheWrite1h`, with reasoning already inside output, which matches the local `TOKENS_SQL` term for term once output is stored net of reasoning; cache reads are carried in `cacheRead30d` as they are everywhere else.
 And it covers the whole workspace rather than this device, which is a wider population than the other providers report, so the provider sets `seriesScope: "workspace"` and the UI says so rather than leaving the reader to assume.
+`sessionID` is back on every request, so the workspace card reports a session count again, and rejected requests are kept out of the token totals and the top model.
 
 The dashboard outranks `opencode.db` when both exist, and replaces it rather than adding to it: the two describe overlapping sessions, so summing them would double count.
-Rows arrive newest first, so the walk stops at the first page reaching past the window - two or three requests on a light month, capped at 24 - and a failure part way through returns the pages already collected rather than losing the window, since only an empty first page leaves nothing worth keeping.
-Measured on a live lite account: 152 sessions and 3.84M blended tokens over 12 active days, against 57.8M cache reads held out of that figure.
+The walk ends when the console stops sending a cursor, capped at 60 pages, and walks only back to the newest row already held, so a poll half an hour after the last costs a page or two.
+A failure part way through fails the walk and keeps the rows already held: returning the newest pages alone would leave a hole between them and the held rows that no later walk would fill.
+If the log changes shape the held rows stay on screen and the card says "opencode request log changed - showing saved activity"; that flag is persisted with the reading, so a dashboard adopting the daemon's reading says so too.
+On a live Go account cache reads ran to several times the blended total, which is why they are held out of it.
 
 Two wire details are easy to miss and both silently empty the result: a month with no traffic answers `usage:[]`, which is a valid response rather than a parse failure, and booleans are minified to `!0` / `!1` rather than `true` / `false`.
 

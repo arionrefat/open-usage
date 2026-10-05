@@ -3,10 +3,10 @@ import type { OpencodeSessionStats } from "./opencode-db";
 import type { GoUsageRow } from "./opencode-usage";
 
 /**
- * Turns the dashboard's per-session usage table into the same activity shape
- * `opencode.db` produces, so one rendering path serves both sources.
+ * Turns the console's request log into the same activity shape `opencode.db`
+ * produces, so one rendering path serves both sources.
  *
- * The dashboard covers the whole workspace rather than this device, which is
+ * The console covers the whole workspace rather than this device, which is
  * the reason the provider labels its scope. It may fill `series` at all only
  * because it reports every token kind separately, so the blended basis can be
  * computed exactly rather than approximated - a source that cannot do that
@@ -19,13 +19,7 @@ export interface GoActivity {
 
 /** Fresh tokens only, matching the local db's `TOKENS_SQL`; cache reads are out. */
 export function blendedTokens(row: GoUsageRow): number {
-  return (
-    row.inputTokens +
-    row.outputTokens +
-    row.reasoningTokens +
-    row.cacheWrite5mTokens +
-    row.cacheWrite1hTokens
-  );
+  return row.inputTokens + row.outputTokens + row.reasoningTokens + row.cacheWriteTokens;
 }
 
 export function goActivityFromRows(rows: GoUsageRow[]): GoActivity {
@@ -40,14 +34,15 @@ export function goActivityFromRows(rows: GoUsageRow[]): GoActivity {
   let totalUsd = 0;
 
   for (const row of rows) {
-    const blended = blendedTokens(row);
-    if (row.atMs !== null) {
-      addToBucket(buckets, row.atMs, blended);
-      latestMs = Math.max(latestMs, row.atMs);
-      const day = localDateKey(new Date(row.atMs));
-      dayCosts.set(day, (dayCosts.get(day) ?? 0) + row.usd);
-    }
     if (row.sessionId !== null) sessions.add(row.sessionId);
+    // A refused request ran no inference, so it would only inflate the request
+    // count behind the top model.
+    if (row.isRejected) continue;
+    const blended = blendedTokens(row);
+    addToBucket(buckets, row.atMs, blended);
+    latestMs = Math.max(latestMs, row.atMs);
+    const day = localDateKey(new Date(row.atMs));
+    dayCosts.set(day, (dayCosts.get(day) ?? 0) + row.usd);
     tokens += blended;
     totalUsd += row.usd;
     if (blended > 0) modelTokens[row.model] = (modelTokens[row.model] ?? 0) + blended;
@@ -56,7 +51,7 @@ export function goActivityFromRows(rows: GoUsageRow[]): GoActivity {
     split.output += row.outputTokens;
     split.reasoning += row.reasoningTokens;
     split.cacheRead += row.cacheReadTokens;
-    split.cacheWrite += row.cacheWrite5mTokens + row.cacheWrite1hTokens;
+    split.cacheWrite += row.cacheWriteTokens;
   }
 
   let topModel: string | null = null;

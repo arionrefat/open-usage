@@ -2,10 +2,11 @@ import { finiteNumber, isRecord, timestampMs } from "./json";
 
 /**
  * Parsers for the opencode console's usage payloads: the per-day cost chart
- * (`/usage/cost-by-day`) and the per-request table (`/usage/rows`).
+ * (`/usage/cost-by-day`) and the request log (`/request-logs`).
  *
- * The console reports money in micro-cents and counts as decimal strings, both
- * of which are converted here so nothing downstream has to know the wire units.
+ * The chart reports money in micro-cents and counts as decimal strings, while
+ * the request log uses plain numbers and dollars. Both are converted here so
+ * nothing downstream has to know the wire units.
  */
 export const COST_UNITS_PER_USD = 1e8;
 
@@ -43,29 +44,31 @@ export interface GoCostDay {
   requests: number;
 }
 
+/** One request from the console's request log. */
 export interface GoUsageRow {
-  /** The server's own row id, which is what lets a re-read of the table merge with the rows already held. */
-  id: string | null;
-  /** Always null on the console API, which reports requests rather than sessions. */
+  /** The server's own request id, which is what lets a re-read of the log merge with the rows already held. */
+  id: string;
   sessionId: string | null;
-  keyId: string | null;
-  atMs: number | null;
+  atMs: number;
   model: string;
+  /** Refused before inference ran - a 429 at the plan's cap - so it carries no tokens. */
+  isRejected: boolean;
   inputTokens: number;
+  /** Net of reasoning: the log counts reasoning inside its output, opencode.db beside it. */
   outputTokens: number;
   reasoningTokens: number;
   cacheReadTokens: number;
-  cacheWrite5mTokens: number;
-  cacheWrite1hTokens: number;
+  cacheWriteTokens: number;
   usd: number;
   plan: GoPlan;
-  isByok: boolean;
 }
 
-/** One page of the per-request table, with the cursor that continues it. */
+/** One page of the request log, with what continues it. */
 export interface GoUsagePage {
   rows: GoUsageRow[];
   nextCursor: string | null;
+  /** The snapshot bound the first page fixed, which every later page must repeat. */
+  untilMs: number | null;
 }
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -85,15 +88,14 @@ export function usdFromMicroCents(value: unknown): number | null {
 }
 
 /**
- * Requests billed against money are spend; everything else draws on an
- * allowance already paid for. `free` and `byok` cost the workspace nothing, so
- * they belong on the allowance side rather than in a billed total.
+ * The request log names the product a request was served under instead of
+ * the money behind it. `standard` is Zen's pay-as-you-go, drawn from credit,
+ * so it is spend. `go` and `go-plus` draw on a subscription already paid for,
+ * and the console treats every other product as the workspace's own provider
+ * connection, which opencode does not bill - all of that is allowance.
  */
-const BILLED_SOURCES = new Set(["managed-inference", "credit", "seat-credit"]);
-
-export function planFromBillingSource(value: unknown): GoPlan {
-  if (typeof value !== "string") return "lite";
-  return BILLED_SOURCES.has(value) ? "payg" : "lite";
+export function planFromProduct(value: unknown): GoPlan {
+  return value === "standard" ? "payg" : "lite";
 }
 
 function costDayFromRecord(value: unknown): GoCostDay | null {
@@ -119,40 +121,63 @@ export function parseCostDays(value: unknown): GoCostDay[] | null {
   return days.some((day) => day === null) ? null : (days as GoCostDay[]);
 }
 
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/**
+ * Only a request that ran carries counts, so a succeeded one missing them is
+ * a renamed field rather than an empty request. Failing the page then is what
+ * keeps a rename from reading as a month of zero usage.
+ */
 function usageRowFromRecord(value: unknown): GoUsageRow | null {
   if (!isRecord(value)) return null;
-  const { model } = value;
-  const inputTokens = numericField(value.inputTokens);
-  const outputTokens = numericField(value.outputTokens);
-  if (typeof model !== "string" || model.length === 0) return null;
-  if (inputTokens === null || outputTokens === null) return null;
-  const id = value.id;
+  const id = nonEmptyString(value.id);
+  const atMs = timestampMs(value.startedAt);
+  const model = nonEmptyString(value.model) ?? nonEmptyString(value.requestedModel);
+  const { outcome } = value;
+  if (id === null || atMs === null || model === null || typeof outcome !== "string") return null;
+
+  const inputTokens = finiteNumber(value.inputTokens);
+  const reportedOutput = finiteNumber(value.outputTokens);
+  if (outcome === "succeeded" && (inputTokens === null || reportedOutput === null)) return null;
+  const reasoningTokens = finiteNumber(value.reasoningTokens) ?? 0;
   return {
-    id: typeof id === "string" ? id : typeof id === "number" ? String(id) : null,
-    sessionId: null,
-    keyId: typeof value.serviceApiKeyId === "string" ? value.serviceApiKeyId : null,
-    atMs: timestampMs(value.createdAt),
+    id,
+    sessionId: nonEmptyString(value.sessionID),
+    atMs,
     model,
-    inputTokens,
-    outputTokens,
-    reasoningTokens: numericField(value.reasoningTokens) ?? 0,
-    cacheReadTokens: numericField(value.cacheReadTokens) ?? 0,
-    cacheWrite5mTokens: numericField(value.cacheWrite5mTokens) ?? 0,
-    cacheWrite1hTokens: numericField(value.cacheWrite1hTokens) ?? 0,
-    usd: usdFromMicroCents(value.costMicroCents) ?? 0,
-    plan: planFromBillingSource(value.billingSource),
-    isByok: value.billingSource === "byok",
+    isRejected: outcome === "rejected",
+    inputTokens: inputTokens ?? 0,
+    // Reasoning never exceeded output across a month of live rows, so it is a
+    // part of output here, not a sibling; the clamp guards a request that ever
+    // reports otherwise from going negative.
+    outputTokens: Math.max(0, (reportedOutput ?? 0) - reasoningTokens),
+    reasoningTokens,
+    cacheReadTokens: finiteNumber(value.cacheReadTokens) ?? 0,
+    // The console lists the two write lifetimes on separate lines, as the
+    // older table's 5m and 1h fields were. No Go model has written cache yet,
+    // so that they never overlap is the console's word rather than measured.
+    cacheWriteTokens:
+      (finiteNumber(value.cacheWriteTokens) ?? 0) + (finiteNumber(value.cacheWrite1hTokens) ?? 0),
+    usd: finiteNumber(value.cost) ?? 0,
+    plan: planFromProduct(value.product),
   };
 }
 
-/** Reads one page of the per-request usage table. */
+/** Reads one page of the request log. */
 export function parseUsagePage(value: unknown): GoUsagePage | null {
   if (!isRecord(value) || !Array.isArray(value.items)) return null;
-  const rows = value.items.map(usageRowFromRecord);
-  if (rows.some((row) => row === null)) return null;
+  const rows: GoUsageRow[] = [];
+  for (const item of value.items) {
+    const row = usageRowFromRecord(item);
+    if (row === null) return null;
+    rows.push(row);
+  }
   return {
-    rows: rows as GoUsageRow[],
-    nextCursor: typeof value.nextCursor === "string" ? value.nextCursor : null,
+    rows,
+    nextCursor: nonEmptyString(value.nextCursor),
+    untilMs: finiteNumber(value.until),
   };
 }
 

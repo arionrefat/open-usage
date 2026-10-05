@@ -144,13 +144,38 @@ describe("buildGoProvider limits", () => {
     expect(build().provider.detailFooter).toBeUndefined();
   });
 
-  test("workspace history counts tokens, since the console reports no sessions", () => {
+  test("workspace history counts the log's sessions and names the console as their source", () => {
+    const workspace = (sessions: number) => ({
+      buckets: new Map(),
+      stats: { sessions, tokens: 9_668_060, latestMs: NOW_MS, topModel: "glm-5.3" },
+    });
+
+    const result = build({ server: SERVER, activity: workspace(29) }).provider;
+    expect(result.sessions30d).toBe(29);
+    expect(result.detailFooter).toBe(
+      "sessions 30d 29 ▏ avg per session 333K ▏ tokens from the opencode console",
+    );
     // Calling a chart the reader is looking at "no local history" would be a lie.
-    const footer = build({
-      server: SERVER,
-      stats: { sessions: 0, tokens: 9_668_060, latestMs: NOW_MS, topModel: "glm-5.3" },
-    }).provider.detailFooter;
-    expect(footer).toBe("tokens 30d 9.7M ▏ workspace-wide ▏ tokens from the opencode console");
+    expect(build({ server: SERVER, activity: workspace(0) }).provider.detailFooter).toBe(
+      "tokens 30d 9.7M ▏ workspace-wide ▏ tokens from the opencode console",
+    );
+  });
+
+  test("a history drift note joins the limits note instead of replacing it", () => {
+    const provider = buildGoProvider({
+      meta: META,
+      buckets: new Map(),
+      stats: undefined,
+      spend: null,
+      limitsSource: limitsSource({ server: SERVER, note: "opencode is rate limiting - backing off" }),
+      dates: ["2026-01-15"],
+      now: NOW,
+      historyNote: "opencode request log changed - showing saved activity",
+    }).provider;
+
+    expect(provider.notice?.segments[0]?.text).toBe(
+      "opencode is rate limiting - backing off - showing cached server limits · opencode request log changed - showing saved activity",
+    );
   });
 
   test("renders all three local spend rows with estimate footnotes", () => {

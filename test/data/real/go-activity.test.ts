@@ -4,20 +4,18 @@ import type { GoUsageRow } from "../../../src/data/real/opencode-usage";
 
 function row(partial: Partial<GoUsageRow> = {}): GoUsageRow {
   return {
-    sessionId: "ses_1",
-    id: null,
-    keyId: null,
+    id: "rlg_test",
+    sessionId: "ses_test1",
     atMs: new Date(2026, 7, 20, 10, 0).getTime(),
     model: "deepseek-v4-flash",
+    isRejected: false,
     inputTokens: 0,
     outputTokens: 0,
     reasoningTokens: 0,
     cacheReadTokens: 0,
-    cacheWrite5mTokens: 0,
-    cacheWrite1hTokens: 0,
+    cacheWriteTokens: 0,
     usd: 0,
     plan: "lite",
-    isByok: false,
     ...partial,
   };
 }
@@ -31,8 +29,7 @@ describe("blendedTokens", () => {
       inputTokens: 10,
       outputTokens: 20,
       reasoningTokens: 5,
-      cacheWrite5mTokens: 3,
-      cacheWrite1hTokens: 2,
+      cacheWriteTokens: 5,
       cacheReadTokens: 900_000,
     });
 
@@ -43,9 +40,9 @@ describe("blendedTokens", () => {
 describe("goActivityFromRows", () => {
   test("builds buckets, per-model bars and a split that agree with each other", () => {
     const { buckets, stats } = goActivityFromRows([
-      row({ sessionId: "a", inputTokens: 100, outputTokens: 50, cacheReadTokens: 7_000 }),
-      row({ sessionId: "a", model: "kimi-k3", outputTokens: 25 }),
-      row({ sessionId: "b", inputTokens: 10, reasoningTokens: 15 }),
+      row({ sessionId: "ses_test1", inputTokens: 100, outputTokens: 50, cacheReadTokens: 7_000 }),
+      row({ sessionId: "ses_test1", model: "kimi-k3", outputTokens: 25 }),
+      row({ sessionId: "ses_test2", inputTokens: 10, reasoningTokens: 15 }),
     ]);
 
     const bucketSum = [...buckets.values()].reduce((a, b) => a + b, 0);
@@ -71,10 +68,15 @@ describe("goActivityFromRows", () => {
     expect(stats.cost30d?.peakDayUsd).toBeCloseTo(2, 6);
   });
 
-  test("keeps an untimed row in the totals without placing it on a day", () => {
-    const { buckets, stats } = goActivityFromRows([row({ atMs: null, outputTokens: 90 })]);
+  test("a refused request counts its session but not toward the top model", () => {
+    const { stats } = goActivityFromRows([
+      row({ sessionId: "ses_test1", model: "glm-5.3-flash", outputTokens: 4 }),
+      row({ sessionId: "ses_test2", model: "grok-4.7", isRejected: true }),
+      row({ sessionId: "ses_test2", model: "grok-4.7", isRejected: true }),
+    ]);
 
-    expect(stats.tokens).toBe(90);
-    expect(buckets.size).toBe(0);
+    expect(stats.topModel).toBe("glm-5.3-flash");
+    expect(stats.sessions).toBe(2);
+    expect(stats.tokens).toBe(4);
   });
 });

@@ -14,25 +14,162 @@ const COST_BY_DAY = [
   { date: "2026-08-28", totalCostMicroCents: "19425181", totalTokens: "9092164", totalRequests: "118" },
 ];
 
-const USAGE_ROW = {
-  id: 2095385180,
-  orgId: "wrk_01KWJ21MX7C6XMR8MJ01ST2Z6E",
-  userId: null,
-  principalType: "service-account",
-  serviceApiKeyId: "key_01KXWPQRHHEVSJBW98THT3MSGW",
-  appReferrer: "opencode",
-  provider: "opencode-go",
-  model: "glm-5.3-flash",
-  inputTokens: 2981,
-  outputTokens: 55,
-  reasoningTokens: 0,
-  cacheReadTokens: 41344,
-  cacheWrite5mTokens: 0,
-  cacheWrite1hTokens: 0,
-  billingSource: "go",
-  costMicroCents: "171497",
-  createdAt: "2026-09-20T11:22:44.000Z",
+/**
+ * One page of `GET /console/api/request-logs` as the console sent it on
+ * 2026-10-06, ids replaced and headers, location and user agent emptied. The
+ * three outcomes are all here: a grok-4.7 request whose reasoning sits inside
+ * its output, the 429 that followed it at the five-hour cap, and a failure.
+ */
+const REQUEST_LOG_PAGE = {
+  items: [
+    {
+      id: "rlg_test1",
+      requestID: "req_test1",
+      workspaceID: "wrk_test",
+      startedAt: 1791233490912,
+      finishedAt: 1791233736913,
+      durationMs: 246001,
+      outcome: "succeeded",
+      category: "inference",
+      protocol: "openai-responses",
+      product: "go",
+      path: "/inference/go/openai/v1/responses",
+      method: "POST",
+      stream: true,
+      app: "pi",
+      sessionID: "ses_test1",
+      userAgent: "pi/test",
+      serviceAccountID: "sva_test",
+      serviceAPIKeyID: "key_test",
+      requestedModel: "grok-4.7",
+      model: "grok-4.7",
+      provider: "opencode",
+      connectionID: null,
+      statusCode: 200,
+      errorCode: null,
+      errorMessage: null,
+      timeToFirstTokenMs: 2920,
+      inputTokens: 4067,
+      outputTokens: 16926,
+      reasoningMode: "effort",
+      reasoningEffort: "high",
+      firstTokenAt: 1791233493832,
+      lastTokenAt: 1791233736071,
+      reasoningTokens: 16855,
+      cacheReadTokens: 113152,
+      cacheWriteTokens: 0,
+      cost: 0.16084381,
+      providerCost: null,
+      country: "XX",
+      region: "test",
+      city: "test",
+      requestHeaders: {},
+      responseHeaders: {},
+      metadata: {},
+      attemptCount: 1,
+      attempts: [
+        {
+          provider: "opencode",
+          model: "grok-4.7",
+          statusCode: 200,
+          durationMs: 245131,
+          errorCode: null,
+          errorMessage: null,
+        },
+      ],
+    },
+    {
+      id: "rlg_test2",
+      requestID: "req_test2",
+      workspaceID: "wrk_test",
+      startedAt: 1791233736875,
+      finishedAt: 1791233736942,
+      durationMs: 67,
+      outcome: "rejected",
+      category: "inference",
+      protocol: "openai-responses",
+      product: "go",
+      path: "/inference/go/openai/v1/responses",
+      method: "POST",
+      stream: true,
+      app: "pi",
+      sessionID: "ses_test1",
+      userAgent: "pi/test",
+      serviceAccountID: "sva_test",
+      serviceAPIKeyID: "key_test",
+      requestedModel: "grok-4.7",
+      model: "grok-4.7",
+      provider: "opencode",
+      connectionID: null,
+      statusCode: 429,
+      errorCode: "inference_failed",
+      errorMessage: "The inference request failed.",
+      reasoningMode: "effort",
+      reasoningEffort: "high",
+      providerCost: null,
+      country: "XX",
+      region: "test",
+      city: "test",
+      requestHeaders: {},
+      responseHeaders: {},
+      metadata: {},
+      attemptCount: 0,
+      attempts: [],
+    },
+    {
+      id: "rlg_test3",
+      requestID: "req_test3",
+      workspaceID: "wrk_test",
+      startedAt: 1791034991546,
+      finishedAt: 1791035022866,
+      durationMs: 31320,
+      outcome: "failed",
+      category: "inference",
+      protocol: "openai-chat",
+      product: "go",
+      path: "/inference/go/openai/v1/chat/completions",
+      method: "POST",
+      stream: true,
+      app: "pi",
+      sessionID: "ses_test2",
+      userAgent: "pi/test",
+      serviceAccountID: "sva_test",
+      serviceAPIKeyID: "key_test",
+      requestedModel: "glm-5.3-flash",
+      model: "glm-5.3-flash",
+      provider: "opencode",
+      connectionID: null,
+      statusCode: 200,
+      errorCode: "inference_failed",
+      errorMessage: null,
+      reasoningMode: "effort",
+      reasoningEffort: "high",
+      providerCost: null,
+      country: "XX",
+      region: "test",
+      city: "test",
+      requestHeaders: {},
+      responseHeaders: {},
+      metadata: {},
+      attemptCount: 1,
+      attempts: [
+        {
+          provider: "opencode",
+          model: "glm-5.3-flash",
+          statusCode: 200,
+          durationMs: 30553,
+          errorCode: "inference_failed",
+          errorMessage: null,
+        },
+      ],
+    },
+  ],
+  nextCursor: "cursor_test",
+  until: 1791235844773,
+  retentionDays: 30,
 };
+
+const [SUCCEEDED, REJECTED] = REQUEST_LOG_PAGE.items;
 
 describe("parseCostDays", () => {
   test("reads day totals and converts micro-cents to dollars", () => {
@@ -60,48 +197,73 @@ describe("parseCostDays", () => {
 });
 
 describe("parseUsagePage", () => {
-  test("reads one page of the per-request table", () => {
-    const page = parseUsagePage({ items: [USAGE_ROW], nextCursor: "cursor_1" });
-    expect(page?.nextCursor).toBe("cursor_1");
+  test("reads one page of the live request log", () => {
+    const page = parseUsagePage(REQUEST_LOG_PAGE);
+    expect(page?.nextCursor).toBe("cursor_test");
+    expect(page?.untilMs).toBe(1791235844773);
+    expect(page?.rows).toHaveLength(3);
     expect(page?.rows[0]).toEqual({
-      id: "2095385180",
-      sessionId: null,
-      keyId: "key_01KXWPQRHHEVSJBW98THT3MSGW",
-      atMs: Date.parse("2026-09-20T11:22:44.000Z"),
-      model: "glm-5.3-flash",
-      inputTokens: 2981,
-      outputTokens: 55,
-      reasoningTokens: 0,
-      cacheReadTokens: 41344,
-      cacheWrite5mTokens: 0,
-      cacheWrite1hTokens: 0,
-      usd: 0.00171497,
+      id: "rlg_test1",
+      sessionId: "ses_test1",
+      atMs: 1791233490912,
+      model: "grok-4.7",
+      isRejected: false,
+      inputTokens: 4067,
+      // 16926 reported, 16855 of it reasoning: the split must not count it twice.
+      outputTokens: 71,
+      reasoningTokens: 16855,
+      cacheReadTokens: 113152,
+      cacheWriteTokens: 0,
+      // Plain dollars on this route, unlike the cost chart's micro-cents.
+      usd: 0.16084381,
       plan: "lite",
-      isByok: false,
     });
   });
 
-  test("the last page has no cursor", () => {
-    const page = parseUsagePage({ items: [], nextCursor: null });
-    expect(page).toEqual({ rows: [], nextCursor: null });
+  test("output plus reasoning gives back what the log reported", () => {
+    const row = parseUsagePage(REQUEST_LOG_PAGE)?.rows[0];
+    expect((row?.outputTokens ?? 0) + (row?.reasoningTokens ?? 0)).toBe(16926);
   });
 
-  test("bills credit-funded requests and leaves plan requests as allowance", () => {
+  test("a request refused at the cap is kept, flagged and empty", () => {
+    const [, rejected, failed] = parseUsagePage(REQUEST_LOG_PAGE)?.rows ?? [];
+    expect(rejected?.isRejected).toBe(true);
+    expect(rejected?.inputTokens).toBe(0);
+    expect(rejected?.usd).toBe(0);
+    // A failure ran inference and is not a refusal at a cap.
+    expect(failed?.isRejected).toBe(false);
+  });
+
+  test("the last page has no cursor", () => {
+    const page = parseUsagePage({ items: [], nextCursor: null, until: 1, retentionDays: 30 });
+    expect(page).toEqual({ rows: [], nextCursor: null, untilMs: 1 });
+  });
+
+  test("bills pay-as-you-go requests and leaves plan and own-provider requests as allowance", () => {
     const page = parseUsagePage({
       items: [
-        { ...USAGE_ROW, billingSource: "credit" },
-        { ...USAGE_ROW, billingSource: "byok" },
-        { ...USAGE_ROW, billingSource: "free" },
+        { ...SUCCEEDED, id: "rlg_a", product: "standard" },
+        { ...SUCCEEDED, id: "rlg_b", product: "go-plus" },
+        { ...SUCCEEDED, id: "rlg_c", product: "byok" },
       ],
       nextCursor: null,
     });
     expect(page?.rows.map((row) => row.plan)).toEqual(["payg", "lite", "lite"]);
-    expect(page?.rows.map((row) => row.isByok)).toEqual([false, true, false]);
+  });
+
+  test("a succeeded request missing its counts is drift, not an empty request", () => {
+    const renamed = Object.fromEntries(
+      Object.entries({ ...SUCCEEDED, input_tokens: 4067 }).filter(([key]) => key !== "inputTokens"),
+    );
+    expect(parseUsagePage({ items: [renamed], nextCursor: null })).toBeNull();
+    // A refusal carries no counts at all and is still a valid row.
+    expect(parseUsagePage({ items: [REJECTED], nextCursor: null })?.rows).toHaveLength(1);
   });
 
   test("rejects a payload that is not a page", () => {
-    expect(parseUsagePage([USAGE_ROW])).toBeNull();
+    expect(parseUsagePage(REQUEST_LOG_PAGE.items)).toBeNull();
     expect(parseUsagePage({ items: [{ model: "glm-5.3" }] })).toBeNull();
+    expect(parseUsagePage({ items: [{ ...SUCCEEDED, id: undefined }] })).toBeNull();
   });
 });
 

@@ -850,6 +850,7 @@ describe("a refresh publishes the limits before the history", () => {
       read: () => null,
       billing: () => null,
       activity: () => null,
+      note: () => null,
       poll: () => walking,
     };
     const provider = createRealUsageProvider({

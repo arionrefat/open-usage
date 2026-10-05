@@ -62,7 +62,7 @@ function modelsFrom(rows: GoUsageRow[]): ModelSpend[] {
     running.tokens.input += row.inputTokens;
     running.tokens.output += row.outputTokens + row.reasoningTokens;
     running.tokens.cacheRead += row.cacheReadTokens;
-    running.tokens.cacheWrite += row.cacheWrite5mTokens + row.cacheWrite1hTokens;
+    running.tokens.cacheWrite += row.cacheWriteTokens;
     byModel.set(row.model, running);
     totals.set(kind, byModel);
   }
@@ -81,7 +81,7 @@ function modelsFrom(rows: GoUsageRow[]): ModelSpend[] {
 
 /** The per-request rows that fall inside a month, which is what names its models. */
 export function rowsInMonth(rows: GoUsageRow[], month: string): GoUsageRow[] {
-  return rows.filter((row) => row.atMs !== null && monthKeyOf(row.atMs) === month);
+  return rows.filter((row) => monthKeyOf(row.atMs) === month);
 }
 
 function monthKeyOf(atMs: number): string {

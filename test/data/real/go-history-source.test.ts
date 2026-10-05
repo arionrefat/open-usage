@@ -5,7 +5,7 @@ import {
   readRowsSince,
   type GoHistoryReading,
 } from "../../../src/data/real/go-history-source";
-import type { GoUsageHistory } from "../../../src/data/real/opencode-server";
+import { OpencodeServerError, type GoUsageHistory } from "../../../src/data/real/opencode-server";
 import type { GoUsageRow } from "../../../src/data/real/opencode-usage";
 
 function history(month: string, usd: number): GoUsageHistory {
@@ -107,20 +107,12 @@ describe("dormantGoHistorySource", () => {
 });
 
 describe("workspace activity", () => {
-  function usageRow(atMs: number, outputTokens: number): GoUsageRow {
-    return {
-      id: null, sessionId: "ses_1", keyId: null, atMs, model: "kimi-k3",
-      inputTokens: 0, outputTokens, reasoningTokens: 0, cacheReadTokens: 0,
-      cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, usd: 0, plan: "lite", isByok: false,
-    };
-  }
-
   test("reads activity from the dashboard, which a cookie alone can reach", async () => {
     // opencode.db does not exist until opencode has been installed and used, so
     // without this the cookie path shows limits and no history at all.
     const source = createGoHistorySource(() => "auth=x", {
       fetchHistory: async () => [history("2026-08", 1)],
-      fetchRows: async () => [usageRow(NOW.getTime() - 3_600_000, 500)],
+      fetchRows: async () => [rowAt("rlg_test1", NOW.getTime() - 3_600_000, 500)],
     });
 
     await source.poll(NOW);
@@ -149,7 +141,7 @@ describe("workspace activity", () => {
       fetchHistory: async () => [history("2026-08", 1)],
       fetchRows: async () => {
         if (shouldFail) throw new Error("network");
-        return [usageRow(NOW.getTime() - 3_600_000, 700)];
+        return [rowAt("rlg_test1", NOW.getTime() - 3_600_000, 700)];
       },
     });
     await source.poll(NOW);
@@ -159,6 +151,73 @@ describe("workspace activity", () => {
 
     // Blanking the chart on a blip would read as "you used nothing".
     expect(source.activity()?.stats.tokens).toBe(700);
+    // A blip says nothing about the route, so nothing is flagged.
+    expect(source.note()).toBeNull();
+  });
+
+  test("a request log that changed shape keeps the last rows and says so", async () => {
+    let hasMoved = false;
+    const published: GoHistoryReading[] = [];
+    const source = createGoHistorySource(() => "auth=x", {
+      fetchHistory: async () => [history("2026-08", 1)],
+      fetchRows: async () => {
+        // What the retired usage table started answering: 404, which the
+        // client reports as drift.
+        if (hasMoved) throw new OpencodeServerError("HTTP 404", "parse");
+        return [rowAt("rlg_test1", NOW.getTime() - 3_600_000, 700)];
+      },
+      onUpdate: (reading) => published.push(reading),
+    });
+    await source.poll(NOW);
+    expect(source.note()).toBeNull();
+
+    hasMoved = true;
+    await source.poll(new Date(NOW.getTime() + 60 * 60_000));
+
+    expect(source.activity()?.stats.tokens).toBe(700);
+    expect(source.note()).toContain("request log changed");
+    // Persisted, so a dashboard that adopts this reading from the daemon says so too.
+    expect(published.at(-1)?.hasRequestLogDrift).toBe(true);
+
+    hasMoved = false;
+    await source.poll(new Date(NOW.getTime() + 120 * 60_000));
+    expect(source.note()).toBeNull();
+  });
+
+  test("a cost chart that changed shape is flagged until a reading succeeds", async () => {
+    let hasMoved = false;
+    const source = createGoHistorySource(() => "auth=x", {
+      fetchHistory: async () => {
+        if (hasMoved) throw new OpencodeServerError("no usage in response", "parse");
+        return [history("2026-08", 1)];
+      },
+      fetchRows: async () => [],
+    });
+    await source.poll(NOW);
+    const before = source.read();
+
+    hasMoved = true;
+    await source.poll(new Date(NOW.getTime() + 60 * 60_000));
+
+    expect(source.read()).toBe(before);
+    expect(source.note()).toContain("cost history changed");
+  });
+
+  test("a failure the limits already report adds no note of its own", async () => {
+    let shouldFail = false;
+    const source = createGoHistorySource(() => "auth=x", {
+      fetchHistory: async () => {
+        if (shouldFail) throw new OpencodeServerError("opencode session expired", "credentials");
+        return [history("2026-08", 1)];
+      },
+      fetchRows: async () => [],
+    });
+    await source.poll(NOW);
+
+    shouldFail = true;
+    await source.poll(new Date(NOW.getTime() + 60 * 60_000));
+
+    expect(source.note()).toBeNull();
   });
 
   test("still reports the month when the usage table is unreachable from the first poll", async () => {
@@ -176,11 +235,11 @@ describe("workspace activity", () => {
   });
 });
 
-function rowAt(id: string | null, atMs: number, outputTokens = 1): GoUsageRow {
+function rowAt(id: string, atMs: number, outputTokens = 1): GoUsageRow {
   return {
-    id, sessionId: "ses_1", keyId: null, atMs, model: "kimi-k3",
+    id, sessionId: "ses_test1", atMs, model: "kimi-k3", isRejected: false,
     inputTokens: 0, outputTokens, reasoningTokens: 0, cacheReadTokens: 0,
-    cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, usd: 0, plan: "lite", isByok: false,
+    cacheWriteTokens: 0, usd: 0, plan: "lite",
   };
 }
 
@@ -233,7 +292,8 @@ describe("history walk economy", () => {
     const source = createGoHistorySource(() => "auth=tok", {
       initial: {
         months: [history("2026-08", 4)],
-        rows: [rowAt("usg_1", NOW.getTime() - 3_600_000, 500)],
+        rows: [rowAt("rlg_test1", NOW.getTime() - 3_600_000, 500)],
+        hasRequestLogDrift: false,
         fetchedAtMs: NOW.getTime() - 60_000,
       },
       fetchHistory: async () => {
@@ -274,7 +334,12 @@ describe("history walk economy", () => {
     expect(source.activity()).not.toBeNull();
 
     // The daemon walked the table since; the dashboard takes its reading as its own.
-    persisted = { months: [history("2026-08", 99)], rows: null, fetchedAtMs: NOW.getTime() + 40 * 60_000 };
+    persisted = {
+      months: [history("2026-08", 99)],
+      rows: null,
+      hasRequestLogDrift: false,
+      fetchedAtMs: NOW.getTime() + 40 * 60_000,
+    };
     await source.poll(new Date(NOW.getTime() + 41 * 60_000));
 
     expect(calls).toBe(1);
@@ -287,13 +352,14 @@ describe("history walk economy", () => {
     const source = createGoHistorySource(() => "auth=tok", {
       initial: {
         months: [history("2026-08", 4)],
-        rows: [rowAt("usg_b", NOW.getTime() - 10 * 60_000), rowAt("usg_a", NOW.getTime() - 20 * 60_000)],
+        rows: [rowAt("rlg_b", NOW.getTime() - 10 * 60_000), rowAt("rlg_a", NOW.getTime() - 20 * 60_000)],
+        hasRequestLogDrift: false,
         fetchedAtMs: NOW.getTime() - 40 * 60_000,
       },
       fetchHistory: async () => months(),
       fetchRows: async (_cookie, _workspace, options) => {
         asked.push(options.sinceMs);
-        return [rowAt("usg_c", NOW.getTime() - 60_000, 7), rowAt("usg_b", NOW.getTime() - 10 * 60_000)];
+        return [rowAt("rlg_c", NOW.getTime() - 60_000, 7), rowAt("rlg_b", NOW.getTime() - 10 * 60_000)];
       },
     });
 
@@ -334,14 +400,14 @@ describe("readRowsSince", () => {
     expect(rows.map((row) => row.id)).toEqual(["c", "b", "a"]);
   });
 
-  test("a nameless row is new only when strictly later than the newest held row", async () => {
+  test("a request that started in the same millisecond as the newest held one is still new", async () => {
     const held = [rowAt("b", minutesAgo(10))];
 
     const rows = await readRowsSince(held, windowStartMs, async () => [
-      rowAt(null, minutesAgo(5)),
-      rowAt(null, minutesAgo(10)),
+      rowAt("b", minutesAgo(10)),
+      rowAt("b2", minutesAgo(10)),
     ]);
 
-    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.id)).toEqual(["b2", "b"]);
   });
 });

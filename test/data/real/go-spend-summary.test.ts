@@ -8,12 +8,12 @@ function row(usd: number, plan: GoPlan): GoCostRow {
   return { date: "2026-08-01", model: null, usd, keyId: null, plan };
 }
 
-/** A request from the console's usage table, which is what names models. */
+/** A request from the console's request log, which is what names models. */
 function usageRow(model: string, usd: number, plan: GoPlan): GoUsageRow {
   return {
-    id: null, sessionId: null, keyId: null, atMs: Date.parse("2026-08-01T00:00:00Z"), model,
-    inputTokens: 100, outputTokens: 10, reasoningTokens: 0, cacheReadTokens: 0,
-    cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, usd, plan, isByok: false,
+    id: "rlg_test", sessionId: null, atMs: Date.parse("2026-08-01T00:00:00Z"), model,
+    isRejected: false, inputTokens: 100, outputTokens: 10, reasoningTokens: 0, cacheReadTokens: 0,
+    cacheWriteTokens: 0, usd, plan,
   };
 }
 

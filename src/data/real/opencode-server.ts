@@ -3,7 +3,6 @@ import {
   parseBillingStatus,
   parseCostDays,
   parseUsagePage,
-  planFromBillingSource,
   usdFromMicroCents,
   type GoBilling,
   type GoCostDay,
@@ -375,7 +374,7 @@ function costRowsFrom(days: GoCostDay[], hasGoAccess: boolean): GoCostRow[] {
     model: null,
     usd: day.usd,
     keyId: null,
-    plan: hasGoAccess ? planFromBillingSource("go") : "payg",
+    plan: hasGoAccess ? "lite" : "payg",
   }));
 }
 
@@ -438,24 +437,26 @@ export async function fetchGoUsageHistory(
   });
 }
 
-/** The console's own page size for the usage table, and its maximum. */
+/** The request log's largest page. */
 const USAGE_PAGE_SIZE = 100;
 /**
- * Backstop only. Paging normally ends at the first page that reaches past the
- * window, so a light month costs one or two requests rather than this. Sized
- * for a hundred sessions a day: a month that outgrows it is truncated rather
- * than walked indefinitely.
+ * Backstop only. Paging normally ends when the console stops sending a cursor,
+ * so a light month costs a dozen requests rather than this. Sized for two
+ * hundred requests a day: a month that outgrows it is truncated rather than
+ * walked indefinitely.
  */
 const MAX_USAGE_PAGES = 60;
 const USAGE_ROWS_TIMEOUT_MS = 45_000;
 
 /**
- * Pages the per-request usage table back to `sinceMs`.
+ * Pages the console's request log back to `sinceMs`, newest first.
  *
  * This is what lets a cookie alone carry an activity series: `opencode.db` is
  * the only other source of per-token history, and it does not exist until
  * opencode has been installed and used. The console filters by `since` itself,
- * so the walk ends when it runs out of cursors.
+ * and the first page fixes an `until` that every later page repeats, which is
+ * how the console's own "older" button keeps a page from shifting under rows
+ * that land mid-walk.
  */
 export async function fetchGoUsageRows(
   cookieHeader: string,
@@ -466,26 +467,28 @@ export async function fetchGoUsageRows(
   const signal = deadlineSignal(options.timeoutMs ?? USAGE_ROWS_TIMEOUT_MS, options.signal);
   const maxPages = options.maxPages ?? MAX_USAGE_PAGES;
   const query = {
-    since: consoleTimestamp(options.sinceMs),
-    pageSize: String(USAGE_PAGE_SIZE),
+    since: String(Math.max(0, Math.floor(options.sinceMs))),
+    category: "inference",
+    limit: String(USAGE_PAGE_SIZE),
   };
 
   const rows: GoUsageRow[] = [];
-  let cursor: string | null = null;
+  let next: Record<string, string> | null = null;
   for (let page = 0; page < maxPages; page += 1) {
-    const payload: unknown = await consoleJson("/usage/rows", {
+    const payload: unknown = await consoleJson("/request-logs", {
       cookie,
       orgId: workspaceId,
       signal,
-      query: cursor === null ? query : { ...query, cursor },
+      query: next === null ? query : { ...query, ...next },
     });
     const parsed = parseUsagePage(payload);
     if (!parsed) throw new OpencodeServerError("no usage in response", "parse");
     rows.push(...parsed.rows);
     if (parsed.nextCursor === null || parsed.rows.length === 0) break;
-    cursor = parsed.nextCursor;
+    next = {
+      cursor: parsed.nextCursor,
+      ...(parsed.untilMs === null ? {} : { until: String(parsed.untilMs) }),
+    };
   }
-  // A row with no timestamp cannot be placed in the window, so it is kept only
-  // for the totals rather than being guessed onto a day.
-  return rows.filter((row) => row.atMs === null || row.atMs >= options.sinceMs);
+  return rows.filter((row) => row.atMs >= options.sinceMs);
 }

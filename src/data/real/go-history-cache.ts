@@ -110,59 +110,74 @@ function goUsageHistory(value: unknown): GoUsageHistory | null {
 
 function goUsageRow(value: unknown): GoUsageRow | null {
   const raw = record(value);
-  if (!raw || typeof raw.model !== "string" || typeof raw.isByok !== "boolean") return null;
-  const id = nullableString(raw.id);
+  if (!raw || typeof raw.id !== "string" || typeof raw.model !== "string") return null;
+  if (typeof raw.isRejected !== "boolean") return null;
   const sessionId = nullableString(raw.sessionId);
-  const keyId = nullableString(raw.keyId);
-  const atMs = nullableFinite(raw.atMs);
+  const atMs = finite(raw.atMs);
   const plan = goPlan(raw.plan);
-  if (id === undefined || sessionId === undefined || keyId === undefined) return null;
-  if (atMs === undefined || plan === null) return null;
+  if (sessionId === undefined || atMs === null || plan === null) return null;
   const counts = [
     finite(raw.inputTokens),
     finite(raw.outputTokens),
     finite(raw.reasoningTokens),
     finite(raw.cacheReadTokens),
-    finite(raw.cacheWrite5mTokens),
-    finite(raw.cacheWrite1hTokens),
+    finite(raw.cacheWriteTokens),
     finite(raw.usd),
   ];
   if (counts.some((count) => count === null)) return null;
   return {
-    id,
+    id: raw.id,
     sessionId,
-    keyId,
     atMs,
     model: raw.model,
+    isRejected: raw.isRejected,
     inputTokens: counts[0]!,
     outputTokens: counts[1]!,
     reasoningTokens: counts[2]!,
     cacheReadTokens: counts[3]!,
-    cacheWrite5mTokens: counts[4]!,
-    cacheWrite1hTokens: counts[5]!,
-    usd: counts[6]!,
+    cacheWriteTokens: counts[4]!,
+    usd: counts[5]!,
     plan,
-    isByok: raw.isByok,
   };
+}
+
+function goMonths(value: unknown): GoUsageHistory[] | null {
+  const months = everyItem(value, goUsageHistory);
+  return months === null || months.length === 0 ? null : months;
 }
 
 function goHistory(value: unknown): GoHistoryReading | null {
   const raw = record(value);
   const fetchedAtMs = finite(raw?.fetchedAtMs);
-  if (!raw || fetchedAtMs === null) return null;
-  const months = everyItem(raw.months, goUsageHistory);
-  if (months === null || months.length === 0) return null;
+  if (!raw || fetchedAtMs === null || typeof raw.hasRequestLogDrift !== "boolean") return null;
+  const months = goMonths(raw.months);
+  if (months === null) return null;
   const rows = raw.rows === null ? null : everyItem(raw.rows, goUsageRow);
   if (raw.rows !== null && rows === null) return null;
-  return { months, rows, fetchedAtMs };
+  return { months, rows, hasRequestLogDrift: raw.hasRequestLogDrift, fetchedAtMs };
 }
+
+/**
+ * A version 1 file holds rows from the retired usage table, whose ids share
+ * nothing with the request log's, so joining them would count every request
+ * twice. Its cost months are still the console's own figures and are kept.
+ * The reading is stamped as never fetched, so the first poll walks the log at
+ * once instead of waiting out a cadence the old rows no longer earn.
+ */
+function migratedFromVersion1(value: unknown): GoHistoryReading | null {
+  const months = goMonths(record(value)?.months);
+  return months === null ? null : { months, rows: null, hasRequestLogDrift: false, fetchedAtMs: 0 };
+}
+
+const CACHE_VERSION = 2;
 
 /** null for a missing, malformed, or foreign-version file: all mean "walk it". */
 export function readGoHistoryCache(path: string): GoHistoryReading | null {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     const raw = record(parsed);
-    if (raw?.version !== 1) return null;
+    if (raw?.version === 1) return migratedFromVersion1(raw.reading);
+    if (raw?.version !== CACHE_VERSION) return null;
     return goHistory(raw.reading);
   } catch {
     return null;
@@ -173,7 +188,7 @@ function writeGoHistoryCacheFile(path: string, reading: GoHistoryReading): void 
   let temporary: string | null = null;
   try {
     temporary = join(dirname(path), `.${basename(path)}.${process.pid}.${crypto.randomUUID()}.tmp`);
-    writeFileSync(temporary, `${JSON.stringify({ version: 1, reading })}\n`, {
+    writeFileSync(temporary, `${JSON.stringify({ version: CACHE_VERSION, reading })}\n`, {
       flag: "wx",
       mode: 0o600,
     });

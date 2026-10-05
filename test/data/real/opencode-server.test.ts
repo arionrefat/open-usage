@@ -322,48 +322,72 @@ describe("fetchGoUsageHistory", () => {
 describe("fetchGoUsageRows", () => {
   function rowAt(id: number, atMs: number) {
     return {
-      id,
+      id: `rlg_test${id}`,
+      startedAt: atMs,
+      outcome: "succeeded",
+      category: "inference",
+      product: "go",
+      sessionID: "ses_test1",
       model: "glm-5.3",
       inputTokens: 10,
       outputTokens: 1,
-      costMicroCents: "100000000",
-      billingSource: "go",
-      createdAt: new Date(atMs).toISOString(),
+      cost: 1,
     };
   }
 
-  test("follows the cursor until the console stops sending one", async () => {
-    const cursors: Array<string | null> = [];
+  test("follows the cursor, repeating the first page's bound, until none is sent", async () => {
+    const pages: Array<{ cursor: string | null; until: string | null }> = [];
     const fetchSpy = mockConsole((url) => {
-      cursors.push(url.searchParams.get("cursor"));
-      return cursors.length === 1
-        ? json({ items: [rowAt(1, NOW.getTime())], nextCursor: "page_2" })
-        : json({ items: [rowAt(2, NOW.getTime() - 60_000)], nextCursor: null });
+      pages.push({ cursor: url.searchParams.get("cursor"), until: url.searchParams.get("until") });
+      return pages.length === 1
+        ? json({ items: [rowAt(1, NOW.getTime())], nextCursor: "page_2", until: 1791235844773 })
+        : json({ items: [rowAt(2, NOW.getTime() - 60_000)], nextCursor: null, until: 1791235844773 });
     });
 
     try {
       const rows = await fetchGoUsageRows("auth=secret", WORKSPACE_ID, {
         sinceMs: NOW.getTime() - 86_400_000,
       });
-      expect(cursors).toEqual([null, "page_2"]);
-      expect(rows.map((row) => row.id)).toEqual(["1", "2"]);
+      // Without the first page's `until`, a request landing mid-walk shifts
+      // every later page by a row.
+      expect(pages).toEqual([
+        { cursor: null, until: null },
+        { cursor: "page_2", until: "1791235844773" },
+      ]);
+      expect(rows.map((row) => row.id)).toEqual(["rlg_test1", "rlg_test2"]);
     } finally {
       fetchSpy.mockRestore();
     }
   });
 
-  test("names the window and the page size the console accepts", async () => {
+  test("names the window, the category and the page size the console accepts", async () => {
     const sinceMs = Date.parse("2026-08-21T12:00:00.000Z");
     const seen: URL[] = [];
     const fetchSpy = mockConsole((url) => {
       seen.push(url);
-      return json({ items: [], nextCursor: null });
+      return json({ items: [], nextCursor: null, until: sinceMs, retentionDays: 30 });
     });
 
     try {
       await fetchGoUsageRows("auth=secret", WORKSPACE_ID, { sinceMs });
-      expect(seen[0]?.searchParams.get("since")).toBe("2026-08-21T12:00:00Z");
-      expect(seen[0]?.searchParams.get("pageSize")).toBe("100");
+      expect(seen[0]?.pathname).toBe("/console/api/request-logs");
+      // Epoch milliseconds here, unlike the cost chart's ISO `since`.
+      expect(seen[0]?.searchParams.get("since")).toBe(String(sinceMs));
+      expect(seen[0]?.searchParams.get("category")).toBe("inference");
+      expect(seen[0]?.searchParams.get("limit")).toBe("100");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test("the retired usage table's 404 is drift, not a network failure", async () => {
+    const fetchSpy = mockConsole(() => new Response("", { status: 404 }));
+
+    try {
+      const failure = await fetchGoUsageRows("auth=secret", WORKSPACE_ID, {
+        sinceMs: NOW.getTime() - 86_400_000,
+      }).catch((error: unknown) => error);
+      expect((failure as OpencodeServerError).kind).toBe("parse");
     } finally {
       fetchSpy.mockRestore();
     }
@@ -380,7 +404,7 @@ describe("fetchGoUsageRows", () => {
 
     try {
       const rows = await fetchGoUsageRows("auth=secret", WORKSPACE_ID, { sinceMs });
-      expect(rows.map((row) => row.id)).toEqual(["1"]);
+      expect(rows.map((row) => row.id)).toEqual(["rlg_test1"]);
     } finally {
       fetchSpy.mockRestore();
     }
@@ -390,7 +414,7 @@ describe("fetchGoUsageRows", () => {
     let pages = 0;
     const fetchSpy = mockConsole(() => {
       pages += 1;
-      return json({ items: [rowAt(pages, NOW.getTime())], nextCursor: `page_${pages}` });
+      return json({ items: [rowAt(pages, NOW.getTime())], nextCursor: `page_${pages}`, until: 1 });
     });
 
     try {

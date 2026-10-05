@@ -103,7 +103,7 @@ Touch when a shared provider presentation primitive changes.
 | `claude-history.ts` | `~/.claude/history.jsonl` | Prompt and session counts, last 30 days |
 | `statusline-snapshot.ts` | `~/.claude/usage-snapshot.json` | The actual limit percentages (5h and 7d windows) plus a trend tracker |
 | `usage-cache.ts` | `~/.config/open-usage/usage-cache.json` | Last successful Claude, Codex, and OpenCode Go limit readings, shared with the daemon |
-| `go-history-cache.ts` | `~/.config/open-usage/go-history.json` | The Go month history and usage table; its own file because it is a megabyte that changes half-hourly, beside limits that change by the minute |
+| `go-history-cache.ts` | `~/.config/open-usage/go-history.json` | The Go month history and request log; its own file because it is a megabyte that changes half-hourly, beside limits that change by the minute |
 | `jsonl.ts` | - | `matchingLines`: scans a JSONL file for the lines carrying a marker and decodes only those, so a 65 MB live transcript costs its few hundred token lines rather than the file |
 | `claude-account-usage.ts` | `~/.claude.json` | The account's real credit spend, cap and balance and the week's share by surface (`cachedUsageUtilization`), plus the plan's rate-limit tier |
 | `spend-store.ts` | `~/.config/open-usage/spend-history.json` | Our own record: spend cycles as a high-water mark, tokens per day per model |
@@ -157,8 +157,8 @@ So a dashboard open beside a running daemon never asks a provider for what the d
 That anchor deliberately does not apply to `r` for the limits: the manual floor exists to stop a held key from flooding an API, not to sit out the first press.
 The Go history is the exception, because one poll of it is thirty-odd requests: `go-history-source.ts` declines even a press while its reading is under five minutes old.
 
-`go-history-source.ts` is built on the same scheduler and persists the rows the dashboard sent - three months of cost rows and the per-request usage table - rather than the figures derived from them, in `go-history.json`, so the daemon's walk serves a dashboard opened later.
-The usage table is walked incrementally: rows never change once written, so a poll pages back only to the newest row already held and joins by the server's row id, which turns a sixty-page walk into one or two pages.
+`go-history-source.ts` is built on the same scheduler and persists the rows the dashboard sent - three months of cost rows and the console's per-request log - rather than the figures derived from them, in `go-history.json`, so the daemon's walk serves a dashboard opened later.
+The request log is walked incrementally: rows never change once written, so a poll pages back only to the newest row already held and joins by the server's request id, which turns a sixty-page walk into one or two pages.
 Everything independent in that poll goes out together - the closed months alongside the open one, pages four at a time - because the same work done in series was the thirteen seconds a refresh used to take.
 
 ### Notifications (`src/notifications/`)
