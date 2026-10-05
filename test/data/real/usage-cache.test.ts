@@ -34,6 +34,7 @@ const cache: UsageCache = {
     resetCredits: 1,
     resetCreditsExpireAtMs: null,
     isSpendControlReached: false,
+    isOrdinaryUsageAllowed: false,
     rateLimitReachedType: null,
     spendControl: null,
     additionalRateLimits: [],
@@ -84,6 +85,14 @@ describe("usage cache", () => {
       writeFileSync(path, JSON.stringify({
         version: 1,
         claude: null,
+        codex: { ...codex, session: null, isOrdinaryUsageAllowed: "no" },
+        go: null,
+      }));
+      expect(readUsageCache(path).codex).toBeNull();
+
+      writeFileSync(path, JSON.stringify({
+        version: 1,
+        claude: null,
         codex: null,
         go: { ...cache.go, useBalance: "yes" },
       }));
@@ -117,6 +126,7 @@ describe("usage cache", () => {
       const {
         resetCreditsExpireAtMs: _expiry,
         isSpendControlReached: _blocked,
+        isOrdinaryUsageAllowed: _ordinaryUsage,
         rateLimitReachedType: _reachedType,
         spendControl: _spendControl,
         ...codexBeforeTheFields
@@ -133,6 +143,8 @@ describe("usage cache", () => {
       expect(restored?.weekly?.usedPercent).toBe(38);
       expect(restored?.resetCreditsExpireAtMs).toBeNull();
       expect(restored?.isSpendControlReached).toBe(false);
+      // Unknown, not allowed: a missing verdict must not read as either one.
+      expect(restored?.isOrdinaryUsageAllowed).toBeNull();
       expect(restored?.rateLimitReachedType).toBeNull();
       expect(restored?.spendControl).toBeNull();
     });

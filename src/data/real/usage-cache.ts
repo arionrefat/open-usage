@@ -163,6 +163,8 @@ function codex(value: unknown): CodexAccountLimits | null {
   if (rawExpireAtMs !== null && expireAtMs === null) return null;
   const rawReachedType = raw.rateLimitReachedType ?? null;
   if (rawReachedType !== null && typeof rawReachedType !== "string") return null;
+  const rawOrdinaryUsage = raw.isOrdinaryUsageAllowed ?? null;
+  if (rawOrdinaryUsage !== null && typeof rawOrdinaryUsage !== "boolean") return null;
   const rawSpendControl = raw.spendControl ?? null;
   const spendControl = rawSpendControl === null ? null : codexSpendControl(rawSpendControl);
   if (rawSpendControl !== null && spendControl === null) return null;
@@ -173,6 +175,7 @@ function codex(value: unknown): CodexAccountLimits | null {
     resetCredits,
     resetCreditsExpireAtMs: expireAtMs,
     isSpendControlReached: raw.isSpendControlReached === true,
+    isOrdinaryUsageAllowed: rawOrdinaryUsage,
     rateLimitReachedType: rawReachedType,
     spendControl,
     additionalRateLimits,

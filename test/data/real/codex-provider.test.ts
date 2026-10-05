@@ -3,6 +3,7 @@ import { DAY_MS, HOUR_MS } from "../../../src/data/real/aggregate";
 import type { CodexAccountLimits } from "../../../src/data/real/codex-app-server";
 import type { CodexLimitsSource } from "../../../src/data/real/codex-limits";
 import { buildCodexProvider, createCodexMeta } from "../../../src/data/real/codex-provider";
+import { COLORS } from "../../../src/theme";
 
 const NOW = new Date(2026, 0, 15, 12);
 const NOW_MS = NOW.getTime();
@@ -168,6 +169,55 @@ describe("buildCodexProvider", () => {
     }));
 
     expect(provider.limits[0]?.alert?.text).toBe("▲ workspace credits depleted");
+  });
+
+  test("turns the backend's refusal of included usage into a red line, whatever the meters say", () => {
+    const provider = build(account({
+      isOrdinaryUsageAllowed: false,
+      weekly: { usedPercent: 40, resetsAtMs: NOW_MS + 2 * HOUR_MS, windowMinutes: 10_080 },
+    }));
+
+    expect(provider.limits[0]?.alert).toEqual({
+      text: "▲ included usage blocked",
+      color: COLORS.danger,
+      isOnCard: true,
+    });
+  });
+
+  test("a usage block outranks a grant but still counts it", () => {
+    const provider = build(account({
+      isOrdinaryUsageAllowed: false,
+      resetCredits: 2,
+      resetCreditsExpireAtMs: NOW_MS + 2 * DAY_MS,
+    }));
+
+    expect(provider.limits[0]?.alert?.text).toBe("▲ included usage blocked · 2 free resets");
+  });
+
+  test("a named cause outranks the bare usage block", () => {
+    const spend = build(account({ isOrdinaryUsageAllowed: false, isSpendControlReached: true }));
+    const workspace = build(account({
+      isOrdinaryUsageAllowed: false,
+      rateLimitReachedType: "workspace_owner_usage_limit_reached",
+    }));
+
+    expect(spend.limits[0]?.alert?.text).toBe("▲ spend control reached");
+    expect(workspace.limits[0]?.alert?.text).toBe("▲ workspace usage limit reached");
+  });
+
+  test("reads an unknown or allowed usage permission as no block", () => {
+    expect(build(account({ isOrdinaryUsageAllowed: null, resetCredits: 1 })).limits[0]?.alert?.text)
+      .toBe("✓ 1 free reset");
+    expect(build(account({ isOrdinaryUsageAllowed: true })).limits[0]?.alert).toBeUndefined();
+  });
+
+  test("keeps the block on screen when codex reports no window to carry it", () => {
+    const provider = build(account({ isOrdinaryUsageAllowed: false, session: null, weekly: null }));
+
+    expect(provider.limits).toHaveLength(1);
+    expect(provider.limits[0]).toMatchObject({ id: "weekly", percent: null });
+    expect(provider.limits[0]?.alert?.text).toBe("▲ included usage blocked");
+    expect(build(account({ session: null, weekly: null })).limits).toEqual([]);
   });
 
   test("stays quiet on a classification that does not mean blocked", () => {

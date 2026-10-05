@@ -45,6 +45,62 @@ const LIVE_RESPONSE = {
   },
 };
 
+/** A live codex-cli 0.160.0 reply, identifiers removed. */
+const LIVE_RESPONSE_0160 = {
+  ordinaryUsageAllowed: true,
+  rateLimits: {
+    limitId: "codex",
+    limitName: null,
+    normalModelSlug: null,
+    primary: { usedPercent: 51, windowDurationMins: 10080, resetsAt: 1791629797 },
+    secondary: null,
+    credits: { hasCredits: false, unlimited: false, balance: "0" },
+    individualLimit: null,
+    spendControlReached: false,
+    planType: "prolite",
+    rateLimitReachedType: null,
+  },
+  rateLimitsByLimitId: {
+    codex: {
+      limitId: "codex",
+      limitName: null,
+      normalModelSlug: null,
+      primary: { usedPercent: 51, windowDurationMins: 10080, resetsAt: 1791629797 },
+      secondary: null,
+      credits: { hasCredits: false, unlimited: false, balance: "0" },
+      individualLimit: null,
+      spendControlReached: false,
+      planType: "prolite",
+      rateLimitReachedType: null,
+    },
+  },
+  rateLimitResetCredits: {
+    availableCount: 2,
+    credits: [
+      {
+        id: "credit-1",
+        resetType: "codexRateLimits",
+        status: "available",
+        grantedAt: 1790110688,
+        expiresAt: 1792702688,
+        title: "Full reset",
+        description: "Thanks for using Codex! You've been granted one free rate limit reset.",
+      },
+      {
+        id: "credit-2",
+        resetType: "codexRateLimits",
+        status: "available",
+        grantedAt: 1790110688,
+        expiresAt: 1792702688,
+        title: "Full reset",
+        description: "Thanks for using Codex! You've been granted one free rate limit reset.",
+      },
+    ],
+  },
+  accountId: "account-1",
+  rateLimitUpsell: null,
+};
+
 /**
  * codex-cli 0.149.1 dropped `untrusted` from `--ask-for-approval`; clap rejects
  * an unknown value with a usage error on stderr and exit code 2.
@@ -257,6 +313,34 @@ describe("parseRateLimits", () => {
         NOW_MS,
       )?.isSpendControlReached,
     ).toBe(true);
+  });
+
+  test("reads a live 0.160.0 reply, including the backend's usage permission", () => {
+    const limits = parseRateLimits(LIVE_RESPONSE_0160, NOW_MS);
+
+    expect(limits).toMatchObject({
+      session: null,
+      weekly: { usedPercent: 51, resetsAtMs: 1791629797 * 1000, windowMinutes: 10080 },
+      planType: "prolite",
+      resetCredits: 2,
+      resetCreditsExpireAtMs: 1792702688 * 1000,
+      isSpendControlReached: false,
+      isOrdinaryUsageAllowed: true,
+      additionalRateLimits: [],
+    });
+    expect(
+      parseRateLimits({ ...LIVE_RESPONSE_0160, ordinaryUsageAllowed: false }, NOW_MS)?.isOrdinaryUsageAllowed,
+    ).toBe(false);
+  });
+
+  test("reports no usage permission rather than guessing one", () => {
+    const { ordinaryUsageAllowed: _allowed, ...withoutPermission } = LIVE_RESPONSE_0160;
+
+    expect(parseRateLimits(withoutPermission, NOW_MS)?.isOrdinaryUsageAllowed).toBeNull();
+    expect(parseRateLimits({ ...LIVE_RESPONSE_0160, ordinaryUsageAllowed: null }, NOW_MS)?.isOrdinaryUsageAllowed)
+      .toBeNull();
+    expect(parseRateLimits({ ...LIVE_RESPONSE_0160, ordinaryUsageAllowed: "false" }, NOW_MS)?.isOrdinaryUsageAllowed)
+      .toBeNull();
   });
 
   test("takes the soonest deadline and ignores grants that are not available", () => {

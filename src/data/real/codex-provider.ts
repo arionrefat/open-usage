@@ -166,14 +166,31 @@ function codexLimitLines(limits: CodexAccountLimits, nowMs: number): UsageLimit[
         : {}),
     });
   }
+  const alert = codexAlert(limits, nowMs);
+  // A blocked account may report no window at all, and the alert needs a row
+  // to ride on or the one line that explains the refusal is dropped.
+  if (lines.length === 0 && alert) {
+    lines.push(
+      capLessLimit("weekly", "weekly limit", "weekly usage limit", "limit not reported", "limit not reported"),
+    );
+  }
   const first = lines[0];
-  if (first) first.alert = codexAlert(limits, nowMs);
+  if (first) first.alert = alert;
   return lines;
+}
+
+function resetGrants(count: number): string {
+  return `${count} free reset${count > 1 ? "s" : ""}`;
 }
 
 /**
  * A spend control outranks a grant: it blocks the account at any percentage,
  * so the meter beside it cannot explain why codex refuses to run.
+ *
+ * `ordinaryUsageAllowed: false` is the backend saying the same thing without
+ * the reason, so a named cause outranks it and it outranks the grant: a green
+ * line on an account the backend refuses is the worse mistake. The grant
+ * count still rides along, since a reset is the way out of a capped window.
  */
 function codexAlert(limits: CodexAccountLimits, nowMs: number): LimitAlert | undefined {
   if (limits.isSpendControlReached) {
@@ -189,15 +206,18 @@ function codexAlert(limits: CodexAccountLimits, nowMs: number): LimitAlert | und
   if (reachedType?.includes("usage_limit_reached")) {
     return { text: "▲ workspace usage limit reached", color: COLORS.danger, isOnCard: true };
   }
-  if (limits.resetCredits <= 0) return undefined;
   const count = limits.resetCredits;
-  const grants = `✓ ${count} free reset${count > 1 ? "s" : ""}`;
+  if (limits.isOrdinaryUsageAllowed === false) {
+    const grants = count > 0 ? ` · ${resetGrants(count)}` : "";
+    return { text: `▲ included usage blocked${grants}`, color: COLORS.danger, isOnCard: true };
+  }
+  if (count <= 0) return undefined;
   const expiresAtMs = limits.resetCreditsExpireAtMs;
   const deadline =
     expiresAtMs !== null && expiresAtMs > nowMs
       ? ` · ${count > 1 ? "next expires" : "expires"} in ${formatCountdown(expiresAtMs - nowMs)}`
       : "";
-  return { text: `${grants}${deadline}`, color: COLORS.ok, isOnCard: true };
+  return { text: `✓ ${resetGrants(count)}${deadline}`, color: COLORS.ok, isOnCard: true };
 }
 
 /** Last-active explains a flat local chart at a glance. */

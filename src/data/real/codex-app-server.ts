@@ -57,6 +57,11 @@ export interface CodexAccountLimits {
   resetCreditsExpireAtMs: number | null;
   /** A spend control can block the account well below its percentage cap. */
   isSpendControlReached: boolean;
+  /**
+   * The backend's own verdict on included usage; null when it gives none.
+   * Its schema forbids inferring recovery from percentages or reset times.
+   */
+  isOrdinaryUsageAllowed?: boolean | null;
   /** Backend classification for exhausted rate, workspace-credit, or usage limits. */
   rateLimitReachedType?: string | null;
   /** Effective monthly workspace credit limit, when the CLI publishes one. */
@@ -232,6 +237,8 @@ export function parseRateLimits(result: unknown, fetchedAtMs: number): CodexAcco
     resetCredits: typeof credits === "number" && Number.isFinite(credits) ? credits : 0,
     resetCreditsExpireAtMs: resetCreditExpiryMs(result.rateLimitResetCredits),
     isSpendControlReached: snapshot.spendControlReached === true,
+    isOrdinaryUsageAllowed:
+      typeof result.ordinaryUsageAllowed === "boolean" ? result.ordinaryUsageAllowed : null,
     rateLimitReachedType:
       typeof snapshot.rateLimitReachedType === "string" ? snapshot.rateLimitReachedType : null,
     spendControl: spendControlFrom(snapshot.individualLimit),
