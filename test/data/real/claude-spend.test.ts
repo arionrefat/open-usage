@@ -84,9 +84,9 @@ describe("buildClaudeSpend with an exact figure", () => {
   });
 
   test("the split follows the priced weights", () => {
-    // Opus 5 output is $25/M, Sonnet 5 is $15/M: 2M opus vs 1M sonnet is
-    // $50 against $15, so opus takes roughly 77%.
-    const spend = build(6500);
+    // Opus 5 output is $25/M, Sonnet 5 is $10/M: 2M opus vs 1M sonnet is
+    // $50 against $10, so opus takes five sixths.
+    const spend = build(6000);
     const opus = spend?.current.models.find((m) => m.model === "claude-opus-5");
 
     expect(opus?.cost?.amountMinor).toBe(5000);

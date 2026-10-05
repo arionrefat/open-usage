@@ -79,7 +79,41 @@ describe("priceTokens", () => {
   test("a model with no fast rate ignores the fast flag rather than inventing one", () => {
     const fast = priceTokens("claude-sonnet-5", tokens({ output: MILLION, speed: "fast" }));
 
-    expect(fast.usd).toBeCloseTo(15, 10);
+    expect(fast.usd).toBeCloseTo(10, 10);
+  });
+
+  test("opus 5.5 is priced at its own rates, with cache reads at 5% of input", () => {
+    // $4 in, $20 out, $0.20 cache read, $5 5m write, $8 1h write per million.
+    const priced = priceTokens(
+      "claude-opus-5-5",
+      tokens({
+        input: MILLION,
+        output: MILLION,
+        cacheRead: MILLION,
+        cacheWrite5m: MILLION,
+        cacheWrite1h: MILLION,
+      }),
+    );
+
+    expect(priced.usd).toBeCloseTo(4 + 20 + 0.2 + 5 + 8, 10);
+    expect(isPricedModel("claude-opus-5-5[1m]")).toBe(true);
+  });
+
+  test("cache multipliers stack on fast mode, so a published read rate scales with it", () => {
+    // Opus 5.5 fast is $8 / $40; its 0.05x cache read is then $0.40, not $0.20.
+    const fast = priceTokens(
+      "claude-opus-5-5",
+      tokens({ output: MILLION, cacheRead: MILLION, speed: "fast" }),
+    );
+
+    expect(fast.usd).toBeCloseTo(40.4, 10);
+  });
+
+  test("sonnet 5.5 and sonnet 5 bill at $2 / $10 with the standard cache read", () => {
+    for (const model of ["claude-sonnet-5-5", "claude-sonnet-5"]) {
+      const { usd } = priceTokens(model, tokens({ input: MILLION, output: MILLION, cacheRead: MILLION }));
+      expect(usd).toBeCloseTo(12.2, 10);
+    }
   });
 
   test("an unknown model reports null, never zero", () => {
@@ -129,7 +163,7 @@ describe("loadPriceTable", () => {
     const table = loadPriceTable(path);
 
     expect(table["claude-opus-5"]).toEqual({ input: 4, output: 20 });
-    expect(table["claude-sonnet-5"]?.input).toBe(3);
+    expect(table["claude-sonnet-5"]?.input).toBe(2);
   });
 
   test("an override can set a per-model cache read rate", () => {
