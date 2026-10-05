@@ -80,9 +80,8 @@ interface GoCredential {
 }
 
 /**
- * The dashboard outranks the API key because `GET /zen/go/v1/usage` is still an
- * unmerged proposal that 404s in production. Flip this once the route ships, so
- * a configured key never silently costs a user the readings they already had.
+ * The cookie outranks the API key: `GET /zen/go/v1/usage` reports percentages
+ * alone, while the console's meters carry the dollars behind them.
  */
 function readCredential(path: string, env: Record<string, string | undefined>): GoCredential | null {
   const cookie = readCookie(path, env);

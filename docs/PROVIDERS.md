@@ -407,9 +407,8 @@ The subscription fields are a snapshot the auth server re-checks on its own sche
 OpenCode's console publishes exact dollars-of-limit and reset data to an authenticated session.
 Without a session cookie, open-usage computes an estimate locally by summing `message.cost` inside each window and dividing by the Go plan cap.
 The UI labels only locally computed windows as estimates.
-There is still no supported public OpenCode Go quota endpoint, CLI command, local server route, or SDK method.
-Open issue `anomalyco/opencode#16017` and unmerged PR `#16513` propose `GET /zen/go/v1/usage`; production currently returns 404.
-Adopt that API-key-authenticated route if it is merged and documented.
+The one API-key route is `GET /zen/go/v1/usage`, proposed in issue `anomalyco/opencode#16017` and merged as PR `#16513` on 2026-08-11; it reports percentages and resets but no dollars.
+There is still no CLI command, local server route, or SDK method for the quota.
 
 ### Implemented
 
@@ -450,9 +449,11 @@ The console session id carries no expiry, so there is nothing to warn on; a past
 Any session failure produces the same visible warning while the local estimate continues.
 Without a cookie the app shows the local estimate and says so, which is why the cookie is optional rather than a setup step.
 
-`src/data/real/opencode-api.ts` implements the proposed `GET /zen/go/v1/usage` route against `opencodeApiKey` / `OPEN_USAGE_OPENCODE_API_KEY`.
-That route is not merged and 404s in production, so `readCredential` deliberately ranks the cookie above it: a configured key must never cost a user readings they already had.
-Flip that precedence once the endpoint ships and its response shape is known, and narrow the field aliases in `opencode-api.ts` to the documented ones at the same time.
+`src/data/real/opencode-api.ts` reads `GET /zen/go/v1/usage` with `opencodeApiKey` / `OPEN_USAGE_OPENCODE_API_KEY` as a bearer token.
+The merged source (`packages/console/app/src/routes/zen/go/v1/usage.ts`) answers `{ usage: { rolling, weekly, monthly } }`, each `{ status: "ok" | "rate-limited", percent, resetsAt }`, and the parser reads only those fields.
+`percent` is floored and `status` turns `rate-limited` once usage reaches the cap, so a rate-limited window reads 100% whatever its percent says.
+Without a key production answers `401 {"type":"error","error":{"type":"AuthError","message":"Missing API key."}}`, and a valid key on a workspace without Go answers `403` with an `EntitlementError`, which reads as no subscription rather than a rejected key.
+`readCredential` still ranks the cookie above the key, because only the console's meters carry the dollars behind each percentage.
 A cookie is also sufficient on its own: it counts as a go source with no opencode install present, so uninstalling opencode leaves the limits intact and costs only the local history.
 That case is labelled rather than left blank - the card reads "no local history", the chart collapses to a rule, and the stated source becomes the dashboard instead of `opencode.db`.
 This private integration is opt-in and not recommended for general distribution: OpenCode's hosted Terms prohibit programmatic extraction and reverse engineering.
