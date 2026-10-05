@@ -89,11 +89,7 @@ function monthKeyOf(atMs: number): string {
   return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}`;
 }
 
-/**
- * How much of a month the cost chart has answered for: all of it, all of it
- * from some day on, scattered parts of it, or none. Up to `today` for the open
- * month, since days that have not happened yet need no answer.
- */
+/** How much of a month, up to today for the open one, some cost reply answered for. */
 export type MonthCoverage =
   | { kind: "full" }
   | { kind: "from"; date: string }
@@ -117,7 +113,6 @@ export function monthCoverage(month: string, spans: GoCostSpan[], today: string)
   return touching.length > 0 ? { kind: "partial" } : { kind: "none" };
 }
 
-/** "2026-09-06" reads as "from sep 6", in the lowercase the period labels use. */
 function fromLabel(date: string): string {
   const day = new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
     month: "short",
@@ -128,12 +123,8 @@ function fromLabel(date: string): string {
 }
 
 /**
- * Money comes from the console's own day totals, while the model breakdown
- * comes from the per-request rows, which reach back 30 days.
- *
- * Coverage decides what an absent day means. Inside it, the chart answered and
- * left the day out because nothing was spent; outside it nobody asked, so a
- * month with no coverage and no banked days is unknown rather than free.
+ * Inside coverage an absent day was unspent; outside it nobody asked, so a
+ * month with neither coverage nor banked days is unknown rather than free.
  */
 export function periodFrom(
   history: GoUsageHistory,
@@ -177,11 +168,7 @@ export function periodFrom(
   };
 }
 
-/**
- * Newest month first. The chart answers for 30 days and no further, so the
- * days behind the closed months are the ones earlier reads banked, and
- * `coverage` says which of them were ever answered for.
- */
+/** Newest month first. */
 export function goSpendSummary(
   months: GoUsageHistory[],
   usageRows: GoUsageRow[] | null,
@@ -200,9 +187,7 @@ export function goSpendSummary(
   if (!current) return null;
   return {
     current,
-    // Only a month wholly known to be unspent is dropped. An unknown one stays
-    // and reads as "not recorded", and a partly known one keeps its window,
-    // rather than either vanishing as if it were zero.
+    // Only a wholly known unspent month is dropped; an unknown or partial one must not read as zero.
     history: history.filter(
       (period) =>
         period.isBeforeRecordsBegan ||

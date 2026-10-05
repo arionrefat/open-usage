@@ -24,17 +24,12 @@ import { createPolledSource, type PolledSource } from "./polled-source";
 export interface GoHistoryReading {
   /** The open month first, then the two before it. */
   months: GoUsageHistory[];
-  /** Runs of days the cost chart has answered for in full, which is what tells an unspent month from an unknown one. */
+  /** Days some cost reply answered for in full: what tells an unspent month from an unknown one. */
   costCoverage: GoCostSpan[];
-  /** True when the latest cost reply dropped days it had reported before, so its window was not trusted. */
   hasCostGap: boolean;
   /** One row per request across the activity window, or null when the log could not be read. */
   rows: GoUsageRow[] | null;
-  /**
-   * True when the latest walk found the request log changed and `rows` are the
-   * last good ones. Persisted, so a dashboard adopting a daemon's reading says
-   * so too instead of showing a chart that silently stopped moving.
-   */
+  /** Persisted, so a dashboard adopting the daemon's reading shows the drift too. */
   hasRequestLogDrift: boolean;
   fetchedAtMs: number;
 }
@@ -49,11 +44,7 @@ export interface GoHistorySource {
   billing(): GoBilling | null;
   /** Workspace-wide activity from the dashboard, or null without a cookie. */
   activity(): GoActivity | null;
-  /**
-   * Set when a route the history reads has changed shape, which is the one
-   * failure nothing else reports: the limits share this cookie and host, so
-   * they already say when the session or the network is the problem.
-   */
+  /** Drift only: the limits share this cookie and host, and already report session and network trouble. */
   note(): string | null;
   poll(now: Date, options?: PollOptions): Promise<void>;
 }
@@ -116,12 +107,8 @@ function deriveHistory(reading: GoHistoryReading | null): DerivedHistory {
 }
 
 /**
- * Walks the request log back only as far as the rows already held. A row is
- * one request and never changes once written, so everything older than the
- * newest row held was seen on an earlier walk: a poll that follows one by half
- * an hour costs a page or two, where walking the whole window is a dozen or
- * more. Rows that have aged out of the window are dropped as they go, so the
- * held set stays the size of one window.
+ * Walks the request log back only as far as the newest row held, since a row
+ * never changes once written, and drops rows that aged out of the window.
  */
 export async function readRowsSince(
   held: GoUsageRow[] | null,
@@ -133,8 +120,7 @@ export async function readRowsSince(
 
   const newestHeldMs = kept.reduce((newest, row) => Math.max(newest, row.atMs), 0);
   const fresh = await fetchRowsSince(newestHeldMs);
-  // The walk re-reads the millisecond the newest held row started in, so the
-  // join is by the server's request id rather than by time.
+  // The walk re-reads the newest held row's millisecond, so the join is by id.
   const heldIds = new Set(kept.map((row) => row.id));
   return [...fresh.filter((row) => !heldIds.has(row.id)), ...kept];
 }
@@ -178,8 +164,7 @@ export function createGoHistorySource(
       const windowStartMs = nowMs - ACTIVITY_WINDOW_DAYS * DAY_MS;
 
       // Supplementary to the money: a failure here leaves the last good rows in
-      // place rather than blanking the chart. Only drift is worth flagging; a
-      // blip says nothing about whether the log still reads.
+      // place rather than blanking the chart.
       const readRows = (workspace: string) =>
         readRowsSince(previous?.rows ?? null, windowStartMs, (sinceMs) =>
           fetchRows(cookie, workspace, { sinceMs, signal }),
@@ -245,8 +230,7 @@ export function createGoHistorySource(
     billing: () => current().billing,
     activity: () => current().activity,
     note: () => {
-      // The schedule's own note clears on the next good reading, ours or one
-      // another process persisted, so it says whether the failure still stands.
+      // The schedule's note also clears when another process persists a good reading.
       const reading = source.read();
       const hasCostDrift = (isLastFailureDrift && source.note() !== null) || reading?.hasCostGap === true;
       const notes = [

@@ -182,13 +182,8 @@ function goHistory(value: unknown): GoHistoryReading | null {
 }
 
 /**
- * A version 1 file holds rows from the retired usage table, whose ids share
- * nothing with the request log's, so joining them would count every request
- * twice. Its cost months are still the console's own figures and are kept,
- * banked but with no coverage, since nothing recorded which days their reads
- * answered for. The reading is stamped as never fetched, so the first poll
- * walks the log at once instead of waiting out a cadence the old rows no
- * longer earn.
+ * Version 1 rows came from the retired usage table, whose ids would never join
+ * the request log's, so only the cost months survive; fetchedAtMs 0 forces a walk.
  */
 function migratedFromVersion1(value: unknown): GoHistoryReading | null {
   const months = goMonths(record(value)?.months);

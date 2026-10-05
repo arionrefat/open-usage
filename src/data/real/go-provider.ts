@@ -126,8 +126,7 @@ function sessionsFooter(
 ): string | undefined {
   const origin = isWorkspace ? "the opencode console" : "opencode.db";
   if (!stats || stats.sessions <= 0) {
-    // A request the log could not tie to a session still spent tokens, and
-    // calling that "no history" would deny a chart the reader is looking at.
+    // Calling sessionless tokens "no history" would deny a chart the reader is looking at.
     if (stats && stats.tokens > 0) {
       return `tokens 30d ${formatTokenCount(stats.tokens)} ▏ workspace-wide ▏ tokens from ${origin}`;
     }
@@ -350,7 +349,6 @@ interface GoProviderInput {
   /** Workspace-wide activity from the dashboard; outranks the local buckets. */
   activity?: GoActivity | null;
   billing?: GoBilling | null;
-  /** Why the history shown is the last good copy rather than a fresh one. */
   historyNote?: string | null;
 }
 

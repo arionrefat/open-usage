@@ -338,7 +338,6 @@ function Spend({ spend, width, color }: { spend: SpendSummary; width: number; co
             const past = headlineFigure(period);
             return [
               ...(index > 0 ? [{ text: " ▏ ", color: COLORS.rule }] : []),
-              // A month recorded only in part says so, so it never reads as whole.
               {
                 text: `${period.label}${period.totalWindowLabel ? ` (${period.totalWindowLabel})` : ""} `,
                 color: COLORS.textGhost,

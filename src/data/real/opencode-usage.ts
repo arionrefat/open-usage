@@ -1,12 +1,8 @@
 import { finiteNumber, isRecord, timestampMs } from "./json";
 
 /**
- * Parsers for the opencode console's usage payloads: the per-day cost chart
- * (`/usage/cost-by-day`) and the request log (`/request-logs`).
- *
- * The chart reports money in micro-cents and counts as decimal strings, while
- * the request log uses plain numbers and dollars. Both are converted here so
- * nothing downstream has to know the wire units.
+ * Parsers for the console's cost chart, which sends micro-cents and decimal
+ * strings, and its request log, which sends plain numbers and dollars.
  */
 export const COST_UNITS_PER_USD = 1e8;
 
@@ -44,17 +40,15 @@ export interface GoCostDay {
   requests: number;
 }
 
-/** One request from the console's request log. */
 export interface GoUsageRow {
-  /** The server's own request id, which is what lets a re-read of the log merge with the rows already held. */
   id: string;
   sessionId: string | null;
   atMs: number;
   model: string;
-  /** Refused before inference ran - a 429 at the plan's cap - so it carries no tokens. */
+  /** Refused before inference ran, such as a 429 at a cap, so it carries no tokens. */
   isRejected: boolean;
   inputTokens: number;
-  /** Net of reasoning: the log counts reasoning inside its output, opencode.db beside it. */
+  /** Net of reasoning: the log counts reasoning inside output, opencode.db beside it. */
   outputTokens: number;
   reasoningTokens: number;
   cacheReadTokens: number;
@@ -63,11 +57,10 @@ export interface GoUsageRow {
   plan: GoPlan;
 }
 
-/** One page of the request log, with what continues it. */
 export interface GoUsagePage {
   rows: GoUsageRow[];
   nextCursor: string | null;
-  /** The snapshot bound the first page fixed, which every later page must repeat. */
+  /** Fixed by the first page; every later page must repeat it. */
   untilMs: number | null;
 }
 
@@ -88,11 +81,8 @@ export function usdFromMicroCents(value: unknown): number | null {
 }
 
 /**
- * The request log names the product a request was served under instead of
- * the money behind it. `standard` is Zen's pay-as-you-go, drawn from credit,
- * so it is spend. `go` and `go-plus` draw on a subscription already paid for,
- * and the console treats every other product as the workspace's own provider
- * connection, which opencode does not bill - all of that is allowance.
+ * `standard` is Zen pay-as-you-go from credit. `go` and `go-plus` draw on a paid
+ * subscription, and the console treats any other product as the workspace's own provider.
  */
 export function planFromProduct(value: unknown): GoPlan {
   return value === "standard" ? "payg" : "lite";
@@ -125,11 +115,7 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-/**
- * Only a request that ran carries counts, so a succeeded one missing them is
- * a renamed field rather than an empty request. Failing the page then is what
- * keeps a rename from reading as a month of zero usage.
- */
+/** A succeeded request without counts is a renamed field, which must fail rather than read as zero usage. */
 function usageRowFromRecord(value: unknown): GoUsageRow | null {
   if (!isRecord(value)) return null;
   const id = nonEmptyString(value.id);
@@ -149,15 +135,11 @@ function usageRowFromRecord(value: unknown): GoUsageRow | null {
     model,
     isRejected: outcome === "rejected",
     inputTokens: inputTokens ?? 0,
-    // Reasoning never exceeded output across a month of live rows, so it is a
-    // part of output here, not a sibling; the clamp guards a request that ever
-    // reports otherwise from going negative.
+    // Reasoning never exceeded output across 506 live rows, so it is part of output.
     outputTokens: Math.max(0, (reportedOutput ?? 0) - reasoningTokens),
     reasoningTokens,
     cacheReadTokens: finiteNumber(value.cacheReadTokens) ?? 0,
-    // The console lists the two write lifetimes on separate lines, as the
-    // older table's 5m and 1h fields were. No Go model has written cache yet,
-    // so that they never overlap is the console's word rather than measured.
+    // Separate lines in the console; unverified, since no Go model has written cache yet.
     cacheWriteTokens:
       (finiteNumber(value.cacheWriteTokens) ?? 0) + (finiteNumber(value.cacheWrite1hTokens) ?? 0),
     usd: finiteNumber(value.cost) ?? 0,
@@ -165,7 +147,6 @@ function usageRowFromRecord(value: unknown): GoUsageRow | null {
   };
 }
 
-/** Reads one page of the request log. */
 export function parseUsagePage(value: unknown): GoUsagePage | null {
   if (!isRecord(value) || !Array.isArray(value.items)) return null;
   const rows: GoUsageRow[] = [];
@@ -195,14 +176,13 @@ export interface GoBilling {
   isAutoReloadOn: boolean;
   reloadAmountUsd: number | null;
   isAutoReloadPending: boolean;
-  /** The console's reason the last automatic top-up failed. */
   autoReloadFailure: string | null;
   /** True when a Go (lite) subscription is attached. */
   hasLiteSubscription: boolean;
   hasSubscription: boolean;
 }
 
-/** Only `null` has been seen live, so a reason in a shape we cannot print still counts as a failure. */
+/** Only `null` has been seen live, so an unprintable reason still counts as a failure. */
 function failureFrom(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
   return typeof value === "string" ? value : "unknown reason";

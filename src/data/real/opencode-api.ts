@@ -7,12 +7,7 @@ import {
   type GoServerLimits,
 } from "./opencode-server";
 
-/**
- * `GET /zen/go/v1/usage`, merged in anomalyco/opencode#16513 on 2026-08-11
- * (packages/console/app/src/routes/zen/go/v1/usage.ts). It answers
- * `{ usage: { rolling, weekly, monthly } }`, each window
- * `{ status: "ok" | "rate-limited", percent, resetsAt }`, and no dollars.
- */
+/** Merged in anomalyco/opencode#16513; answers percentages and resets, no dollars. */
 const OPENCODE_GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
 const DEFAULT_TIMEOUT_MS = 8_000;
 
@@ -21,10 +16,7 @@ interface ApiWindow {
   resetAtMs: number | null;
 }
 
-/**
- * The server floors `percent` and sets `status: "rate-limited"` once usage
- * reaches the cap, so the status is what says a window is spent.
- */
+/** The server floors `percent`, so `status` is what says a window is spent. */
 function windowFrom(value: unknown): ApiWindow | null {
   if (!isRecord(value)) return null;
   const isCapped = value.status === "rate-limited";

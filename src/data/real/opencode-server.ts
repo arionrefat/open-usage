@@ -354,33 +354,27 @@ export interface GoUsageHistory {
   month: string;
 }
 
-/** Inclusive run of console days, as YYYY-MM-DD, that a cost reply answered for in full. */
+/** Inclusive YYYY-MM-DD days a cost reply answered for in full. */
 export interface GoCostSpan {
   from: string;
   until: string;
 }
 
-/** What one read of the cost chart says, before it is merged into the days already held. */
 export interface GoCostReply {
-  /** One row per day the chart reported; a day with no traffic is simply absent. */
+  /** A day with no traffic is absent rather than zero. */
   rows: GoCostRow[];
   coverage: GoCostSpan;
   billing: GoBilling | null;
   workspaceId: string;
 }
 
-/** The chart's widest window, and the only one it still answers for in full. */
 const COST_WINDOW_DAYS = 30;
 
 function utcDay(atMs: number): string {
   return new Date(atMs).toISOString().slice(0, 10);
 }
 
-/**
- * The chart dates its days in UTC. The first day of the window is cut part way
- * through, so coverage starts the day after: a partial first day must never
- * stand in for a whole one already held.
- */
+/** The chart dates days in UTC, and the window's first day is cut part way through, so it is left out. */
 export function costCoverage(now: Date): GoCostSpan {
   return {
     from: utcDay(now.getTime() - (COST_WINDOW_DAYS - 1) * DAY_MS),
@@ -389,13 +383,8 @@ export function costCoverage(now: Date): GoCostSpan {
 }
 
 /**
- * Day totals become one cost row each. The console breaks its chart down by day
- * but not by model, so the model is left unnamed and filled in from the
- * request log where that reaches, rather than guessed at here.
- *
- * Only a plan the console says is absent makes the days spend: a status read
- * that failed is no evidence the plan lapsed, and calling allowance a charge
- * would tell a subscriber they paid for what their plan already covered.
+ * The chart names no model, so none is guessed. Only a plan the console says is
+ * absent makes the days spend: a failed status read is no evidence of a lapse.
  */
 function costRowsFrom(days: GoCostDay[], hasGoAccess: boolean | null): GoCostRow[] {
   return days.map((day) => ({
@@ -408,15 +397,8 @@ function costRowsFrom(days: GoCostDay[], hasGoAccess: boolean | null): GoCostRow
 }
 
 /**
- * Reads the last 30 days of per-day cost plus the billing record.
- *
- * The two answer different questions and must stay apart: cost rows on a
- * subscription are allowance consumed, while billing is what was charged.
- *
- * Only `range=30d` reaches back a month. Since the console's October 2026
- * backend move, any `since` - with or without a range - answers with the last
- * two days alone, and the console itself sends `since` only for its 24-hour
- * view. Older days exist only in what earlier reads banked.
+ * Since the October 2026 backend move any `since` answers with the last two
+ * days alone, so only `range=30d` reaches back; the console sends `since` only for 24h.
  */
 export async function fetchGoUsageHistory(
   cookieHeader: string,
@@ -446,8 +428,6 @@ export async function fetchGoUsageHistory(
   return {
     rows: costRowsFrom(days, hasGoAccess),
     coverage: costCoverage(now),
-    // An unreadable plan state is not a lapsed plan, so it must not trip the
-    // "no subscription" warning either.
     billing: parseBillingStatus(billingStatus, autoRecharge, { hasGoAccess: hasGoAccess ?? true }),
     workspaceId,
   };
@@ -455,24 +435,13 @@ export async function fetchGoUsageHistory(
 
 /** The request log's largest page. */
 const USAGE_PAGE_SIZE = 100;
-/**
- * Backstop only. Paging normally ends when the console stops sending a cursor,
- * so a light month costs a dozen requests rather than this. Sized for two
- * hundred requests a day: a month that outgrows it is truncated rather than
- * walked indefinitely.
- */
+/** Backstop only, sized for two hundred requests a day; a busier month is truncated. */
 const MAX_USAGE_PAGES = 60;
 const USAGE_ROWS_TIMEOUT_MS = 45_000;
 
 /**
- * Pages the console's request log back to `sinceMs`, newest first.
- *
- * This is what lets a cookie alone carry an activity series: `opencode.db` is
- * the only other source of per-token history, and it does not exist until
- * opencode has been installed and used. The console filters by `since` itself,
- * and the first page fixes an `until` that every later page repeats, which is
- * how the console's own "older" button keeps a page from shifting under rows
- * that land mid-walk.
+ * Pages the request log back to `sinceMs`, newest first. Later pages repeat the
+ * first page's `until`, as the console's own "older" button does, so rows landing mid-walk cannot shift them.
  */
 export async function fetchGoUsageRows(
   cookieHeader: string,

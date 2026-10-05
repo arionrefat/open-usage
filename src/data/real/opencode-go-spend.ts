@@ -18,14 +18,8 @@ interface GoPlanCaps {
 const GO_PLAN_CAPS: GoPlanCaps = { sessionUsd: 12, weeklyUsd: 30, monthlyUsd: 60 };
 
 /**
- * How much faster than its raw API price a model drains the Go quota: the $60
- * monthly cap over the model's published monthly allowance, so a $15 model
- * weighs 4 and a $30 one 2. Source: `goModels` in anomalyco/opencode
- * packages/console/app/src/component/go-models.ts as of 725e4ba (2026-09-28),
- * the table behind opencode.ai/docs/go. It matches the meter, too: on
- * 2026-10-05 grok-4.7 filled the $12 five-hour window on $3.00 of raw cost.
- * Models at $60, and those no longer listed, weigh 1; grok-4.5 is kept from
- * the table it left.
+ * The $60 cap over each model's monthly allowance in `goModels`, anomalyco/opencode
+ * packages/console/app/src/component/go-models.ts at 725e4ba; grok-4.5 is kept from before.
  */
 const GO_QUOTA_WEIGHTS: Record<string, number> = {
   "kimi-k3": 4,

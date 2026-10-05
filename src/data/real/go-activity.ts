@@ -15,7 +15,6 @@ import type { GoUsageRow } from "./opencode-usage";
 export interface GoActivity {
   buckets: HourBuckets;
   stats: OpencodeSessionStats;
-  /** Requests refused at a cap, which spent no tokens. */
   rejected30d: number;
 }
 
@@ -38,8 +37,7 @@ export function goActivityFromRows(rows: GoUsageRow[]): GoActivity {
 
   for (const row of rows) {
     if (row.sessionId !== null) sessions.add(row.sessionId);
-    // A refused request ran no inference, so it would only inflate the request
-    // count behind the top model.
+    // Refused before inference ran, so it must not count toward the top model.
     if (row.isRejected) {
       rejected += 1;
       continue;
