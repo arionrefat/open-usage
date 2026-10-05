@@ -534,7 +534,7 @@ That database does not exist until opencode has been installed and used, so a co
 Two properties make this safe to put on the shared axis.
 The log reports every token kind separately, so the blended basis is computed exactly rather than approximated - `input + output + cacheWrite + cacheWrite1h`, with reasoning already inside output, which matches the local `TOKENS_SQL` term for term once output is stored net of reasoning; cache reads are carried in `cacheRead30d` as they are everywhere else.
 And it covers the whole workspace rather than this device, which is a wider population than the other providers report, so the provider sets `seriesScope: "workspace"` and the UI says so rather than leaving the reader to assume.
-`sessionID` is back on every request, so the workspace card reports a session count again, and rejected requests are kept out of the token totals and the top model.
+`sessionID` is back on every request, so the workspace card reports a session count again, and rejected requests are kept out of the token totals and the top model and counted on their own "rejected at a cap" row.
 
 The dashboard outranks `opencode.db` when both exist, and replaces it rather than adding to it: the two describe overlapping sessions, so summing them would double count.
 The walk ends when the console stops sending a cursor, capped at 60 pages, and walks only back to the newest row already held, so a poll half an hour after the last costs a page or two.

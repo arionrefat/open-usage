@@ -15,6 +15,8 @@ import type { GoUsageRow } from "./opencode-usage";
 export interface GoActivity {
   buckets: HourBuckets;
   stats: OpencodeSessionStats;
+  /** Requests refused at a cap, which spent no tokens. */
+  rejected30d: number;
 }
 
 /** Fresh tokens only, matching the local db's `TOKENS_SQL`; cache reads are out. */
@@ -32,12 +34,16 @@ export function goActivityFromRows(rows: GoUsageRow[]): GoActivity {
   let tokens = 0;
   let latestMs = 0;
   let totalUsd = 0;
+  let rejected = 0;
 
   for (const row of rows) {
     if (row.sessionId !== null) sessions.add(row.sessionId);
     // A refused request ran no inference, so it would only inflate the request
     // count behind the top model.
-    if (row.isRejected) continue;
+    if (row.isRejected) {
+      rejected += 1;
+      continue;
+    }
     const blended = blendedTokens(row);
     addToBucket(buckets, row.atMs, blended);
     latestMs = Math.max(latestMs, row.atMs);
@@ -74,5 +80,5 @@ export function goActivityFromRows(rows: GoUsageRow[]): GoActivity {
     // plan that never charges is a real reading, not a missing one.
     cost30d: { totalUsd, peakDayUsd: Math.max(0, ...dayCosts.values()) },
   };
-  return { buckets, stats };
+  return { buckets, stats, rejected30d: rejected };
 }

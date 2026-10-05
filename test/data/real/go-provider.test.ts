@@ -148,6 +148,7 @@ describe("buildGoProvider limits", () => {
     const workspace = (sessions: number) => ({
       buckets: new Map(),
       stats: { sessions, tokens: 9_668_060, latestMs: NOW_MS, topModel: "glm-5.3" },
+      rejected30d: 0,
     });
 
     const result = build({ server: SERVER, activity: workspace(29) }).provider;
@@ -159,6 +160,22 @@ describe("buildGoProvider limits", () => {
     expect(build({ server: SERVER, activity: workspace(0) }).provider.detailFooter).toBe(
       "tokens 30d 9.7M ▏ workspace-wide ▏ tokens from the opencode console",
     );
+  });
+
+  test("requests refused at a cap get their own row, apart from the token figures", () => {
+    const activity = {
+      buckets: new Map(),
+      stats: { sessions: 2, tokens: 500, latestMs: NOW_MS, topModel: "grok-4.7" },
+      rejected30d: 1,
+    };
+    const details = build({ server: SERVER, activity }).provider.details ?? [];
+
+    expect(details.find((section) => section.title === "requests 30d")?.rows).toEqual([
+      { label: "rejected at a cap", value: "1" },
+    ]);
+    // Without the request log there is no count, which is not the same as none.
+    const local = build({ server: SERVER }).provider.details ?? [];
+    expect(local.some((section) => section.title === "requests 30d")).toBe(false);
   });
 
   test("a history drift note joins the limits note instead of replacing it", () => {
@@ -298,6 +315,7 @@ describe("source precedence", () => {
       activity: {
         buckets: new Map([[hour, 4_000_000]]),
         stats: { sessions: 9, tokens: 4_000_000, latestMs: NOW_MS, topModel: "kimi-k3" },
+        rejected30d: 0,
       },
     });
 
@@ -321,6 +339,7 @@ describe("source precedence", () => {
       activity: {
         buckets: new Map([[hour, 2_000_000]]),
         stats: { sessions: 3, tokens: 2_000_000, latestMs: NOW_MS, topModel: "kimi-k3" },
+        rejected30d: 0,
       },
     });
 

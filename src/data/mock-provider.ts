@@ -332,6 +332,7 @@ const SNAPSHOT: UsageSnapshot = {
             { label: "messages", value: "612" },
           ],
         },
+        { title: "requests 30d", rows: [{ label: "rejected at a cap", value: "3" }] },
       ],
     },
   },

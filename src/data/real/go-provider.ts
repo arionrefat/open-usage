@@ -166,6 +166,7 @@ function detailSections(
   stats: OpencodeSessionStats | undefined,
   useBalance: boolean | null,
   billing: GoBilling | null,
+  rejected30d: number | null,
 ): DetailSection[] | undefined {
   const sections: DetailSection[] = [];
   if (stats?.modelTokens30d) {
@@ -212,6 +213,9 @@ function detailSections(
   }
   if (useBalance !== null) usageRows.push({ label: "balance fallback", value: useBalance ? "on" : "off" });
   if (usageRows.length > 0) sections.push({ title: "usage value 30d", rows: usageRows });
+  if (rejected30d !== null) {
+    sections.push({ title: "requests 30d", rows: [{ label: "rejected at a cap", value: String(rejected30d) }] });
+  }
 
   const billed = billedSection(billing);
   if (billed) sections.push(billed);
@@ -409,7 +413,7 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
       ...(stats?.sessions !== undefined ? { sessions30d: stats.sessions } : {}),
       ...(stats?.tokenSplit30d ? { cacheRead30d: toMillions(stats.tokenSplit30d.cacheRead) } : {}),
       ...(history ? { spend: history } : {}),
-      details: detailSections(stats, server?.useBalance ?? null, billing ?? null),
+      details: detailSections(stats, server?.useBalance ?? null, billing ?? null, workspace?.rejected30d ?? null),
       ...(noticeText
         ? {
             notice: {

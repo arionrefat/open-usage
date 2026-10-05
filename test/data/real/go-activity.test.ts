@@ -69,12 +69,13 @@ describe("goActivityFromRows", () => {
   });
 
   test("a refused request counts its session but not toward the top model", () => {
-    const { stats } = goActivityFromRows([
+    const { stats, rejected30d } = goActivityFromRows([
       row({ sessionId: "ses_test1", model: "glm-5.3-flash", outputTokens: 4 }),
       row({ sessionId: "ses_test2", model: "grok-4.7", isRejected: true }),
       row({ sessionId: "ses_test2", model: "grok-4.7", isRejected: true }),
     ]);
 
+    expect(rejected30d).toBe(2);
     expect(stats.topModel).toBe("glm-5.3-flash");
     expect(stats.sessions).toBe(2);
     expect(stats.tokens).toBe(4);
