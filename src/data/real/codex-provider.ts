@@ -94,18 +94,28 @@ function codexDetails(limits: CodexAccountLimits, dates: string[]): DetailSectio
   return sections.length > 0 ? sections : undefined;
 }
 
-/** Turns the CLI's wire enum into a plan label rather than exposing underscores. */
+/**
+ * Turns the CLI's wire enum into a plan label rather than exposing underscores.
+ * The wire names are not the marketed ones: `prolite`, `pro` and `promax` are
+ * sold as Pro 100, Pro 200 and Pro 500, and `team` is now ChatGPT Business.
+ * Those and Business Premium are what codex's own `/status` prints
+ * (codex-rs/tui/src/subscription.rs), so the card agrees with the CLI.
+ */
 function withPlan(meta: ProviderMeta, planType: string, planEnd: PlanEnd | undefined): ProviderMeta {
   const known: Record<string, string> = {
+    go: "Go",
+    prolite: "Pro 100",
+    pro: "Pro 200",
+    promax: "Pro 500",
+    team: "Business",
     ent26: "Enterprise",
-    self_serve_business_prolite: "Business Pro Lite",
+    self_serve_business_prolite: "Business Premium",
     self_serve_business_usage_based: "Business",
     enterprise_cbp_automation: "Enterprise",
     enterprise_cbp_usage_based: "Enterprise",
     edu: "Education",
     edu_plus: "Education Plus",
     edu_pro: "Education Pro",
-    prolite: "Pro Lite",
   };
   const plan = known[planType] ?? planType
     .split(/[_-]+/)

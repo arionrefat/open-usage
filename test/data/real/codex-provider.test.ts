@@ -70,6 +70,29 @@ describe("buildCodexProvider", () => {
     expect(provider.meta.planEnd).toEqual({ text: "until Feb 4", isSoon: false });
   });
 
+  test("names each plan the way codex's own status line does", () => {
+    const labels = Object.fromEntries(
+      ["go", "plus", "prolite", "pro", "promax", "team", "self_serve_business_prolite", "edu_plus"].map(
+        (planType) => [planType, build(account({ planType })).meta.plan],
+      ),
+    );
+
+    expect(labels).toEqual({
+      go: "Go",
+      plus: "Plus",
+      prolite: "Pro 100",
+      pro: "Pro 200",
+      promax: "Pro 500",
+      team: "Business",
+      self_serve_business_prolite: "Business Premium",
+      edu_plus: "Education Plus",
+    });
+  });
+
+  test("title-cases a plan codex adds before it is named here", () => {
+    expect(build(account({ planType: "pro_ultra" })).meta.plan).toBe("Pro Ultra");
+  });
+
   test("states no end date without a live plan to attach it to", () => {
     const provider = buildCodexProvider({
       meta: createCodexMeta(),
