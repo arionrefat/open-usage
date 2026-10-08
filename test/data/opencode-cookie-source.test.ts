@@ -117,6 +117,7 @@ describe("opencode remote credentials as a go source", () => {
       writeCookieConfig(paths, COOKIE);
 
       expect(goConnectionFor(paths, NO_ENV)).toEqual({
+        isAvailable: true,
         isEnabled: true,
         isAgentInstalled: false,
         status: "none",
@@ -199,6 +200,7 @@ describe("opencode remote credentials as a go source", () => {
   test("still reports go as missing with neither a cookie nor an install", () => {
     withRoot((paths) => {
       expect(goConnectionFor(paths, NO_ENV)).toEqual({
+        isAvailable: false,
         isEnabled: false,
         isAgentInstalled: false,
         status: "none",

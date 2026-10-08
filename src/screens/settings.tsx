@@ -8,7 +8,7 @@ import { padEnd } from "../lib/text";
 import { defaultPreferencesPath } from "../preferences";
 import { COLORS, PROVIDER_COLORS } from "../theme";
 import { PROVIDER_IDS, STATUS_PRESENTATION, type ProviderId, type UsageSnapshot } from "../data/types";
-import type { AppState, OverviewMode } from "../state/app-state";
+import { availableProviders, type AppState, type OverviewMode } from "../state/app-state";
 import type { AppActions } from "../state/actions";
 import { Line, Rule, SplitLine, Spacer, keyHint, leftClick, type Segment } from "../components/primitives";
 import { toggleSegments, type ToggleOption } from "../components/toggle";
@@ -192,7 +192,7 @@ export function Settings(props: SettingsProps) {
       />
       <Rule width={width} />
 
-      {PROVIDER_IDS.map((id) => (
+      {availableProviders(state.connections).map((id) => (
         <ProviderRow key={id} id={id} {...props} />
       ))}
 

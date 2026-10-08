@@ -125,7 +125,9 @@ export function detectAgentInstallations(
       Boolean(paths.claudeExecutable) ||
       existsSync(paths.claudeProjects) ||
       existsSync(paths.claudeHistory),
-    cx: Boolean(paths.codexExecutable) || existsSync(paths.codexHome),
+    // Only the CLI can read codex limits, so a leftover ~/.codex without it is
+    // history of an uninstalled agent rather than an install.
+    cx: Boolean(paths.codexExecutable),
     go:
       Boolean(paths.opencodeExecutable) ||
       existsSync(paths.opencodeDb) ||
@@ -167,7 +169,8 @@ export function hasRealSources(
 
 function hasCachedProviderValues(path: string): boolean {
   const cache = readUsageCache(path);
-  return cache.claude !== null || cache.codex !== null || cache.go !== null;
+  // A cached codex reading alone cannot surface codex, which needs its CLI.
+  return cache.claude !== null || cache.go !== null;
 }
 
 const STATS_WINDOW_DAYS = 30;
@@ -265,6 +268,7 @@ function goConnection(
   const remoteKind = limits.credentialKind?.() ?? (hasCookie ? "cookie" : null);
   if (!isAgentInstalled && !remoteKind) {
     return {
+      isAvailable: false,
       isEnabled: false,
       isAgentInstalled: false,
       status: "none",
@@ -280,6 +284,7 @@ function goConnection(
   // alone would leave the user wondering where the exact figures went.
   const remoteNote = limits.note();
   return {
+    isAvailable: true,
     isEnabled: true,
     isAgentInstalled,
     status,
@@ -317,11 +322,11 @@ function buildConnections(
   const claudeStatus = claudeAuthInfo?.loggedIn === false ? "expired" : limitsStatus(claudeLimits);
   const codexStatus = limitsStatus(codexLimits);
   const hasClaude = installations.cl || claudeStatus !== "none";
-  const hasCodex = installations.cx || codexStatus !== "none";
 
   return {
     cl: hasClaude
       ? {
+          isAvailable: true,
           isEnabled: true,
           isAgentInstalled: installations.cl,
           status: claudeStatus,
@@ -336,14 +341,16 @@ function buildConnections(
                   : "claude code found; sign in with its CLI",
         }
       : {
+          isAvailable: false,
           isEnabled: false,
           isAgentInstalled: false,
           status: "none",
           credential: "",
           note: "claude code not found",
         },
-    cx: hasCodex
+    cx: installations.cx
       ? {
+          isAvailable: true,
           isEnabled: true,
           isAgentInstalled: installations.cx,
           status: codexStatus,
@@ -358,6 +365,7 @@ function buildConnections(
                   : "codex found; sign in with its CLI",
         }
       : {
+          isAvailable: false,
           isEnabled: false,
           isAgentInstalled: false,
           status: "none",
@@ -474,19 +482,21 @@ function buildSnapshot(
     now,
     authSource: claudeAuth,
   });
+  // Codex is hidden everywhere without its CLI, so its history is not worth a read.
+  const isCodexInstalled = detectAgentInstallations(paths).cx;
   // Native rollout files see every codex session on this device; opencode.db
   // only sees what opencode itself sent to an "openai" provider, so it is
   // merely a fallback.
   let codexLocal: ReturnType<typeof readCodexSessions> = null;
   try {
-    codexLocal = readCodexSessions(paths.codexHome, now);
+    if (isCodexInstalled) codexLocal = readCodexSessions(paths.codexHome, now);
   } catch {
     unreadable.add("cx");
   }
   const cx = buildCodexProvider({
     meta: meta.cx,
-    subscriptionEndsAtMs: readCodexSubscriptionEnd(paths.codexHome),
-    buckets: codexLocal?.buckets ?? providerBuckets(opencode, "openai"),
+    subscriptionEndsAtMs: isCodexInstalled ? readCodexSubscriptionEnd(paths.codexHome) : null,
+    buckets: codexLocal?.buckets ?? (isCodexInstalled ? providerBuckets(opencode, "openai") : new Map()),
     stats: codexLocal
       ? {
           sessions: codexLocal.sessions,
@@ -494,7 +504,9 @@ function buildSnapshot(
           latestMs: codexLocal.latestMs,
           topModel: codexLocal.topModel,
         }
-      : opencode?.stats.get("openai"),
+      : isCodexInstalled
+        ? opencode?.stats.get("openai")
+        : undefined,
     limitsSource: codexLimits,
     dates,
     now,
@@ -520,7 +532,7 @@ function buildSnapshot(
   });
   const fetchedAt = latestSourceTimestamp(nowMs, [
     claudeLimits.read()?.fetchedAtMs ?? 0,
-    codexLimits.read()?.fetchedAtMs ?? 0,
+    isCodexInstalled ? (codexLimits.read()?.fetchedAtMs ?? 0) : 0,
     goLimits.read(now)?.fetchedAtMs ?? 0,
     opencode?.latestMs ?? 0,
     transcripts.latestMs,
@@ -541,7 +553,7 @@ function buildSnapshot(
       fetchedAt,
       // Only caveats that still apply; a connected provider says nothing.
       windowNote: [
-        codexWindowNote(codexLimits),
+        isCodexInstalled ? codexWindowNote(codexLimits) : null,
         goResult.usesEstimate && goSpend ? "opencode go is a local spend estimate" : null,
       ]
         .filter((part): part is string => part !== null)
@@ -634,7 +646,9 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
           providerIds.has("cl") ? claudeLimits.poll(at, pollOptions) : null,
           providerIds.has("cl") ? claudeAuth.poll(at, pollOptions) : null,
           providerIds.has("go") ? goLimits.poll(at, pollOptions) : null,
-          providerIds.has("cx") ? codexLimits.poll(at, pollOptions) : null,
+          providerIds.has("cx") && detectAgentInstallations(paths).cx
+            ? codexLimits.poll(at, pollOptions)
+            : null,
         ].map(settle),
       );
       // The month history is a walk of thirty-odd requests, and nothing on the

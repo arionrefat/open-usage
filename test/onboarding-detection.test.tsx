@@ -13,6 +13,7 @@ function providerWithInstallations(
     const installed = installations[id];
     connections[id] = {
       ...connections[id],
+      isAvailable: installed,
       isEnabled: installed,
       isAgentInstalled: installed,
       status: installed ? "active" : "none",
@@ -42,7 +43,8 @@ describe("agent-aware onboarding", () => {
       expect(frame).toContain("we found 2 coding agents on this device");
       expect(frame).toMatch(/\[×\]\s+claude code\s+installed/);
       expect(frame).toMatch(/\[×\]\s+codex\s+installed/);
-      expect(frame).toMatch(/\[ \]\s+opencode\s+not found/);
+      // An agent that is not installed is left out rather than offered.
+      expect(frame).not.toContain("opencode");
       expect(frame).toContain("2 selected · 2 detected");
     } finally {
       act(() => setup.renderer.destroy());

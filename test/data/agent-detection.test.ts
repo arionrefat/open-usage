@@ -39,20 +39,33 @@ describe("coding agent detection", () => {
     expect(hasRealSources(paths)).toBe(true);
   });
 
-  test("recognizes each agent from its local data", () => {
+  test("recognizes claude code and opencode from their local data", () => {
     const root = mkdtempSync(join(tmpdir(), "open-usage-agents-"));
     const paths = missingPaths(root);
     try {
       mkdirSync(paths.claudeProjects, { recursive: true });
-      mkdirSync(paths.codexHome, { recursive: true });
       mkdirSync(join(root, "opencode"), { recursive: true });
       writeFileSync(paths.opencodeDb, "");
 
-      expect(detectAgentInstallations(paths)).toEqual({ cl: true, cx: true, go: true });
+      expect(detectAgentInstallations(paths)).toEqual({ cl: true, cx: false, go: true });
       const connections = createRealUsageProvider({ paths, env: {} }).initialConnections();
       expect(connections.cl.status).toBe("none");
-      expect(connections.cx.status).toBe("none");
       expect(connections.go.status).toBe("none");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("leaves codex out entirely when only its data outlived the CLI", () => {
+    const root = mkdtempSync(join(tmpdir(), "open-usage-agents-"));
+    const paths = missingPaths(root);
+    try {
+      mkdirSync(paths.claudeProjects, { recursive: true });
+      mkdirSync(join(paths.codexHome, "sessions"), { recursive: true });
+
+      expect(detectAgentInstallations(paths).cx).toBe(false);
+      const connections = createRealUsageProvider({ paths, env: {} }).initialConnections();
+      expect(connections.cx).toMatchObject({ isAvailable: false, isEnabled: false });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

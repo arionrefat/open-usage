@@ -132,11 +132,13 @@ function DisconnectedNotice({
   id,
   state,
   width,
+  settingsKey,
   onOpenSettings,
 }: {
   id: ProviderId;
   state: AppState;
   width: number;
+  settingsKey: string;
   onOpenSettings: () => void;
 }) {
   const connection = state.connections[id];
@@ -158,7 +160,7 @@ function DisconnectedNotice({
       <Line
         segments={[
           { text: "no limits to read - ", color: COLORS.textGhost, onClick: onOpenSettings },
-          { text: "5", color: COLORS.textSoft, onClick: onOpenSettings },
+          { text: settingsKey, color: COLORS.textSoft, onClick: onOpenSettings },
           // A stored credential is not what is missing, so pointing at settings
           // to reconnect would send the user to fix something that is fine.
           {
@@ -192,6 +194,7 @@ function ProviderCard({
   snapshot,
   width,
   isSelected,
+  settingsKey,
   actions,
 }: {
   id: ProviderId;
@@ -199,6 +202,7 @@ function ProviderCard({
   snapshot: UsageSnapshot;
   width: number;
   isSelected: boolean;
+  settingsKey: string;
   actions: AppActions;
 }) {
   const provider = snapshot.providers[id];
@@ -245,6 +249,7 @@ function ProviderCard({
           id={id}
           state={state}
           width={width}
+          settingsKey={settingsKey}
           onOpenSettings={() => {
             // Land on the row the card is about, where enter now reconnects it.
             actions.selectProvider(id);
@@ -606,6 +611,7 @@ export function OverviewDetailed(props: OverviewDetailedProps) {
               snapshot={snapshot}
               width={cardWidth}
               isSelected={PROVIDER_IDS[state.selection] === id}
+              settingsKey={derived.settingsKey}
               actions={props.actions}
             />
           </box>

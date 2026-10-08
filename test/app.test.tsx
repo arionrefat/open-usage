@@ -74,9 +74,9 @@ describe("App interactions", () => {
     expect(
       providerIdsForRefresh(
         {
-          cl: { isEnabled: true, status: "active", credential: "", note: "" },
-          cx: { isEnabled: true, status: "active", credential: "", note: "" },
-          go: { isEnabled: true, status: "active", credential: "", note: "" },
+          cl: { isAvailable: true, isEnabled: true, status: "active", credential: "", note: "" },
+          cx: { isAvailable: true, isEnabled: true, status: "active", credential: "", note: "" },
+          go: { isAvailable: true, isEnabled: true, status: "active", credential: "", note: "" },
         },
         "interval",
       ),
@@ -85,9 +85,9 @@ describe("App interactions", () => {
 
   test("keeps failed and unverified providers in automatic refreshes", () => {
     const connections = {
-      cl: { isEnabled: true, status: "active", credential: "", note: "" },
-      cx: { isEnabled: true, status: "expired", credential: "", note: "" },
-      go: { isEnabled: true, status: "active", credential: "", note: "" },
+      cl: { isAvailable: true, isEnabled: true, status: "active", credential: "", note: "" },
+      cx: { isAvailable: true, isEnabled: true, status: "expired", credential: "", note: "" },
+      go: { isAvailable: true, isEnabled: true, status: "active", credential: "", note: "" },
     } as const;
 
     expect(providerIdsForRefresh(connections, "interval")).toEqual(["cl", "cx", "go"]);

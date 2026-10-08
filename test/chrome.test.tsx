@@ -5,7 +5,7 @@ import { FilterBar, updatedAgeLabel } from "../src/components/chrome";
 
 describe("filter bar", () => {
   test("owns and renders its cursor blink in the leaf component", async () => {
-    const setup = await testRender(<FilterBar width={80} query="codex" matchCount={1} />, {
+    const setup = await testRender(<FilterBar width={80} query="codex" matchCount={1} providerCount={3} />, {
       width: 80,
       height: 3,
     });

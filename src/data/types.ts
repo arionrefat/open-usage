@@ -47,6 +47,12 @@ export interface ProviderMeta {
 }
 
 export interface ProviderConnection {
+  /**
+   * false when the provider has nothing on this device to read, such as codex
+   * without its CLI. Such a provider is left out of every view, tab and poll
+   * rather than shown as off, since there is no way to turn it on from here.
+   */
+  isAvailable: boolean;
   /** false hides the provider from aggregate views without dropping its credential. */
   isEnabled: boolean;
   /** Whether the provider's coding agent was found on PATH or in its local data directory. */

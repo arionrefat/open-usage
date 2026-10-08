@@ -10,7 +10,6 @@ const SCROLLBAR_WIDTH = 1;
 const SCRIM_COLOR = "#15161eb8";
 
 const KEYMAP: Array<[string, string]> = [
-  ["1 – 5", "jump to view · 5 is settings"],
   ["o", "re-run the setup wizard"],
   ["tab", "cycle views forward"],
   ["m", "overview mode · simplified / detailed"],
@@ -24,16 +23,25 @@ const KEYMAP: Array<[string, string]> = [
   ["q", "quit"],
 ];
 
+function keymapFor(settingsKey: string): Array<[string, string]> {
+  return [
+    [`1 – ${settingsKey}`, `jump to view · ${settingsKey} is settings`],
+    ...KEYMAP,
+  ];
+}
+
 interface HelpOverlayProps {
   width: number;
   height: number;
   isSettings?: boolean;
+  /** Number key that opens settings; it moves when a provider is not installed. */
+  settingsKey: string;
   onClose: () => void;
 }
 
-export function HelpOverlay({ width, height, isSettings = false, onClose }: HelpOverlayProps) {
+export function HelpOverlay({ width, height, isSettings = false, settingsKey, onClose }: HelpOverlayProps) {
   const keymap = isSettings
-    ? KEYMAP.flatMap(([key, description]): Array<[string, string]> => {
+    ? keymapFor(settingsKey).flatMap(([key, description]): Array<[string, string]> => {
         if (key === "w") {
           return [
             ["p", "poll interval · 1m / 2m / 3m / 4m / 5m"],
@@ -49,7 +57,7 @@ export function HelpOverlay({ width, height, isSettings = false, onClose }: Help
         }
         return [[key, description]];
       })
-    : KEYMAP;
+    : keymapFor(settingsKey);
   const margin = width >= 4 ? 2 : 0;
   const panelWidth = Math.max(1, Math.min(PANEL_WIDTH, width - margin * 2));
   const hasFrame = panelWidth >= 4;

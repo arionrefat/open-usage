@@ -69,6 +69,7 @@ function connections(
   statuses: Partial<Record<ProviderId, ConnectionStatus>> = {},
 ): Record<ProviderId, ProviderConnection> {
   const one = (id: ProviderId): ProviderConnection => ({
+    isAvailable: true,
     isEnabled: true,
     isAgentInstalled: true,
     status: statuses[id] ?? "active",
@@ -275,7 +276,7 @@ describe("daemon runtime", () => {
     // trusted `refresh` alone would log `poll ok` while an expired credential
     // refreshed nothing. This is the pass a fake provider cannot stand in for.
     const provider = createRealUsageProvider({
-      paths: MISSING_PATHS,
+      paths: { ...MISSING_PATHS, codexExecutable: "/usr/local/bin/codex" },
       env: {},
       claudeAuth: dormantClaudeAuthSource,
       goLimits: dormantGoLimitsSource,

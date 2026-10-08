@@ -7,7 +7,7 @@ import {
   type RangeKey,
   type UsageSnapshot,
 } from "../data/types";
-import { isProviderLive, type AppState } from "./app-state";
+import { availableProviders, isProviderLive, viewKeysFor, type AppState, type ViewKey } from "./app-state";
 
 const RANGE_NAMES: Record<RangeKey, string> = {
   today: "today",
@@ -35,6 +35,12 @@ export interface ProviderPressure {
 }
 
 export interface DerivedState {
+  /** Tabs in order; the number key for each is its position plus one. */
+  viewKeys: ViewKey[];
+  /** Number key that opens settings, which moves as providers come and go. */
+  settingsKey: string;
+  /** Providers present on this device, which is every provider any view may show. */
+  availableIds: ProviderId[];
   /** Providers passing both the enabled flag and the current name filter. */
   visibleIds: ProviderId[];
   /** Enabled providers whose credential currently works. */
@@ -191,11 +197,12 @@ function windowNote(
   visibleIds: ProviderId[],
   liveIds: ProviderId[],
   disconnectedIds: ProviderId[],
+  settingsKey: string,
 ): string {
   const query = state.filterQuery.trim();
   if (visibleIds.length === 0 && query) return `no providers match “${query}”`;
   if (liveIds.length === 0) {
-    return "no live provider - 5 settings to enable one, or o to re-run setup";
+    return `no live provider - ${settingsKey} settings to enable one, or o to re-run setup`;
   }
   if (disconnectedIds.length === 0) return snapshot.windowNote;
   return disconnectedIds
@@ -221,6 +228,9 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
     (id) => state.connections[id].isEnabled && !isProviderLive(state.connections[id]),
   );
 
+  const viewKeys = viewKeysFor(state.connections);
+  const settingsKey = String(viewKeys.indexOf("settings") + 1);
+
   const isHourly = state.range === "today";
   const dailyStart = dailyStartIndex(state.range, snapshot.dailyDates);
   const visibleDates = snapshot.dailyDates.slice(dailyStart);
@@ -237,6 +247,9 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
   const alertCount = hotIds.length + disconnectedIds.length;
 
   return {
+    viewKeys,
+    settingsKey,
+    availableIds: availableProviders(state.connections),
     visibleIds,
     liveIds,
     enabledCount,
@@ -256,6 +269,6 @@ export function deriveState(state: AppState, snapshot: UsageSnapshot): DerivedSt
     unfilteredRanked,
     worstId: ranked[0] ?? null,
     bestId: ranked.at(-1) ?? null,
-    windowNote: windowNote(state, snapshot, visibleIds, liveIds, disconnectedIds),
+    windowNote: windowNote(state, snapshot, visibleIds, liveIds, disconnectedIds, settingsKey),
   };
 }

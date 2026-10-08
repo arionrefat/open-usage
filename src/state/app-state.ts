@@ -22,6 +22,20 @@ export const VIEW_KEYS: readonly ViewKey[] = ["overview", "claude", "codex", "go
 
 export const PROVIDER_VIEWS: Record<ProviderId, ViewKey> = { cl: "claude", cx: "codex", go: "go" };
 
+/** Providers with something on this device to read; the rest appear nowhere. */
+export function availableProviders(connections: Record<ProviderId, ProviderConnection>): ProviderId[] {
+  return PROVIDER_IDS.filter((id) => connections[id].isAvailable);
+}
+
+/** The tab strip in order, which is also what the number keys jump to. */
+export function viewKeysFor(connections: Record<ProviderId, ProviderConnection>): ViewKey[] {
+  return [
+    "overview",
+    ...availableProviders(connections).map((id) => PROVIDER_VIEWS[id]),
+    "settings",
+  ];
+}
+
 export type OverviewMode = "simple" | "detailed";
 
 export type Screen = "app" | "onboarding";
@@ -87,15 +101,17 @@ function picksFromConnections(
 
 export function createInitialState(options: AppStateOptions): AppState {
   const selection = PROVIDER_IDS.findIndex((id) => options.connections[id].isEnabled);
+  const firstAvailable = firstAvailableIndex(options.connections);
   const isNotifyingOnLimits = options.isNotifyingOnLimits ?? false;
+  const view = options.view ?? "overview";
   return {
     screen: options.screen ?? "app",
-    view: options.view ?? "overview",
+    view: viewKeysFor(options.connections).includes(view) ? view : "overview",
     mode: options.mode ?? "detailed",
     scope: "weekly",
     range: "30d",
     selection: selection < 0 ? 0 : selection,
-    settingsCursor: 0,
+    settingsCursor: firstAvailable,
     isRefreshing: false,
     refreshError: null,
     preferenceSaveFailed: false,
@@ -110,7 +126,7 @@ export function createInitialState(options: AppStateOptions): AppState {
     connections: options.connections,
     onboarding: {
       step: 0,
-      cursor: 0,
+      cursor: firstAvailable,
       picks: picksFromConnections(options.connections),
       // Ticked by default on a first run; a re-run keeps the saved answer.
       isNotifying: isNotifyingOnLimits || options.screen === "onboarding",
@@ -121,6 +137,8 @@ export function createInitialState(options: AppStateOptions): AppState {
 
 export type AppAction =
   | { type: "set-view"; view: ViewKey }
+  /** A number key, counted from 1 along the tabs as they are currently drawn. */
+  | { type: "jump-to-view"; position: number }
   | { type: "cycle-view" }
   | { type: "set-mode"; mode: OverviewMode }
   | { type: "toggle-mode" }
@@ -165,6 +183,20 @@ export type AppAction =
 
 function wrapIndex(index: number, delta: number, length: number): number {
   return (index + (delta % length) + length) % length;
+}
+
+function firstAvailableIndex(connections: Record<ProviderId, ProviderConnection>): number {
+  const first = availableProviders(connections)[0];
+  return first ? PROVIDER_IDS.indexOf(first) : 0;
+}
+
+/** Moves a PROVIDER_IDS cursor by `delta` steps through `ids` alone, wrapping at either end. */
+function stepAmong(ids: ProviderId[], cursor: number, delta: number): number {
+  if (ids.length === 0) return cursor;
+  const currentId = PROVIDER_IDS[cursor];
+  const currentIndex = currentId ? ids.indexOf(currentId) : -1;
+  const startingIndex = currentIndex >= 0 ? currentIndex : delta > 0 ? -1 : 0;
+  return PROVIDER_IDS.indexOf(ids[wrapIndex(startingIndex, delta, ids.length)]!);
 }
 
 function nextOption<T>(options: readonly T[], current: T): T {
@@ -224,12 +256,25 @@ function reconcileConnections(
   refreshed: Record<ProviderId, ProviderConnection>,
   meta: Record<ProviderId, ProviderMeta>,
 ): AppState {
+  // The user's show / hide choice stands until the provider appears or
+  // disappears, which resets it to the detected default.
   const connections = byProvider((id) => ({
     ...refreshed[id],
-    isEnabled: state.connections[id].isEnabled,
+    isEnabled: state.connections[id].isAvailable === refreshed[id].isAvailable
+      ? state.connections[id].isEnabled
+      : refreshed[id].isEnabled,
   }));
   return normalizeSelection(
-    { ...state, isRefreshing: false, refreshError: null, connections },
+    {
+      ...state,
+      isRefreshing: false,
+      refreshError: null,
+      connections,
+      view: viewKeysFor(connections).includes(state.view) ? state.view : "overview",
+      settingsCursor: connections[PROVIDER_IDS[state.settingsCursor]!].isAvailable
+        ? state.settingsCursor
+        : firstAvailableIndex(connections),
+    },
     meta,
   );
 }
@@ -240,13 +285,7 @@ function moveSelection(
   meta: Record<ProviderId, ProviderMeta>,
 ): AppState {
   const ids = selectableProviders(state, meta);
-  if (ids.length === 0) return { ...state, view: "overview" };
-
-  const currentId = PROVIDER_IDS[state.selection];
-  const currentIndex = currentId ? ids.indexOf(currentId) : -1;
-  const startingIndex = currentIndex >= 0 ? currentIndex : delta > 0 ? -1 : 0;
-  const nextId = ids[wrapIndex(startingIndex, delta, ids.length)]!;
-  return { ...state, view: "overview", selection: PROVIDER_IDS.indexOf(nextId) };
+  return { ...state, view: "overview", selection: stepAmong(ids, state.selection, delta) };
 }
 
 function commitFilter(state: AppState, meta: Record<ProviderId, ProviderMeta>): AppState {
@@ -296,9 +335,17 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
   return function appReducer(state: AppState, action: AppAction): AppState {
     switch (action.type) {
       case "set-view":
-        return { ...state, view: action.view };
-      case "cycle-view":
-        return { ...state, view: VIEW_KEYS[wrapIndex(VIEW_KEYS.indexOf(state.view), 1, VIEW_KEYS.length)]! };
+        return viewKeysFor(state.connections).includes(action.view)
+          ? { ...state, view: action.view }
+          : state;
+      case "jump-to-view": {
+        const view = viewKeysFor(state.connections)[action.position - 1];
+        return view ? { ...state, view } : state;
+      }
+      case "cycle-view": {
+        const views = viewKeysFor(state.connections);
+        return { ...state, view: views[wrapIndex(views.indexOf(state.view), 1, views.length)]! };
+      }
       case "set-mode":
         return { ...state, mode: action.mode };
       case "toggle-mode":
@@ -371,11 +418,12 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
           ...state,
           onboarding: {
             ...state.onboarding,
-            cursor: wrapIndex(state.onboarding.cursor, action.delta, PROVIDER_IDS.length),
+            cursor: stepAmong(availableProviders(state.connections), state.onboarding.cursor, action.delta),
           },
         };
       case "onboarding-toggle": {
         const id = PROVIDER_IDS[state.onboarding.cursor]!;
+        if (!state.connections[id].isAvailable) return state;
         return {
           ...state,
           onboarding: {
@@ -386,7 +434,7 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
       }
       case "onboarding-pick": {
         const id = PROVIDER_IDS[action.index];
-        if (!id) return state;
+        if (!id || !state.connections[id].isAvailable) return state;
         return {
           ...state,
           onboarding: {
@@ -397,7 +445,13 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
         };
       }
       case "onboarding-select-all":
-        return { ...state, onboarding: { ...state.onboarding, picks: { cl: true, cx: true, go: true } } };
+        return {
+          ...state,
+          onboarding: {
+            ...state.onboarding,
+            picks: byProvider((id) => state.connections[id].isAvailable),
+          },
+        };
       case "onboarding-begin-auth": {
         return beginOnboardingAuth(state, meta);
       }
@@ -426,10 +480,11 @@ export function createAppReducer(meta: Record<ProviderId, ProviderMeta>) {
       case "settings-move":
         return {
           ...state,
-          settingsCursor: wrapIndex(state.settingsCursor, action.delta, PROVIDER_IDS.length),
+          settingsCursor: stepAmong(availableProviders(state.connections), state.settingsCursor, action.delta),
         };
       case "settings-toggle-enabled": {
         const id = action.id ?? PROVIDER_IDS[state.settingsCursor]!;
+        if (!state.connections[id].isAvailable) return state;
         return withConnection(
           state,
           id,

@@ -4,8 +4,7 @@ import { FINE_STEP_SECONDS, useSecondsSince } from "../hooks/use-seconds-since";
 import { columnWidth } from "../lib/text";
 import { APP_NAME } from "../config";
 import { COLORS, SPINNER_FRAMES } from "../theme";
-import { PROVIDER_IDS } from "../data/types";
-import { VIEW_KEYS, type ViewKey } from "../state/app-state";
+import type { ViewKey } from "../state/app-state";
 import type { AppActions } from "../state/actions";
 import { Line, Rule, SplitLine, keyHint, segmentsWidth, type Segment } from "./primitives";
 
@@ -119,6 +118,7 @@ const TAB_LABELS: Record<ViewKey, string> = {
 
 interface TabsProps {
   width: number;
+  views: ViewKey[];
   activeView: ViewKey;
   rangeLabel: string;
   actions: AppActions;
@@ -168,7 +168,7 @@ function visibleQueryText(query: string, budget: number): string {
   return `…${characters.slice(-(budget - 1)).join("")}`;
 }
 
-export function Tabs({ width, activeView, rangeLabel, actions }: TabsProps) {
+export function Tabs({ width, views, activeView, rangeLabel, actions }: TabsProps) {
   const cycleRange = () => actions.cycleRange();
   const right: Segment[] = [
     { text: "range ", color: COLORS.textFaint, onClick: cycleRange },
@@ -176,11 +176,11 @@ export function Tabs({ width, activeView, rangeLabel, actions }: TabsProps) {
     { text: " t", color: COLORS.textDisabled, onClick: cycleRange },
   ];
 
-  const allTabs: TabCell[] = VIEW_KEYS.map((view, index) => {
+  const allTabs: TabCell[] = views.map((view, index) => {
     const label = ` ${index + 1} ${TAB_LABELS[view]} `;
     return { view, label, isActive: view === activeView, width: columnWidth(label) };
   });
-  const activeIndex = VIEW_KEYS.indexOf(activeView);
+  const activeIndex = views.indexOf(activeView);
   const tabBudget = Math.max(0, width - segmentsWidth(right) - 1);
   const tabs = visibleTabs(allTabs, activeIndex, tabBudget);
 
@@ -223,10 +223,11 @@ interface FilterBarProps {
   width: number;
   query: string;
   matchCount: number;
+  providerCount: number;
 }
 
 /** Owns its blink timer so a cursor tick never commits the App tree. */
-export function FilterBar({ width, query, matchCount }: FilterBarProps) {
+export function FilterBar({ width, query, matchCount, providerCount }: FilterBarProps) {
   const isCursorVisible = useBlink(true);
   const queryBudget = Math.max(1, Math.floor(width * 0.6) - 4);
   const visibleQuery = visibleQueryText(query, queryBudget);
@@ -243,7 +244,7 @@ export function FilterBar({ width, query, matchCount }: FilterBarProps) {
         ]}
         right={[
           {
-            text: `${matchCount} of ${PROVIDER_IDS.length} providers · enter to keep · esc to clear`,
+            text: `${matchCount} of ${providerCount} providers · enter to keep · esc to clear`,
             color: COLORS.textGhost,
           },
         ]}
@@ -257,11 +258,13 @@ const SEPARATOR_WIDTH = 3;
 export function StatusBar({
   width,
   view,
+  settingsKey,
   actions,
   message,
 }: {
   width: number;
   view: ViewKey;
+  settingsKey: string;
   actions: AppActions;
   message?: string;
 }) {
@@ -286,7 +289,7 @@ export function StatusBar({
         ["r", "refresh", () => actions.refresh()],
         ["/", "filter", () => actions.startFilter()],
         ["?", "help", () => actions.toggleHelp()],
-        ["5", "settings", () => actions.setView("settings")],
+        [settingsKey, "settings", () => actions.setView("settings")],
       ];
 
   const quit = () => actions.quit();

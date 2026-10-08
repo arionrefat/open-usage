@@ -13,7 +13,6 @@ import {
   type UsageSnapshot,
 } from "./data/types";
 import {
-  VIEW_KEYS,
   PROVIDER_VIEWS,
   createAppReducer,
   createInitialState,
@@ -479,8 +478,8 @@ export function App({
   );
 
   const handleSelectionKey = useCallback((key: KeyEvent, char: string | null) => {
-    if (char && char >= "1" && char <= "5") {
-      dispatch({ type: "set-view", view: VIEW_KEYS[Number(char) - 1]! });
+    if (char && char >= "1" && char <= "9") {
+      dispatch({ type: "jump-to-view", position: Number(char) });
     } else if (key.name === "j" || key.name === "down" || key.name === "right") {
       dispatch({ type: "move-selection", delta: 1 });
     } else if (key.name === "k" || key.name === "up" || key.name === "left") {
@@ -582,6 +581,7 @@ export function App({
         <box height={1} flexShrink={0} />
         <Tabs
           width={contentWidth}
+          views={derived.viewKeys}
           activeView={state.view}
           rangeLabel={derived.rangeLabel}
           actions={actions}
@@ -633,6 +633,7 @@ export function App({
             width={contentWidth}
             query={state.filterQuery}
             matchCount={derived.visibleIds.length}
+            providerCount={derived.availableIds.length}
           />
         </box>
       ) : null}
@@ -646,6 +647,7 @@ export function App({
         <StatusBar
           width={contentWidth}
           view={state.view}
+          settingsKey={derived.settingsKey}
           actions={actions}
           message={state.preferenceSaveFailed ? "▲ save failed" : undefined}
         />
@@ -656,6 +658,7 @@ export function App({
           width={width}
           height={height}
           isSettings={state.view === "settings"}
+          settingsKey={derived.settingsKey}
           onClose={actions.closeHelp}
         />
       ) : null}

@@ -119,7 +119,7 @@ describe("createRealUsageProvider with no sources", () => {
   test("refresh polls only requested providers", async () => {
     const calls = { cl: 0, cx: 0, go: 0 };
     const provider = createRealUsageProvider({
-      paths: MISSING_PATHS,
+      paths: { ...MISSING_PATHS, codexExecutable: "/usr/local/bin/codex" },
       claudeAuth: dormantClaudeAuthSource,
       claudeLimits: {
         read: () => null,
@@ -257,7 +257,12 @@ describe("persisted limit cache", () => {
     try {
       expect(readUsageCache(cachePath).claude?.session.percent).toBe(24);
       const provider = createRealUsageProvider({
-        paths: { ...MISSING_PATHS, usageCache: cachePath, configFile: configPath },
+        paths: {
+          ...MISSING_PATHS,
+          usageCache: cachePath,
+          configFile: configPath,
+          codexExecutable: "/usr/local/bin/codex",
+        },
         claudeAuth: dormantClaudeAuthSource,
       });
       const snapshot = provider.readSnapshot();
@@ -375,7 +380,7 @@ describe("refresh pressure on the upstream providers", () => {
     writeFileSync(configPath, JSON.stringify({ opencodeCookie: "auth=tok" }));
 
     const provider = createRealUsageProvider({
-      paths: { ...MISSING_PATHS, usageCache: cachePath },
+      paths: { ...MISSING_PATHS, usageCache: cachePath, codexExecutable: "/usr/local/bin/codex" },
       claudeAuth: dormantClaudeAuthSource,
       claudeLimits: createClaudeLimitsSource((now) => {
         calls.cl += 1;
@@ -818,10 +823,18 @@ describe("selectUsageProvider", () => {
   });
 
   test("a Codex-only installation selects the real provider", () => {
-    const codexHome = mkdtempSync(join(tmpdir(), "open-usage-codex-"));
-    const paths = { ...MISSING_PATHS, codexHome };
+    const paths = { ...MISSING_PATHS, codexExecutable: "/usr/local/bin/codex" };
     expect(hasRealSources(paths)).toBe(true);
     expect(selectUsageProvider("real", paths)).not.toBe(mockUsageProvider);
+  });
+
+  test("leftover codex data without its CLI is not a real usage source", () => {
+    const codexHome = mkdtempSync(join(tmpdir(), "open-usage-codex-"));
+    try {
+      expect(hasRealSources({ ...MISSING_PATHS, codexHome })).toBe(false);
+    } finally {
+      rmSync(codexHome, { recursive: true, force: true });
+    }
   });
 });
 

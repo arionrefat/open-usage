@@ -54,6 +54,7 @@ function connections(
   statuses: Partial<Record<ProviderId, ConnectionStatus>> = {},
 ): Record<ProviderId, ProviderConnection> {
   const one = (id: ProviderId): ProviderConnection => ({
+    isAvailable: true,
     isEnabled: true,
     status: statuses[id] ?? "active",
     credential: "",

@@ -3,7 +3,7 @@ import type { NotificationTest } from "../state/app-state";
 import { padEnd } from "../lib/text";
 import { COLORS, PROVIDER_COLORS } from "../theme";
 import { PROVIDER_IDS, STATUS_PRESENTATION, type ProviderId, type UsageSnapshot } from "../data/types";
-import { isProviderLive, type AppState } from "../state/app-state";
+import { availableProviders, isProviderLive, type AppState } from "../state/app-state";
 import type { AppActions } from "../state/actions";
 import { KeyLegend } from "../components/chrome";
 import { Line, Rule, SplitLine, Spacer } from "../components/primitives";
@@ -58,17 +58,18 @@ function PickStep({ state, width, actions }: OnboardingProps) {
           {
             text: installed.length > 0
               ? "installed agents are selected - existing CLI logins are reused"
-              : "select an agent manually if it is installed outside PATH",
+              : "agents that are not installed are left out - install one, then re-run setup",
             color: COLORS.textFaint,
           },
         ]}
       />
       <Spacer />
-      {PROVIDER_IDS.map((id, index) => {
+      {availableProviders(state.connections).map((id) => {
+        const index = PROVIDER_IDS.indexOf(id);
         const isSelected = state.onboarding.cursor === index;
         const isPicked = state.onboarding.picks[id];
+        // Anything listed is installed or configured; unavailable providers are not listed at all.
         const isInstalled = state.connections[id].isAgentInstalled === true;
-        const isConfigured = !isInstalled && state.connections[id].credential.length > 0;
         const background = isSelected ? COLORS.bgRowActive : undefined;
         const pick = () => actions.onboardingPick(index);
         return (
@@ -93,12 +94,8 @@ function PickStep({ state, width, actions }: OnboardingProps) {
                 onClick: pick,
               },
               {
-                text: isInstalled
-                  ? `installed · ${AGENT_SETUP[id]}`
-                  : isConfigured
-                    ? "configured"
-                    : "not found",
-                color: isInstalled || isConfigured ? COLORS.textFaint : COLORS.textDisabled,
+                text: isInstalled ? `installed · ${AGENT_SETUP[id]}` : "configured",
+                color: COLORS.textFaint,
                 background,
                 onClick: pick,
               },
@@ -286,7 +283,7 @@ function SummaryStep({ state, snapshot, width, actions }: OnboardingProps) {
         ]}
       />
       <Spacer />
-      {PROVIDER_IDS.map((id) => {
+      {availableProviders(state.connections).map((id) => {
         const connection = state.connections[id];
         const status = STATUS_PRESENTATION[connection.status];
         const statusLabel = connection.isEnabled ? status.label : "hidden";

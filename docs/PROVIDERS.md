@@ -284,6 +284,10 @@ Writing the rotated token back into opencode's `auth.json` avoids that but means
 Codex CLI 0.146.0 was installed, which made the CLI RPC route available, so no token is ever read, refreshed or transmitted by this app.
 `src/data/real/codex-app-server.ts` spawns `codex -s read-only -a never app-server`, sends `initialize`, then `account/rateLimits/read`, `account/read`, and `account/usage/read`, and kills the child on every path including timeout and cancellation.
 
+Codex counts as installed only when `codex` is on PATH, since that CLI is the only way its limits are read.
+A `~/.codex` left behind after an uninstall does not count.
+Without the CLI, codex is left out of every tab, card, chart, settings row and poll, and its rollouts are not read at all.
+
 Ground truth beat the third-party docs in three places, all verified against `codex app-server generate-json-schema` and a live call:
 
 - Fields are camelCase (`usedPercent`, `resetsAt`, `windowDurationMins`), not the snake_case in CodexBar's write-up. `resetsAt` is unix **seconds**.

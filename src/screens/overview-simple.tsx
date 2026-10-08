@@ -4,7 +4,6 @@ import { columnWidth, padEnd } from "../lib/text";
 import { COLORS, PROVIDER_COLORS, THRESHOLDS } from "../theme";
 import {
   byProvider,
-  PROVIDER_IDS,
   STATUS_PRESENTATION,
   type ProviderId,
   type ScopeKey,
@@ -246,17 +245,17 @@ export function OverviewSimple({
   scopeTitle,
   actions,
 }: OverviewSimpleProps) {
-  // The design plots all three providers regardless of filter or visibility;
+  // The design plots every installed provider regardless of filter or visibility;
   // consumption counts live providers only. Candidate to lift into derive.ts.
   const consumption = byProvider((id) =>
     isProviderLive(state.connections[id])
       ? (snapshot.providers[id].scopes[state.scope].percent ?? 0)
       : 0,
   );
-  const consumptionTotal = PROVIDER_IDS.reduce((acc, id) => acc + consumption[id], 0);
+  const consumptionTotal = derived.availableIds.reduce((acc, id) => acc + consumption[id], 0);
 
   const chart = planChart(
-    PROVIDER_IDS.map((id) => {
+    derived.availableIds.map((id) => {
       const scope = snapshot.providers[id].scopes[state.scope];
       const isLive = isProviderLive(state.connections[id]);
       return {
@@ -267,7 +266,9 @@ export function OverviewSimple({
     }),
   );
 
-  const leadLine = consumptionTotal ? "" : "nothing connected - 5 settings to enable a provider";
+  const leadLine = consumptionTotal
+    ? ""
+    : `nothing connected - ${derived.settingsKey} settings to enable a provider`;
 
   const showChart = width >= PLAN_CHART_MIN_CONTENT_WIDTH;
   const legendWidth = showChart ? width - chart.width - PLAN_CHART_GAP : width;
@@ -295,7 +296,7 @@ export function OverviewSimple({
         {showChart ? <PlanUsage chart={chart} leadLine={leadLine} /> : null}
         {showChart ? <box width={PLAN_CHART_GAP} flexShrink={0} /> : null}
         <box flexDirection="column" flexShrink={0} width={legendWidth}>
-          {PROVIDER_IDS.map((id, index) => (
+          {derived.availableIds.map((id, index) => (
             <box key={id} flexDirection="column" flexShrink={0}>
               {index > 0 ? <Spacer /> : null}
               <ProviderLegend
