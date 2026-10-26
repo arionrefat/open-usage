@@ -47,7 +47,12 @@ jobs:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
-      - run: bun build --compile --minify src/index.tsx --outfile ${{ matrix.artifact }}
+      # OpenTUI picks its Linux musl library from OPENTUI_LIBC at runtime, so the
+      # bundler must resolve both builds unless the choice is fixed here. Only
+      # the glibc one is installed on these runners, and only it is shipped.
+      # bash so the quoting survives the Windows runners' PowerShell.
+      - shell: bash
+        run: bun build --compile --minify --define 'process.env.OPENTUI_LIBC="glibc"' src/index.tsx --outfile ${{ matrix.artifact }}
       - name: Sign and verify the macOS binary
         if: runner.os == 'macOS'
         run: |
