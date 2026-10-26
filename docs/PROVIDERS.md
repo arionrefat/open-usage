@@ -284,9 +284,23 @@ Writing the rotated token back into opencode's `auth.json` avoids that but means
 Codex CLI 0.146.0 was installed, which made the CLI RPC route available, so no token is ever read, refreshed or transmitted by this app.
 `src/data/real/codex-app-server.ts` spawns `codex -s read-only -a never app-server`, sends `initialize`, then `account/rateLimits/read`, `account/read`, and `account/usage/read`, and kills the child on every path including timeout and cancellation.
 
-Codex counts as installed only when `codex` is on PATH, since that CLI is the only way its limits are read.
-A `~/.codex` left behind after an uninstall does not count.
-Without the CLI, codex is left out of every tab, card, chart, settings row and poll, and its rollouts are not read at all.
+The CLI is looked up on PATH first.
+On macOS the ChatGPT desktop app ships a full codex CLI at `ChatGPT.app/Contents/Resources/codex-cli/bin/codex`, under `/Applications` or `~/Applications`, and runs it against the same `~/.codex`.
+That binary is used when PATH has none, and the app-server is spawned from whichever path was found rather than from a bare `codex`.
+Checked 2026-10-27 on a Mac with the ChatGPT app and no codex on PATH: the bundled `codex-cli 0.164.0-alpha.11.1` answered all three methods with the same plan, windows, grants and history as an installed CLI.
+
+### Without any codex binary
+
+Every rollout's `token_count` event carries a `rate_limits` snapshot: `limit_id`, `plan_type`, `primary` and `secondary` windows of `used_percent`, `window_minutes` and `resets_at` (unix seconds), and `credits`.
+It is the server's reading at that turn, in the app-server's shape with snake_case names, so `codex-rollout-limits.ts` renames the fields and hands them to the same parser.
+With no binary found, limits come from the newest snapshot in a rollout touched within the last week, and the card says how old it is.
+A window whose `resets_at` has passed is dropped rather than shown at its old percentage, and a null snapshot (openai/codex#14880) steps back to an earlier event or file.
+The reading is never live, so the connection reports it as cached, from `local · codex sessions`.
+On the same Mac the newest snapshot read 2% weekly, fifteen minutes old, against 3% from the live app-server.
+
+Codex counts as installed when a CLI is found, or when `~/.codex/sessions` has a day directory from the last 30 days.
+A `~/.codex` left behind after an uninstall goes quiet once its sessions age out of that window.
+Otherwise codex is left out of every tab, card, chart, settings row and poll, and its rollouts are not read at all.
 
 Ground truth beat the third-party docs in three places, all verified against `codex app-server generate-json-schema` and a live call:
 
@@ -421,6 +435,14 @@ Both paths now ship, with the server one preferred and the estimate as the alway
 `src/data/real/opencode-go-spend.ts` sums `message.cost` for `providerID = 'opencode-go'` into three windows and scores them against the published caps.
 Rolling windows report when the oldest spend in them ages out ("frees up in"), since a rolling window never resets wholesale.
 The monthly window is anchored to the day-of-month of the first spend ever recorded rather than the 1st, because the billing cycle follows the subscription date - without that anchor a cycle that just rolled over reads near-zero while the weekly window reads high.
+
+### opencode 2.x schema
+
+opencode 2.x moved assistant turns from `message` into `session_message`, and its migration dropped `message`, `part` and `session`, along with the history they held.
+A turn is now a row with `type = 'assistant'`, and the provider and model sit under `data.model.providerID` and `data.model.id` instead of `data.providerID` and `data.modelID`.
+`tokens` and `cost` kept their shape, and a 2.x turn carries its cost on the row, with no step-finish parts.
+Until 2026-10-27 every query here named `message`, so on opencode 2.1.4 every local figure, the Go estimate included, read as unreadable.
+`opencode-db.ts` now reads both schemas through one `assistant` row source, and a turn present in both is counted once.
 
 `src/data/real/opencode-server.ts` calls the console's REST API with the filtered session cookie and an `x-org-id` header naming the workspace.
 `GET /console/api/orgs` discovers that id once; `GET /console/api/go/status` returns the plan.

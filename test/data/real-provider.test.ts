@@ -208,6 +208,28 @@ describe("defaultRealProviderPaths", () => {
     ]);
   });
 
+  test("falls back to the codex CLI bundled in the ChatGPT app on macOS", () => {
+    const bundled = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin";
+    const which = (command: string, path: string | undefined) =>
+      command === "codex" && path?.split(":").includes(bundled) ? `${bundled}/codex` : null;
+
+    expect(defaultRealProviderPaths({ env: { PATH: "/usr/bin" }, homeDir: "/fixture/home", which, platform: "darwin" })
+      .codexExecutable).toBe(`${bundled}/codex`);
+    expect(defaultRealProviderPaths({ env: { PATH: "/usr/bin" }, homeDir: "/fixture/home", which, platform: "linux" })
+      .codexExecutable).toBeNull();
+  });
+
+  test("prefers a codex on PATH over the bundled one", () => {
+    const paths = defaultRealProviderPaths({
+      env: { PATH: "/fixture/bin" },
+      homeDir: "/fixture/home",
+      which: (command, path) => (path === "/fixture/bin" ? `/fixture/bin/${command}` : `/bundled/${command}`),
+      platform: "darwin",
+    });
+
+    expect(paths.codexExecutable).toBe("/fixture/bin/codex");
+  });
+
   test("keeps an absolute OPENCODE_DB override absolute", () => {
     expect(defaultRealProviderPaths({
       env: { OPENCODE_DB: "/fixture/custom.db" },

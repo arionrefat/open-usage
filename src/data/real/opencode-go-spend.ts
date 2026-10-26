@@ -3,7 +3,7 @@ import { statSync } from "node:fs";
 import { DAY_MS, HOUR_MS } from "./aggregate";
 import { isRecord } from "./json";
 import { isMissingFile } from "./fs-errors";
-import { openForReading } from "./opencode-db";
+import { assistantRowsSql, openForReading, overAssistantRows, readTables } from "./opencode-db";
 
 /**
  * Derived from message.cost in opencode.db against the published caps.
@@ -132,14 +132,26 @@ export function spendFromRows(rows: unknown[]): SpendEvent[] {
 const SPEND_SQL =
   "SELECT CAST(COALESCE(json_extract(data,'$.time.created'), time_created) AS INTEGER) AS at," +
   " CAST(json_extract(data,'$.cost') AS REAL) AS usd," +
-  " json_extract(data,'$.modelID') AS model" +
-  " FROM message" +
+  " model_id AS model" +
+  " FROM assistant" +
   // Both names, because opencode renamed the Go provider and a machine that
   // spans the rename holds spend under each.
-  " WHERE json_extract(data,'$.providerID') IN ('opencode','opencode-go')" +
-  " AND json_extract(data,'$.role')='assistant'" +
+  " WHERE provider_id IN ('opencode','opencode-go')" +
   " AND json_type(data,'$.cost') IN ('integer','real')" +
   " AND CAST(COALESCE(json_extract(data,'$.time.created'), time_created) AS INTEGER) >= ?1";
+
+/** `assistant` keeps a day before ?1 here, for a part timestamped after its message. */
+const PART_SPEND_CTES = `
+  provider_messages AS (
+    SELECT
+      id AS messageID,
+      CAST(COALESCE(json_extract(data,'$.time.created'), time_created) AS INTEGER) AS createdMs,
+      CAST(json_extract(data,'$.cost') AS REAL) AS messageCost,
+      json_type(data,'$.cost') IN ('integer','real') AS hasMessageCost,
+      model_id AS model
+    FROM assistant
+    WHERE provider_id IN ('opencode','opencode-go')
+  )`;
 
 /**
  * Newer OpenCode databases write one cost per `step-finish` part. Fall back to
@@ -147,20 +159,6 @@ const SPEND_SQL =
  * carrying both shapes is counted once rather than twice.
  */
 const PART_SPEND_SQL = `
-  WITH provider_messages AS (
-    SELECT
-      id AS messageID,
-      CAST(COALESCE(json_extract(data,'$.time.created'), time_created) AS INTEGER) AS createdMs,
-      CAST(json_extract(data,'$.cost') AS REAL) AS messageCost,
-      json_type(data,'$.cost') IN ('integer','real') AS hasMessageCost,
-      json_extract(data,'$.modelID') AS model
-    FROM message
-    WHERE json_extract(data,'$.providerID') IN ('opencode','opencode-go')
-      AND json_extract(data,'$.role')='assistant'
-      -- Bounded so the CTE does not scan every message ever written. The day of
-      -- slack covers a part timestamped after the message that opened it.
-      AND time_created >= ?1 - ${DAY_MS}
-  )
   SELECT
     CAST(COALESCE(json_extract(p.data,'$.time.created'), p.time_created, m.createdMs) AS INTEGER) AS at,
     CAST(json_extract(p.data,'$.cost') AS REAL) AS usd,
@@ -184,13 +182,7 @@ const PART_SPEND_SQL = `
         AND json_type(p.data,'$.cost') IN ('integer','real')
     )`;
 
-function hasPartTable(db: Database): boolean {
-  return db.query(
-    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='part' LIMIT 1",
-  ).get() !== null;
-}
-
-/** null only when the DB is absent. */
+/** null when the DB is absent or holds no turns table yet. */
 export function readGoSpend(dbPath: string, now: Date, caps: GoPlanCaps = GO_PLAN_CAPS): GoSpend | null {
   try {
     statSync(dbPath);
@@ -201,7 +193,13 @@ export function readGoSpend(dbPath: string, now: Date, caps: GoPlanCaps = GO_PLA
   let db: Database | null = null;
   try {
     db = openForReading(dbPath);
-    const sql = hasPartTable(db) ? PART_SPEND_SQL : SPEND_SQL;
+    const tables = readTables(db);
+    const rowsSql = assistantRowsSql(tables);
+    // No turns table yet, so there is nothing to estimate from, not a zero.
+    if (rowsSql === null) return null;
+    const sql = tables.hasPart
+      ? overAssistantRows(rowsSql, PART_SPEND_SQL, PART_SPEND_CTES)
+      : overAssistantRows(rowsSql, SPEND_SQL);
     const rows: unknown[] = db.query(sql).all(now.getTime() - QUERY_WINDOW_MS);
     return goSpendFrom(spendFromRows(rows), now, caps);
   } catch (error) {

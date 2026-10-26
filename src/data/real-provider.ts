@@ -1,11 +1,11 @@
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { configPath } from "../config";
 import type { ProviderMode } from "../lib/args";
 import { COLORS } from "../theme";
 import { mockUsageProvider } from "./mock-provider";
-import { DAY_MS, dailyDateKeys, formatAge, type HourBuckets } from "./real/aggregate";
+import { DAY_MS, dailyDateKeys, formatAge, localDateKey, type HourBuckets } from "./real/aggregate";
 import { buildClaudeProvider, createClaudeMeta } from "./real/claude-provider";
 import { createClaudeAuthSource, type ClaudeAuthSource } from "./real/claude-auth";
 import { readHistoryStats } from "./real/claude-history";
@@ -19,6 +19,8 @@ import { buildCodexProvider, codexWindowNote, createCodexMeta } from "./real/cod
 import { readCodexSessions } from "./real/codex-sessions";
 import { readCodexSubscriptionEnd } from "./real/codex-subscription";
 import { createCodexLimitsSource, type CodexLimitsSource } from "./real/codex-limits";
+import { readCodexLimits } from "./real/codex-app-server";
+import { createCodexRolloutLimitsSource } from "./real/codex-rollout-limits";
 import { buildGoProvider, createGoMeta } from "./real/go-provider";
 import {
   createGoLimitsSource,
@@ -79,6 +81,17 @@ export interface DefaultRealProviderPathOptions {
   env?: Record<string, string | undefined>;
   homeDir?: string;
   which?: (command: string, path: string | undefined) => string | null;
+  platform?: NodeJS.Platform;
+}
+
+/**
+ * The ChatGPT desktop app ships its own codex CLI, signed in to the same
+ * `~/.codex`, so a Mac with only the app still has a codex to ask.
+ */
+const BUNDLED_CODEX_DIR = join("ChatGPT.app", "Contents", "Resources", "codex-cli", "bin");
+
+function bundledCodexSearchPath(home: string): string {
+  return [join("/Applications", BUNDLED_CODEX_DIR), join(home, "Applications", BUNDLED_CODEX_DIR)].join(delimiter);
 }
 
 export function defaultRealProviderPaths(
@@ -112,9 +125,24 @@ export function defaultRealProviderPaths(
     pricingOverrides: configPath("pricing.json", env, home),
     codexHome: codexHomeEnv || join(home, ".codex"),
     claudeExecutable: which("claude", env.PATH),
-    codexExecutable: which("codex", env.PATH),
+    codexExecutable:
+      which("codex", env.PATH) ??
+      ((options.platform ?? process.platform) === "darwin" ? which("codex", bundledCodexSearchPath(home)) : null),
     opencodeExecutable: which("opencode", env.PATH),
   };
+}
+
+/**
+ * Codex files each rollout under `sessions/YYYY/MM/DD`, by local date. A day
+ * directory inside the dashboard's window means codex ran here recently, from
+ * whatever client, even with no CLI to be found.
+ */
+function hasRecentCodexSessions(codexHome: string, now: Date = new Date()): boolean {
+  for (let daysAgo = 0; daysAgo < STATS_WINDOW_DAYS; daysAgo += 1) {
+    const [year = "", month = "", day = ""] = localDateKey(new Date(now.getTime() - daysAgo * DAY_MS)).split("-");
+    if (existsSync(join(codexHome, "sessions", year, month, day))) return true;
+  }
+  return false;
 }
 
 export function detectAgentInstallations(
@@ -125,9 +153,8 @@ export function detectAgentInstallations(
       Boolean(paths.claudeExecutable) ||
       existsSync(paths.claudeProjects) ||
       existsSync(paths.claudeHistory),
-    // Only the CLI can read codex limits, so a leftover ~/.codex without it is
-    // history of an uninstalled agent rather than an install.
-    cx: Boolean(paths.codexExecutable),
+    // A ~/.codex with nothing recent is history of an uninstalled agent, not an install.
+    cx: Boolean(paths.codexExecutable) || hasRecentCodexSessions(paths.codexHome),
     go:
       Boolean(paths.opencodeExecutable) ||
       existsSync(paths.opencodeDb) ||
@@ -169,7 +196,7 @@ export function hasRealSources(
 
 function hasCachedProviderValues(path: string): boolean {
   const cache = readUsageCache(path);
-  // A cached codex reading alone cannot surface codex, which needs its CLI.
+  // A cached codex reading alone cannot surface codex, which needs a CLI or recent sessions.
   return cache.claude !== null || cache.go !== null;
 }
 
@@ -321,6 +348,7 @@ function buildConnections(
   const claudeAuthInfo = claudeAuth.read();
   const claudeStatus = claudeAuthInfo?.loggedIn === false ? "expired" : limitsStatus(claudeLimits);
   const codexStatus = limitsStatus(codexLimits);
+  const hasCodexCli = Boolean(paths.codexExecutable);
   const hasClaude = installations.cl || claudeStatus !== "none";
 
   return {
@@ -354,15 +382,15 @@ function buildConnections(
           isEnabled: true,
           isAgentInstalled: installations.cx,
           status: codexStatus,
-          credential: codexStatus === "none" ? "" : "oauth · codex cli",
+          credential: codexStatus === "none" ? "" : hasCodexCli ? "oauth · codex cli" : "local · codex sessions",
           note:
             codexStatus === "active"
               ? "live account limits"
               : codexStatus === "cached"
-                ? "cached limits"
+                ? hasCodexCli ? "cached limits" : "limits from the last codex session"
                 : codexStatus === "expired"
                   ? (codexLimits.note() ?? "codex limits unavailable")
-                  : "codex found; sign in with its CLI",
+                  : hasCodexCli ? "codex found; sign in with its CLI" : "codex sessions found; no codex cli",
         }
       : {
           isAvailable: false,
@@ -482,7 +510,7 @@ function buildSnapshot(
     now,
     authSource: claudeAuth,
   });
-  // Codex is hidden everywhere without its CLI, so its history is not worth a read.
+  // Codex is hidden everywhere without a CLI or recent sessions, so its history is not worth a read.
   const isCodexInstalled = detectAgentInstallations(paths).cx;
   // Native rollout files see every codex session on this device; opencode.db
   // only sees what opencode itself sent to an "openai" provider, so it is
@@ -574,11 +602,16 @@ export function createRealUsageProvider(options: RealProviderOptions = {}): Usag
   const readPersistedCache = memoizedByStamp(paths.usageCache, readUsageCache);
   const persisted = <K extends keyof UsageCache>(key: K) => () => readPersistedCache()[key];
   const readPersistedHistory = memoizedByStamp(paths.goHistoryCache, readGoHistoryCache);
-  const codexLimits = options.codexLimits ?? createCodexLimitsSource(undefined, {
-    initial: cached.codex,
-    onUpdate: (value) => persist("codex", value),
-    readPersisted: persisted("codex"),
-  });
+  const codexExecutable = paths.codexExecutable;
+  const codexLimits =
+    options.codexLimits ??
+    (codexExecutable
+      ? createCodexLimitsSource((now, readOptions) => readCodexLimits(now, { ...readOptions, executable: codexExecutable }), {
+          initial: cached.codex,
+          onUpdate: (value) => persist("codex", value),
+          readPersisted: persisted("codex"),
+        })
+      : createCodexRolloutLimitsSource(paths.codexHome));
   const goLimits = options.goLimits ?? createGoLimitsSource(paths.configFile, env, undefined, {
     initial: cached.go,
     onUpdate: (value) => persist("go", value),

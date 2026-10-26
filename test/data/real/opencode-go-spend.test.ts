@@ -176,6 +176,31 @@ describe("readGoSpend", () => {
     expect(readGoSpend(path, NOW)?.session.usd).toBe(2);
   });
 
+  test("reads opencode 2.x session_message costs, weighted by the model under data.model", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "opencode-spend-v2-")), "opencode.db");
+    const db = new Database(path);
+    db.run("CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, time_created INTEGER, data TEXT)");
+    const insert = db.prepare("INSERT INTO session_message VALUES (?1, 's1', ?2, ?3, ?4)");
+    const turn = (provider: string, cost: number) => JSON.stringify({
+      time: { created: NOW_MS - HOUR_MS },
+      model: { id: "glm-5.2", providerID: provider },
+      cost,
+    });
+    insert.run("m1", "assistant", NOW_MS - HOUR_MS, turn("opencode-go", 2));
+    insert.run("m2", "assistant", NOW_MS - HOUR_MS, turn("openai", 9));
+    insert.run("m3", "user", NOW_MS - HOUR_MS, JSON.stringify({ cost: 9 }));
+    db.close();
+
+    expect(readGoSpend(path, NOW)?.session.usd).toBe(2 * goQuotaWeight("glm-5.2"));
+  });
+
+  test("returns null for a database with no turns table yet", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "opencode-spend-empty-")), "opencode.db");
+    new Database(path).close();
+
+    expect(readGoSpend(path, NOW)).toBeNull();
+  });
+
   test("throws when an existing database is unreadable", () => {
     const path = join(mkdtempSync(join(tmpdir(), "opencode-spend-corrupt-")), "opencode.db");
     writeFileSync(path, "not sqlite");

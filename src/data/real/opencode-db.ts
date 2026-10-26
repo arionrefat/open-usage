@@ -30,6 +30,66 @@ export interface OpencodeUsage {
 
 const USAGE_WINDOW_DAYS = 30;
 
+export interface OpencodeTables {
+  hasMessage: boolean;
+  hasPart: boolean;
+  hasSessionMessage: boolean;
+}
+
+function hasTable(db: Database, name: string): boolean {
+  return db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1 LIMIT 1").get(name) !== null;
+}
+
+export function readTables(db: Database): OpencodeTables {
+  return {
+    hasMessage: hasTable(db, "message"),
+    hasPart: hasTable(db, "part"),
+    hasSessionMessage: hasTable(db, "session_message"),
+  };
+}
+
+/**
+ * Assistant turns in one row shape - `id, session_id, time_created,
+ * provider_id, model_id, data` - whichever schema wrote them. opencode 2.x
+ * moved turns from `message`, with the role and ids at the top of `data`, to
+ * `session_message`, with a `type` column and the ids under `data.model`, and
+ * its migration dropped the old tables. Tokens and cost kept their shape.
+ *
+ * Each branch is bounded a day before ?1, the slack a step-finish part needs;
+ * every query tightens that with its own filter. null when neither table exists.
+ */
+export function assistantRowsSql(tables: OpencodeTables): string | null {
+  const bound = `time_created >= ?1 - ${DAY_MS}`;
+  const branches: string[] = [];
+  if (tables.hasSessionMessage) {
+    branches.push(
+      "SELECT id, session_id, time_created," +
+        " json_extract(data,'$.model.providerID') AS provider_id," +
+        " json_extract(data,'$.model.id') AS model_id, data" +
+        ` FROM session_message WHERE type='assistant' AND ${bound}`,
+    );
+  }
+  if (tables.hasMessage) {
+    // Only a part join or the dedupe below needs the id, and a database from
+    // before parts may not carry the column at all.
+    const id = tables.hasPart || tables.hasSessionMessage ? "id" : "NULL";
+    // A migration that kept the old table must not count a turn twice.
+    const dedupe = tables.hasSessionMessage ? " AND id NOT IN (SELECT id FROM session_message)" : "";
+    branches.push(
+      `SELECT ${id} AS id, session_id, time_created,` +
+        " json_extract(data,'$.providerID') AS provider_id," +
+        " json_extract(data,'$.modelID') AS model_id, data" +
+        ` FROM message WHERE json_extract(data,'$.role')='assistant' AND ${bound}${dedupe}`,
+    );
+  }
+  return branches.length > 0 ? branches.join(" UNION ALL ") : null;
+}
+
+/** Prefixes `query` with the `assistant` CTE, plus any CTEs of its own. */
+export function overAssistantRows(rowsSql: string, query: string, ctes?: string): string {
+  return `WITH assistant AS (${rowsSql})${ctes ? `, ${ctes}` : ""} ${query}`;
+}
+
 /**
  * opencode renamed the Go provider from `opencode-go` to `opencode`, so a
  * machine that spans the rename holds rows under both. Folding them to one key
@@ -37,8 +97,7 @@ const USAGE_WINDOW_DAYS = 30;
  * happened to ask for, and keeps every consumer on the name it already uses.
  */
 const PROVIDER_SQL =
-  "CASE WHEN json_extract(data,'$.providerID') IN ('opencode','opencode-go')" +
-  " THEN 'opencode-go' ELSE json_extract(data,'$.providerID') END";
+  "CASE WHEN provider_id IN ('opencode','opencode-go') THEN 'opencode-go' ELSE provider_id END";
 
 /** Fresh tokens only - cache reads would dwarf real work by two orders of magnitude. */
 const TOKENS_SQL =
@@ -51,8 +110,7 @@ const HOUR_ROWS_SQL =
   "SELECT CAST(time_created/3600000 AS INTEGER) AS hour," +
   ` ${PROVIDER_SQL} AS provider,` +
   ` SUM(${TOKENS_SQL}) AS tokens` +
-  " FROM message" +
-  " WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
+  " FROM assistant WHERE time_created >= ?1" +
   " GROUP BY hour, provider";
 
 const SESSION_ROWS_SQL =
@@ -60,18 +118,16 @@ const SESSION_ROWS_SQL =
   " COUNT(DISTINCT session_id) AS sessions," +
   ` SUM(${TOKENS_SQL}) AS tokens,` +
   " MAX(time_created) AS latest" +
-  " FROM message" +
-  " WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
+  " FROM assistant WHERE time_created >= ?1" +
   " GROUP BY provider";
 
 const MODEL_ROWS_SQL =
   `SELECT ${PROVIDER_SQL} AS provider,` +
-  " json_extract(data,'$.modelID') AS model," +
+  " model_id AS model," +
   // Same basis as the headline above, so the per-model bars sum to it rather
   // than contradicting it by the cache-read volume.
   ` COUNT(*) AS msgs, SUM(${TOKENS_SQL}) AS tokens` +
-  " FROM message" +
-  " WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
+  " FROM assistant WHERE time_created >= ?1" +
   " GROUP BY provider, model";
 
 const DETAIL_ROWS_SQL =
@@ -84,7 +140,7 @@ const DETAIL_ROWS_SQL =
   " SUM(coalesce(json_extract(data,'$.cost'),0)) AS totalUsd," +
   " SUM(CASE WHEN json_type(data,'$.tokens')='object' THEN 1 ELSE 0 END) AS tokenCount," +
   " COUNT(json_extract(data,'$.cost')) AS costCount" +
-  " FROM message WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
+  " FROM assistant WHERE time_created >= ?1" +
   " GROUP BY provider";
 
 /**
@@ -103,9 +159,10 @@ const DAILY_COST_ROWS_SQL =
   `SELECT ${PROVIDER_SQL} AS provider,` +
   ` CAST(time_created/${COST_SLOT_MS} AS INTEGER) AS slot,` +
   " SUM(coalesce(json_extract(data,'$.cost'),0)) AS usd" +
-  " FROM message WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1" +
+  " FROM assistant WHERE time_created >= ?1" +
   " GROUP BY provider, slot";
 
+/** `assistant` keeps a day before ?1 here, for a part timestamped after its message. */
 const PART_COST_CTES = `
   provider_messages AS (
     SELECT
@@ -114,11 +171,7 @@ const PART_COST_CTES = `
       ${PROVIDER_SQL} AS provider,
       CAST(json_extract(data,'$.cost') AS REAL) AS messageCost,
       json_type(data,'$.cost') IN ('integer','real') AS hasMessageCost
-    FROM message
-    WHERE json_extract(data,'$.role')='assistant'
-      -- Bounded so the CTE does not scan every message ever written. The day of
-      -- slack covers a part timestamped after the message that opened it.
-      AND time_created >= ?1 - ${DAY_MS}
+    FROM assistant
   ),
   cost_events AS (
     SELECT
@@ -143,8 +196,7 @@ const PART_COST_CTES = `
       )
   )`;
 
-const DETAIL_PART_ROWS_SQL = `
-  WITH ${PART_COST_CTES},
+const DETAIL_PART_CTES = `${PART_COST_CTES},
   token_totals AS (
     SELECT
       ${PROVIDER_SQL} AS provider,
@@ -154,19 +206,20 @@ const DETAIL_PART_ROWS_SQL = `
       SUM(coalesce(json_extract(data,'$.tokens.cache.read'),0)) AS cacheRead,
       SUM(coalesce(json_extract(data,'$.tokens.cache.write'),0)) AS cacheWrite,
       SUM(CASE WHEN json_type(data,'$.tokens')='object' THEN 1 ELSE 0 END) AS tokenCount
-    FROM message
-    WHERE json_extract(data,'$.role')='assistant' AND time_created >= ?1
+    FROM assistant
+    WHERE time_created >= ?1
     GROUP BY provider
   ),
   cost_totals AS (
     SELECT provider, SUM(usd) AS totalUsd, COUNT(*) AS costCount
     FROM cost_events WHERE at >= ?1 GROUP BY provider
-  )
+  )`;
+
+const DETAIL_PART_ROWS_SQL = `
   SELECT t.*, COALESCE(c.totalUsd,0) AS totalUsd, COALESCE(c.costCount,0) AS costCount
   FROM token_totals t LEFT JOIN cost_totals c ON c.provider=t.provider`;
 
 const DAILY_PART_COST_ROWS_SQL = `
-  WITH ${PART_COST_CTES}
   SELECT provider, CAST(at/${COST_SLOT_MS} AS INTEGER) AS slot, SUM(usd) AS usd
   FROM cost_events WHERE at >= ?1 GROUP BY provider, slot`;
 
@@ -283,15 +336,18 @@ export function usageFromRows(
 /** Readonly aggregate read; null only when the DB is absent. */
 export function aggregateRowsFromDatabase(db: Database, sinceMs: number): unknown[][] {
   return db.transaction(() => {
-    const hasPart = db.query(
-      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='part' LIMIT 1",
-    ).get() !== null;
+    const tables = readTables(db);
+    const rowsSql = assistantRowsSql(tables);
+    // A database opencode has created but never written a turn to.
+    if (rowsSql === null) return [[], [], [], [], []];
+    const rows = (query: string, ctes?: string): unknown[] =>
+      db.query(overAssistantRows(rowsSql, query, ctes)).all(sinceMs);
     return [
-      db.query(HOUR_ROWS_SQL).all(sinceMs),
-      db.query(SESSION_ROWS_SQL).all(sinceMs),
-      db.query(MODEL_ROWS_SQL).all(sinceMs),
-      db.query(hasPart ? DETAIL_PART_ROWS_SQL : DETAIL_ROWS_SQL).all(sinceMs),
-      db.query(hasPart ? DAILY_PART_COST_ROWS_SQL : DAILY_COST_ROWS_SQL).all(sinceMs),
+      rows(HOUR_ROWS_SQL),
+      rows(SESSION_ROWS_SQL),
+      rows(MODEL_ROWS_SQL),
+      tables.hasPart ? rows(DETAIL_PART_ROWS_SQL, DETAIL_PART_CTES) : rows(DETAIL_ROWS_SQL),
+      tables.hasPart ? rows(DAILY_PART_COST_ROWS_SQL, PART_COST_CTES) : rows(DAILY_COST_ROWS_SQL),
     ];
   })();
 }

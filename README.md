@@ -73,7 +73,7 @@ The dashboard sends them through your terminal when it supports notifications, a
 | Provider | Limits | History |
 | --- | --- | --- |
 | Claude Code | Signed-in `claude` CLI | Local `~/.claude` transcripts |
-| Codex | Sandboxed `codex app-server` | Local `~/.codex/sessions` |
+| Codex | Sandboxed `codex app-server`, from PATH or the ChatGPT app, else the last session's snapshot | Local `~/.codex/sessions` |
 | OpenCode Go | Local estimate or optional dashboard session | Local `opencode.db` |
 
 `open-usage` never modifies another tool's files or reads Claude and Codex credentials.

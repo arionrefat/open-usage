@@ -97,7 +97,8 @@ describe("readOpencodeUsage", () => {
         return {
           get() {
             expect(inTransaction).toBe(true);
-            return null;
+            // Every table lookup finds its table.
+            return {};
           },
           all() {
             expect(inTransaction).toBe(true);
@@ -273,6 +274,76 @@ describe("readOpencodeUsage", () => {
     expect(usage?.stats.get("opencode-go")?.tokens).toBe(125);
     expect(usage?.stats.get("opencode-go")?.sessions).toBe(2);
     expect(usage?.stats.get("opencode")).toBeUndefined();
+  });
+
+  test("reads opencode 2.x session_message rows, which moved the ids under data.model", () => {
+    // opencode 2.x migrated turns into session_message and dropped the message
+    // table, which left every local figure unreadable until this read both.
+    const path = tempDatabase("opencode-db-v2-");
+    const db = new Database(path);
+    db.run(
+      "CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER," +
+        " time_created INTEGER, time_updated INTEGER, data TEXT)",
+    );
+    const insert = db.prepare("INSERT INTO session_message VALUES (?1, ?2, ?3, 0, ?4, ?4, ?5)");
+    const atMs = new Date(2026, 9, 20, 12).getTime();
+    const turn = (model: string, provider: string, output: number, cost: number) => JSON.stringify({
+      time: { created: atMs },
+      model: { id: model, providerID: provider, variant: "high" },
+      tokens: { input: 100, output, reasoning: 0, cache: { read: 5000, write: 0 } },
+      cost,
+    });
+    insert.run("m1", "s1", "assistant", atMs, turn("glm-5.3-flash", "opencode-go", 50, 0.5));
+    insert.run("m2", "s2", "assistant", atMs + 1000, turn("grok-4.7", "opencode-go", 150, 1.5));
+    insert.run("m3", "s3", "assistant", atMs + 2000, turn("gpt-5.6-sol", "openai", 20, 0));
+    insert.run("m4", "s1", "user", atMs, JSON.stringify({ time: { created: atMs }, text: "hi" }));
+    db.close();
+
+    const usage = readOpencodeUsage(path, new Date(2026, 9, 27));
+    const go = usage?.stats.get("opencode-go");
+
+    expect(go?.sessions).toBe(2);
+    expect(go?.tokens).toBe(400);
+    expect(go?.modelTokens30d).toEqual({ "glm-5.3-flash": 150, "grok-4.7": 250 });
+    expect(go?.tokenSplit30d?.cacheRead).toBe(10_000);
+    expect(go?.cost30d).toEqual({ totalUsd: 2, peakDayUsd: 2 });
+    expect(usage?.stats.get("openai")?.topModel).toBe("gpt-5.6-sol");
+  });
+
+  test("counts a turn once when a migration left it in both schemas", () => {
+    const path = tempDatabase("opencode-db-both-");
+    const db = new Database(path);
+    db.run("CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)");
+    db.run("CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, time_created INTEGER, data TEXT)");
+    const atMs = new Date(2026, 9, 20, 12).getTime();
+    const tokens = { input: 10, output: 20, reasoning: 0, cache: { read: 0, write: 0 } };
+    db.prepare("INSERT INTO message VALUES (?1, 's1', ?2, ?3)").run(
+      "m1", atMs, JSON.stringify({ role: "assistant", providerID: "opencode-go", modelID: "glm", tokens }),
+    );
+    db.prepare("INSERT INTO message VALUES (?1, 's0', ?2, ?3)").run(
+      "m0", atMs - 1000, JSON.stringify({ role: "assistant", providerID: "opencode-go", modelID: "glm", tokens }),
+    );
+    db.prepare("INSERT INTO session_message VALUES (?1, 's1', 'assistant', ?2, ?3)").run(
+      "m1", atMs, JSON.stringify({ model: { id: "glm", providerID: "opencode-go" }, tokens }),
+    );
+    db.close();
+
+    const go = readOpencodeUsage(path, new Date(2026, 9, 27))?.stats.get("opencode-go");
+
+    expect(go?.tokens).toBe(60);
+    expect(go?.sessions).toBe(2);
+  });
+
+  test("reads an opencode database with no turns tables as empty", () => {
+    const path = tempDatabase("opencode-db-empty-");
+    const db = new Database(path);
+    db.run("CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT)");
+    db.close();
+
+    const usage = readOpencodeUsage(path, new Date(2026, 9, 27));
+
+    expect(usage?.stats.size).toBe(0);
+    expect(usage?.buckets.size).toBe(0);
   });
 
   test("returns null when the db file does not exist", () => {

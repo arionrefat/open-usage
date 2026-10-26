@@ -97,7 +97,7 @@ Touch when a shared provider presentation primitive changes.
 
 | Reader | Source file | Produces |
 | --- | --- | --- |
-| `opencode-db.ts` | `~/.local/share/opencode/opencode.db` | Token counts per provider per hour (SQL over message rows) |
+| `opencode-db.ts` | `~/.local/share/opencode/opencode.db` | Token counts per provider per hour (SQL over assistant turns, `message` or opencode 2.x `session_message`) |
 | `opencode-auth.ts` | `~/.local/share/opencode/auth.json` | Which credentials exist, already masked |
 | `claude-transcripts.ts` | `~/.claude/projects/` | Claude token counts bucketed by hour |
 | `claude-history.ts` | `~/.claude/history.jsonl` | Prompt and session counts, last 30 days |

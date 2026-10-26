@@ -71,6 +71,39 @@ describe("coding agent detection", () => {
     }
   });
 
+  test("counts codex sessions from the last 30 days as an install without a CLI", () => {
+    const root = mkdtempSync(join(tmpdir(), "open-usage-agents-"));
+    const paths = missingPaths(root);
+    try {
+      const today = new Date();
+      const month = String(today.getMonth() + 1).padStart(2, "0");
+      const day = String(today.getDate()).padStart(2, "0");
+      mkdirSync(join(paths.codexHome, "sessions", String(today.getFullYear()), month, day), { recursive: true });
+
+      expect(detectAgentInstallations(paths).cx).toBe(true);
+      const connections = createRealUsageProvider({ paths, env: {} }).initialConnections();
+      expect(connections.cx).toMatchObject({
+        isEnabled: true,
+        status: "none",
+        note: "codex sessions found; no codex cli",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("leaves codex out when its newest sessions are older than 30 days", () => {
+    const root = mkdtempSync(join(tmpdir(), "open-usage-agents-"));
+    const paths = missingPaths(root);
+    try {
+      mkdirSync(join(paths.codexHome, "sessions", "2020", "01", "01"), { recursive: true });
+
+      expect(detectAgentInstallations(paths).cx).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("enables only detected agents in the initial connections", () => {
     const paths = {
       ...missingPaths("/nonexistent/open-usage-agent-connections"),
