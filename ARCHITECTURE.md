@@ -4,7 +4,7 @@
 
 ## The 30-second version
 
-1. `index.tsx` reads CLI flags and picks a data source: mock (sample data) or real (your local files). A `daemon` first argument goes to `daemon/` instead and never draws.
+1. `index.tsx` reads CLI flags and picks a data source: mock (sample data) or real (your local files). A `daemon` first argument goes to `daemon/` instead, and `--json` goes to `status/`; neither draws.
 2. Both data sources implement one interface, `UsageProvider`, and hand the UI a `UsageSnapshot`.
 3. A pure reducer holds all UI state; `derive.ts` turns state + snapshot into render-ready values.
 4. `app.tsx` owns the only timers (poll loop, idle watchdog); screens and components just draw.
@@ -31,6 +31,7 @@ flowchart LR
 | `bun run shot` | Headless HTML screenshot for reviewing colors and chart geometry. |
 | `bun test` | Runs the suite under the top-level `test/` directory. |
 | `bun src/index.tsx daemon start` | Starts the background poller against your real config. |
+| `bun src/index.tsx --json --pretty` | Prints the cached limits as JSON and exits. |
 | `bun run typecheck` | Runs `tsc --noEmit`. |
 
 The main UI entry points accept `--mock`, `--real`, `--no-poll`, `--screen`, `--view`, and `--mode`.
@@ -161,6 +162,22 @@ The Go history is the exception, because one poll of it is thirty-odd requests: 
 The request log is walked incrementally: rows never change once written, so a poll pages back only to the newest row already held and joins by the server's request id, which turns a sixty-page walk into one or two pages.
 Everything independent in that poll goes out together - the cost chart, the plan and billing reads, and the request log walk - because the same work done in series was the thirteen seconds a refresh used to take.
 The cost chart now answers for 30 days only, so each reply is folded into the days already banked by `go-cost-history.ts` rather than replacing them, and the reading records which days some reply answered for, so a month nobody asked about reads as unknown rather than as $0.
+
+### Status output (`src/status/`)
+
+`--json` turns the snapshot into a stable, versioned report for scripts, then exits before the renderer exists.
+The schema is documented for users in [docs/SCRIPTING.md](docs/SCRIPTING.md).
+
+**`report.ts`**
+`buildStatusReport` is a pure function from snapshot, connections, and time to the `open-usage.v1` report.
+It reads `UsageLimit.resetsAtMs` and `windowMinutes` and `ProviderUsage.limitsFetchedAtMs`, which exist for this report: the display strings beside them are formatted for a screen and cannot be parsed back.
+The field names follow CodexBar and caut (`usedPercent`, `remainingPercent`, `windowMinutes`, `resetsAt`), so one script can read all three.
+Touch when: adding a field. A new field keeps `v1`; renaming or removing one needs `v2`.
+
+**`cli.ts`**
+Selects the provider, refuses to print sample figures nobody asked for, and returns `{ exitCode, message }` the way the daemon commands do.
+It never calls `refresh`, because a statusline may run it every few seconds and polling would start the claude or codex CLI each time.
+Touch when: adding a flag to the scripted output.
 
 ### Notifications (`src/notifications/`)
 

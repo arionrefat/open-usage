@@ -21,7 +21,15 @@ import {
   type ClaudeScopedWindow,
   type ClaudeUsageWindow,
 } from "./claude-usage";
-import { capLessLimit, formatTokenCount, localBurn, resetText, trimResetProse } from "./provider-helpers";
+import {
+  SESSION_WINDOW_MINUTES,
+  WEEKLY_WINDOW_MINUTES,
+  capLessLimit,
+  formatTokenCount,
+  localBurn,
+  resetText,
+  trimResetProse,
+} from "./provider-helpers";
 import type { ClaudeAuthInfo, ClaudeAuthSource } from "./claude-auth";
 import { SNAPSHOT_FRESH_MS, type RateWindowReading, type SnapshotFile, type WeeklyTrend } from "./statusline-snapshot";
 
@@ -120,6 +128,8 @@ function sessionLimit(
     label: "current session",
     percent: Math.round(five.percent),
     reset: windowReset(five, nowMs),
+    resetsAtMs: five.resetsAtMs,
+    windowMinutes: SESSION_WINDOW_MINUTES,
   };
   if (five.resetsAtMs !== null) {
     limit.resetLong = `${resetText(five.resetsAtMs, nowMs)} · ${formatClock(five.resetsAtMs)}`;
@@ -150,6 +160,8 @@ function weeklyLimit(
     label: "weekly · all models",
     percent: Math.round(seven.percent),
     reset: windowReset(seven, nowMs),
+    resetsAtMs: seven.resetsAtMs,
+    windowMinutes: WEEKLY_WINDOW_MINUTES,
   };
   if (seven.resetsAtMs !== null) {
     limit.resetLong = `${resetText(seven.resetsAtMs, nowMs)} · ${formatClock(seven.resetsAtMs)}`;
@@ -175,6 +187,8 @@ function scopedLimit(
     percent: Math.round(window.percent),
     reset:
       window.resetsAtMs !== undefined ? resetText(window.resetsAtMs, nowMs) : trimResetProse(window.reset),
+    resetsAtMs: window.resetsAtMs ?? null,
+    windowMinutes: WEEKLY_WINDOW_MINUTES,
   };
   if (window.resetsAtMs !== undefined) {
     limit.resetLong = `${resetText(window.resetsAtMs, nowMs)} · ${formatClock(window.resetsAtMs)}`;
@@ -422,6 +436,7 @@ export function buildClaudeProvider(input: ClaudeProviderInput): ProviderUsage {
       nowMs,
       hasStatusline,
     ),
+    ...(trendAtMs !== null ? { limitsFetchedAtMs: trendAtMs } : {}),
     scopes: {
       session: {
         percent: five ? Math.round(five.percent) : null,

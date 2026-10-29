@@ -86,6 +86,10 @@ export interface UsageLimit {
   reset: string;
   /** Longer reset text used where there is room for it. */
   resetLong?: string;
+  /** When the window resets or frees up; null or absent when the provider states no time. */
+  resetsAtMs?: number | null;
+  /** Length of the window; null or absent for a billing cycle or an unstated window. */
+  windowMinutes?: number | null;
   footnote?: string;
   alert?: LimitAlert;
   /** Card-only lines are omitted from the provider detail screen. */
@@ -242,6 +246,8 @@ export interface ProviderUsage {
   id: ProviderId;
   meta: ProviderMeta;
   limits: UsageLimit[];
+  /** When the reading behind `limits` was taken; absent when there is none. */
+  limitsFetchedAtMs?: number;
   /** Absent when the provider gives no verdict, which is unknown rather than allowed. */
   usageBlock?: UsageBlock;
   scopes: Record<ScopeKey, ScopeSummary>;

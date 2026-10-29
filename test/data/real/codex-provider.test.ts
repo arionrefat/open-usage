@@ -120,6 +120,21 @@ describe("buildCodexProvider", () => {
     expect(provider.scopes.weekly.window).toBe("7d · codex");
   });
 
+  test("carries each window's reset time, length, and reading time for scripts", () => {
+    const provider = build(account({ spendControl: { usedPercent: 10, resetsAtMs: NOW_MS + 10 * DAY_MS } }));
+
+    expect(provider.limitsFetchedAtMs).toBe(NOW_MS);
+    expect(provider.limits.map(({ id, resetsAtMs, windowMinutes }) => ({ id, resetsAtMs, windowMinutes }))).toEqual([
+      { id: "session", resetsAtMs: NOW_MS + HOUR_MS, windowMinutes: 300 },
+      { id: "weekly", resetsAtMs: NOW_MS + 2 * HOUR_MS, windowMinutes: 10_080 },
+      { id: "monthly-credit", resetsAtMs: NOW_MS + 10 * DAY_MS, windowMinutes: null },
+    ]);
+  });
+
+  test("states no reading time without a reading", () => {
+    expect(build(null).limitsFetchedAtMs).toBeUndefined();
+  });
+
   test("puts a reset-credit alert on the first rendered row", () => {
     const provider = build(account({ resetCredits: 2 }));
 

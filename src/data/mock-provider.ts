@@ -58,6 +58,12 @@ const HOURLY: Record<ProviderId, number[]> = {
 
 const MOCK_FETCHED_AT = Date.now();
 const DAILY_DATES = dailyDateKeys(new Date(MOCK_FETCHED_AT));
+const MINUTE_MS = 60_000;
+
+/** Reset times that agree with the countdowns written into the sample text. */
+function mockResetIn(minutes: number): number {
+  return MOCK_FETCHED_AT + minutes * MINUTE_MS;
+}
 
 const SNAPSHOT: UsageSnapshot = {
   dailyDates: DAILY_DATES,
@@ -75,6 +81,8 @@ const SNAPSHOT: UsageSnapshot = {
           label: "current session",
           percent: 21,
           reset: "resets in 1h 37m",
+          resetsAtMs: mockResetIn(97),
+          windowMinutes: 300,
         },
         {
           id: "weekly",
@@ -82,6 +90,8 @@ const SNAPSHOT: UsageSnapshot = {
           percent: 88,
           reset: "resets Wed 5:59 AM",
           resetLong: "resets Wed 5:59 AM · 2d 11h",
+          resetsAtMs: mockResetIn((2 * 24 + 11) * 60),
+          windowMinutes: 10080,
           alert: { text: "▲ burn rate 12.4M tok/h → projected 104% before reset", color: COLORS.danger },
         },
         {
@@ -89,8 +99,11 @@ const SNAPSHOT: UsageSnapshot = {
           label: "weekly · Fable",
           percent: 60,
           reset: "resets Wed 5:59 AM",
+          resetsAtMs: mockResetIn((2 * 24 + 11) * 60),
+          windowMinutes: 10080,
         },
       ],
+      limitsFetchedAtMs: MOCK_FETCHED_AT,
       scopes: {
         session: { percent: 21, window: "5h rolling", reset: "resets in 1h 37m" },
         weekly: { percent: 88, window: "7d · all models", reset: "resets Wed 5:59 AM · 2d 11h" },
@@ -203,6 +216,8 @@ const SNAPSHOT: UsageSnapshot = {
           detailValueLabel: "66% remaining",
           reset: "resets in 3d 4h",
           resetLong: "resets in 3d 4h · 66% remaining",
+          resetsAtMs: mockResetIn((3 * 24 + 4) * 60),
+          windowMinutes: 10080,
           alert: { text: "✓ most headroom - route new work here", color: COLORS.ok },
         },
         {
@@ -225,6 +240,8 @@ const SNAPSHOT: UsageSnapshot = {
           isCardOnly: true,
         },
       ],
+      // The sample codex connection has failed, so its reading is hours old.
+      limitsFetchedAtMs: MOCK_FETCHED_AT - 6 * 60 * MINUTE_MS,
       scopes: {
         session: { percent: null, window: "no session cap", reset: "counted in the weekly pool" },
         weekly: { percent: 34, window: "7d · shared with Work", reset: "resets in 3d 4h" },
@@ -273,6 +290,8 @@ const SNAPSHOT: UsageSnapshot = {
           detailLabel: "rolling usage · 5h",
           percent: 12,
           reset: "resets in 5h 0m",
+          resetsAtMs: mockResetIn(5 * 60),
+          windowMinutes: 300,
         },
         {
           id: "weekly",
@@ -280,6 +299,8 @@ const SNAPSHOT: UsageSnapshot = {
           detailLabel: "weekly usage",
           percent: 41,
           reset: "resets in 6d 8h",
+          resetsAtMs: mockResetIn((6 * 24 + 8) * 60),
+          windowMinutes: 10080,
         },
         {
           id: "monthly",
@@ -287,9 +308,12 @@ const SNAPSHOT: UsageSnapshot = {
           detailLabel: "monthly usage",
           percent: 91,
           reset: "resets in 6d 5h",
+          resetsAtMs: mockResetIn((6 * 24 + 5) * 60),
+          windowMinutes: null,
           alert: { text: "▲ 91% of the month gone with 6d 5h left → projected 118%", color: COLORS.danger },
         },
       ],
+      limitsFetchedAtMs: MOCK_FETCHED_AT,
       scopes: {
         session: { percent: 12, window: "5h rolling", reset: "resets in 5h 0m" },
         weekly: { percent: 41, window: "7d rolling", reset: "resets in 6d 8h" },

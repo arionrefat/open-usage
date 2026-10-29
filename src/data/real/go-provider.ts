@@ -14,9 +14,18 @@ import type { OpencodeSessionStats } from "./opencode-db";
 import type { GoSpend, SpendWindow } from "./opencode-go-spend";
 import type { GoServerLimits } from "./opencode-server";
 import type { GoBilling } from "./opencode-usage";
-import { capLessLimit, formatTokenCount, localBurn, planEndFrom, resetText } from "./provider-helpers";
+import {
+  SESSION_WINDOW_MINUTES,
+  WEEKLY_WINDOW_MINUTES,
+  capLessLimit,
+  formatTokenCount,
+  localBurn,
+  planEndFrom,
+  resetText,
+} from "./provider-helpers";
 
 const GO_LIMIT_FOOTNOTE = "model-weighted local estimate - API key or cookie unlocks exact %";
+const MONTH_WINDOW_MINUTES = 30 * 24 * 60;
 const COOKIE_WARNING_MS = 7 * DAY_MS;
 
 export function createGoMeta(): ProviderMeta {
@@ -47,6 +56,7 @@ function spendLimit(
   label: string,
   detailLabel: string,
   window: SpendWindow,
+  windowMinutes: number,
   nowMs: number,
   isRolling = true,
 ): UsageLimit {
@@ -56,6 +66,8 @@ function spendLimit(
     detailLabel,
     percent: Math.round(window.percent),
     reset: spendResetText(window, nowMs, isRolling),
+    resetsAtMs: window.resetAtMs,
+    windowMinutes,
     detailValueLabel: `${formatUsd(window.usd)} of ${formatUsd(window.capUsd)}`,
     footnote: GO_LIMIT_FOOTNOTE,
   };
@@ -79,6 +91,8 @@ function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: nu
       detailLabel: "rolling 5h limit",
       percent: Math.round(server.rollingPercent),
       reset: serverResetText(server.rollingResetAtMs, nowMs),
+      resetsAtMs: server.rollingResetAtMs,
+      windowMinutes: SESSION_WINDOW_MINUTES,
       ...(server.rollingUsd !== null && server.rollingUsd !== undefined &&
         server.rollingCapUsd !== null && server.rollingCapUsd !== undefined
         ? { detailValueLabel: `${formatUsd(server.rollingUsd)} of ${formatUsd(server.rollingCapUsd)}` }
@@ -92,13 +106,15 @@ function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: nu
       detailLabel: "rolling 7d limit",
       percent: Math.round(server.weeklyPercent),
       reset: serverResetText(server.weeklyResetAtMs, nowMs),
+      resetsAtMs: server.weeklyResetAtMs,
+      windowMinutes: WEEKLY_WINDOW_MINUTES,
       ...(server.weeklyUsd !== null && server.weeklyUsd !== undefined &&
         server.weeklyCapUsd !== null && server.weeklyCapUsd !== undefined
         ? { detailValueLabel: `${formatUsd(server.weeklyUsd)} of ${formatUsd(server.weeklyCapUsd)}` }
         : {}),
     });
   } else if (spend) {
-    limits.push(spendLimit("weekly", "rolling 7d", "rolling 7d limit", spend.weekly, nowMs));
+    limits.push(spendLimit("weekly", "rolling 7d", "rolling 7d limit", spend.weekly, WEEKLY_WINDOW_MINUTES, nowMs));
   }
   if (server.monthlyPercent !== null) {
     limits.push({
@@ -107,13 +123,16 @@ function serverGoLimits(server: GoServerLimits, spend: GoSpend | null, nowMs: nu
       detailLabel: "monthly limit",
       percent: Math.round(server.monthlyPercent),
       reset: serverResetText(server.monthlyResetAtMs, nowMs),
+      // The billing cycle, whose length follows the calendar.
+      resetsAtMs: server.monthlyResetAtMs,
+      windowMinutes: null,
       ...(server.monthlyUsd !== null && server.monthlyUsd !== undefined &&
         server.monthlyCapUsd !== null && server.monthlyCapUsd !== undefined
         ? { detailValueLabel: `${formatUsd(server.monthlyUsd)} of ${formatUsd(server.monthlyCapUsd)}` }
         : {}),
     });
   } else if (spend) {
-    limits.push(spendLimit("monthly", "trailing 30d", "trailing 30d limit", spend.monthly, nowMs));
+    limits.push(spendLimit("monthly", "trailing 30d", "trailing 30d limit", spend.monthly, MONTH_WINDOW_MINUTES, nowMs));
   }
   return limits;
 }
@@ -284,9 +303,9 @@ function goLimits(
     ];
   }
   return [
-    spendLimit("session", "rolling 5h", "rolling 5h limit", spend.session, nowMs),
-    spendLimit("weekly", "rolling 7d", "rolling 7d limit", spend.weekly, nowMs),
-    spendLimit("monthly", "trailing 30d", "trailing 30d limit", spend.monthly, nowMs),
+    spendLimit("session", "rolling 5h", "rolling 5h limit", spend.session, SESSION_WINDOW_MINUTES, nowMs),
+    spendLimit("weekly", "rolling 7d", "rolling 7d limit", spend.weekly, WEEKLY_WINDOW_MINUTES, nowMs),
+    spendLimit("monthly", "trailing 30d", "trailing 30d limit", spend.monthly, MONTH_WINDOW_MINUTES, nowMs),
   ];
 }
 
@@ -408,6 +427,8 @@ export function buildGoProvider(input: GoProviderInput): GoProviderResult {
       // The server keeps its own month history, so a cookie alone is enough.
       hasHistory: stats !== undefined || history != null,
       limits: goLimits(server, spend, note, nowMs),
+      // A local estimate is read from opencode.db as of this build.
+      ...(server ? { limitsFetchedAtMs: server.fetchedAtMs } : spend ? { limitsFetchedAtMs: nowMs } : {}),
       scopes: {
         session: sessionScope(server, spend, note, nowMs),
         weekly: weeklyScope(server, spend, note, nowMs),

@@ -232,9 +232,34 @@ describe("buildGoProvider limits", () => {
     expect(result.provider.limits.every((limit) => limit.footnote?.includes("local estimate"))).toBe(true);
   });
 
+  test("carries server reset times and the server's reading time for scripts", () => {
+    const provider = build({ server: { ...SERVER, fetchedAtMs: NOW_MS - 60_000 } }).provider;
+
+    expect(provider.limitsFetchedAtMs).toBe(NOW_MS - 60_000);
+    expect(provider.limits.map(({ id, resetsAtMs, windowMinutes }) => ({ id, resetsAtMs, windowMinutes }))).toEqual([
+      { id: "session", resetsAtMs: NOW_MS + HOUR_MS, windowMinutes: 300 },
+      { id: "weekly", resetsAtMs: NOW_MS + 2 * HOUR_MS, windowMinutes: 10_080 },
+      // The billing cycle follows the calendar, so it has no fixed length.
+      { id: "monthly", resetsAtMs: NOW_MS + 3 * HOUR_MS, windowMinutes: null },
+    ]);
+  });
+
+  test("dates a local estimate to the build and carries each rolling window's length", () => {
+    const spend = goSpendFrom([{ atMs: NOW_MS - HOUR_MS, usd: 3 }], NOW);
+    const provider = build({ spend }).provider;
+
+    expect(provider.limitsFetchedAtMs).toBe(NOW_MS);
+    expect(provider.limits.map(({ id, resetsAtMs, windowMinutes }) => ({ id, resetsAtMs, windowMinutes }))).toEqual([
+      { id: "session", resetsAtMs: spend.session.resetAtMs, windowMinutes: 300 },
+      { id: "weekly", resetsAtMs: spend.weekly.resetAtMs, windowMinutes: 10_080 },
+      { id: "monthly", resetsAtMs: spend.monthly.resetAtMs, windowMinutes: 43_200 },
+    ]);
+  });
+
   test("renders one capless row when neither server nor spend data exists", () => {
     const result = build();
 
+    expect(result.provider.limitsFetchedAtMs).toBeUndefined();
     expect(result.provider.limits).toHaveLength(1);
     expect(result.provider.limits[0]).toMatchObject({ id: "usage", percent: null });
   });

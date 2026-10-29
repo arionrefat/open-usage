@@ -20,8 +20,15 @@ OPTIONS
   --no-daily-split     hide the stacked daily chart on the overview
   --no-poll            read once at startup, never refresh
   --mock               use sample data instead of real provider data
+  --json               print current limits as JSON and exit, without drawing
+  --pretty             indent the --json output
   -h, --help           show this help
   -v, --version        show the version
+
+SCRIPTING
+  --json reads only what is already cached and never starts the claude or
+  codex CLI, so it is cheap enough for a statusline. Exits 2 when this machine
+  has no usage sources. The schema is in docs/SCRIPTING.md.
 
 DAEMON
   Off unless you start it. Refreshes every provider on its own interval so the

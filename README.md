@@ -21,6 +21,7 @@ See limits, reset times, token history, and spend in one place.
 - Terminal UI - keyboard and mouse controls, detailed and simplified views, and responsive layouts.
 - Background refresh - keep the cache current with an optional daemon.
 - Limit notifications - get a desktop notification when a limit runs out, and another when it resets.
+- JSON output - `open-usage --json` prints every limit and reset time for scripts, status bars, and agents.
 - Local by default - no account to create, no key to paste, and no telemetry.
 
 ## Install
@@ -67,6 +68,18 @@ The daemon is off until you start it and does not survive a reboot on its own.
 Limit notifications are offered during setup and can be switched with `n` in settings.
 They arrive while the dashboard is open, or from the daemon while it runs.
 The dashboard sends them through your terminal when it supports notifications, and through the system notifier otherwise.
+
+## Scripting
+
+To read your limits from a script, a status bar, or a coding agent:
+
+```bash
+open-usage --json --pretty
+```
+
+It prints what open-usage has already cached and exits, without drawing the dashboard or calling any provider.
+Keep the cache current with the daemon or an open dashboard.
+See [Scripting](docs/SCRIPTING.md) for the schema, exit codes, and `jq` and tmux examples.
 
 ## Data and privacy
 

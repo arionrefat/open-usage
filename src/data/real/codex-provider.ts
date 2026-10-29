@@ -154,6 +154,8 @@ function codexLimitLines(limits: CodexAccountLimits, nowMs: number): UsageLimit[
       detailLabel: label,
       percent: Math.round(window.usedPercent),
       reset: resetText(window.resetsAtMs, nowMs),
+      resetsAtMs: window.resetsAtMs,
+      windowMinutes: window.windowMinutes,
       ...(window.resetsAtMs !== null
         ? { resetLong: `${resetText(window.resetsAtMs, nowMs)} · ${formatClock(window.resetsAtMs)}` }
         : {}),
@@ -167,6 +169,9 @@ function codexLimitLines(limits: CodexAccountLimits, nowMs: number): UsageLimit[
       detailLabel: "monthly workspace credits",
       percent: Math.round(spend.usedPercent),
       reset: resetText(spend.resetsAtMs, nowMs),
+      // A workspace credit period, not a fixed-length window.
+      resetsAtMs: spend.resetsAtMs,
+      windowMinutes: null,
       ...(spend.resetsAtMs !== null
         ? { resetLong: `${resetText(spend.resetsAtMs, nowMs)} · ${formatClock(spend.resetsAtMs)}` }
         : {}),
@@ -276,7 +281,7 @@ export function buildCodexProvider(input: CodexProviderInput): ProviderUsage {
              limitsNote ?? CODEX_NO_LIMITS,
           ),
         ],
-    ...(limits ? { usageBlock: codexUsageBlock(limits) } : {}),
+    ...(limits ? { usageBlock: codexUsageBlock(limits), limitsFetchedAtMs: limits.fetchedAtMs } : {}),
     scopes: {
       session: limits?.session
         ? {

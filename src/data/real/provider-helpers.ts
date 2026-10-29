@@ -5,6 +5,9 @@ import { DAY_MS, formatCountdown, formatRate } from "./aggregate";
 
 const NO_CAP_DATA = "no cap data";
 
+export const SESSION_WINDOW_MINUTES = 5 * 60;
+export const WEEKLY_WINDOW_MINUTES = 7 * 24 * 60;
+
 export function capLessLimit(
   id: string,
   label: string,

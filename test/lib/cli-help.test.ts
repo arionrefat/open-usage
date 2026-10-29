@@ -33,6 +33,8 @@ describe("helpText", () => {
       "--no-daily-split",
       "--no-poll",
       "--mock",
+      "--json",
+      "--pretty",
       "--help",
       "--version",
     ]) {

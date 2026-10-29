@@ -22,6 +22,7 @@ import {
   notifyLimitChanges,
 } from "./notifications/limit-alerts";
 import { defaultPreferencesPath, readPreferences, updatePreferences } from "./preferences";
+import { runStatusCommand, wantsStatusOutput } from "./status/cli";
 import { COLORS } from "./theme";
 
 const argv = process.argv.slice(2);
@@ -45,6 +46,14 @@ if (wantsVersion(argv)) {
 }
 
 const flags = readFlags(argv);
+
+// Machine-readable output for scripts and statuslines, printed without drawing.
+if (wantsStatusOutput(flags)) {
+  const result = runStatusCommand(flags);
+  (result.exitCode === 0 ? console.log : console.error)(result.message);
+  process.exit(result.exitCode);
+}
+
 const preferencesPath = defaultPreferencesPath();
 let preferences = readPreferences(preferencesPath);
 const startup = startupFromFlagsAndPreferences(flags, preferences);

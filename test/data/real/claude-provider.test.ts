@@ -190,6 +190,8 @@ describe("buildClaudeProvider", () => {
       label: "weekly · Fable",
       percent: 65,
       reset: "resets Aug 5 at 6am",
+      resetsAtMs: null,
+      windowMinutes: 10_080,
     });
     expect(provider.notice).toBeUndefined();
   });
@@ -376,9 +378,27 @@ describe("buildClaudeProvider", () => {
     expect(section(null)).toBeUndefined();
   });
 
+  test("carries each window's reset time, length, and reading time for scripts", () => {
+    // A fresh live reading takes its reset times from the fresh snapshot beside it.
+    const provider = build({ snapshotFile: snapshot(60_000), live: { ...liveUsage("resets 6pm"), scoped: [FABLE] } });
+
+    expect(provider.limitsFetchedAtMs).toBe(NOW_MS);
+    expect(provider.limits.map(({ id, resetsAtMs, windowMinutes }) => ({ id, resetsAtMs, windowMinutes }))).toEqual([
+      { id: "session", resetsAtMs: NOW_MS + HOUR_MS, windowMinutes: 300 },
+      { id: "weekly", resetsAtMs: NOW_MS + 10 * HOUR_MS, windowMinutes: 10_080 },
+      // The cli's prose names a day but no parseable time.
+      { id: "fable", resetsAtMs: null, windowMinutes: 10_080 },
+    ]);
+  });
+
+  test("dates the limits by the snapshot when it is the only reading", () => {
+    expect(build({ snapshotFile: snapshot(60_000) }).limitsFetchedAtMs).toBe(NOW_MS - 60_000);
+  });
+
   test("a missing snapshot yields capless session and weekly limits", () => {
     const provider = build({ snapshotFile: null });
 
+    expect(provider.limitsFetchedAtMs).toBeUndefined();
     expect(provider.limits).toHaveLength(2);
     expect(provider.limits.every((limit) => limit.percent === null)).toBe(true);
     expect(provider.limits.every((limit) => limit.valueLabel === "n/a")).toBe(true);
