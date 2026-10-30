@@ -16,7 +16,7 @@ import { withFileLock } from "../lib/file-lock";
 import { isProviderLive } from "../state/app-state";
 import type { DeliveryResult, SendNotification } from "./desktop";
 
-const CAP_PERCENT = 100;
+export const CAP_PERCENT = 100;
 
 export const TEST_NOTIFICATION = {
   title: "open-usage notifications are on",

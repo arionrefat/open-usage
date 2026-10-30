@@ -285,7 +285,7 @@ const SNAPSHOT: UsageSnapshot = {
       series: { daily: DAILY.go, hourly: HOURLY.go },
       limits: [
         {
-          id: "rolling",
+          id: "session",
           label: "rolling 5h",
           detailLabel: "rolling usage · 5h",
           percent: 12,

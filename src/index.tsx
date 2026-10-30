@@ -49,8 +49,10 @@ const flags = readFlags(argv);
 
 // Machine-readable output for scripts and statuslines, printed without drawing.
 if (wantsStatusOutput(flags)) {
-  const result = runStatusCommand(flags);
-  (result.exitCode === 0 ? console.log : console.error)(result.message);
+  const result = await runStatusCommand(flags);
+  // Not chosen by exit code: --check prints its line to stdout whatever it decides.
+  if (result.stdout) console.log(result.stdout);
+  if (result.stderr) console.error(result.stderr);
   process.exit(result.exitCode);
 }
 

@@ -14,7 +14,7 @@ export const STATUS_SCHEMA_VERSION = "open-usage.v1";
 /** The names `--view` already takes, rather than the internal two-letter ids. */
 export type PublicProviderId = "claude" | "codex" | "go";
 
-const PUBLIC_PROVIDER_IDS: Record<ProviderId, PublicProviderId> = { cl: "claude", cx: "codex", go: "go" };
+export const PUBLIC_PROVIDER_IDS: Record<ProviderId, PublicProviderId> = { cl: "claude", cx: "codex", go: "go" };
 
 export interface StatusLimit {
   id: string;
@@ -64,6 +64,24 @@ function isoOrNull(ms: number | null | undefined): string | null {
   return ms === null || ms === undefined ? null : new Date(ms).toISOString();
 }
 
+/** The window has turned over since the reading, so its percent no longer holds. */
+export function hasResetSinceRead(limit: UsageLimit, nowMs: number): boolean {
+  return limit.resetsAtMs !== null && limit.resetsAtMs !== undefined && limit.resetsAtMs <= nowMs;
+}
+
+/**
+ * The same providers the dashboard shows, so a script never sees one the user
+ * switched off or one this machine has no way to read.
+ */
+export function shownProviderIds(connections: Record<ProviderId, ProviderConnection>): ProviderId[] {
+  return PROVIDER_IDS.filter((id) => connections[id].isAvailable && connections[id].isEnabled);
+}
+
+/** Card-only lines summarize others for the compact card and would repeat them. */
+export function reportedLimits(provider: ProviderUsage): UsageLimit[] {
+  return provider.limits.filter((limit) => !limit.isCardOnly);
+}
+
 function statusLimit(limit: UsageLimit, nowMs: number): StatusLimit {
   const resetsAtMs = limit.resetsAtMs ?? null;
   return {
@@ -73,7 +91,7 @@ function statusLimit(limit: UsageLimit, nowMs: number): StatusLimit {
     remainingPercent: limit.percent === null ? null : Math.max(0, 100 - limit.percent),
     windowMinutes: limit.windowMinutes ?? null,
     resetsAt: isoOrNull(resetsAtMs),
-    hasResetSinceRead: resetsAtMs !== null && resetsAtMs <= nowMs,
+    hasResetSinceRead: hasResetSinceRead(limit, nowMs),
     reset: limit.reset,
   };
 }
@@ -87,16 +105,11 @@ function statusProvider(provider: ProviderUsage, connection: ProviderConnection,
     status: connection.status,
     updatedAt: isoOrNull(provider.limitsFetchedAtMs),
     blockedReason: provider.usageBlock?.isBlocked ? provider.usageBlock.reason : null,
-    // Card-only lines summarize others for the compact card and would repeat them here.
-    limits: provider.limits.filter((limit) => !limit.isCardOnly).map((limit) => statusLimit(limit, nowMs)),
+    limits: reportedLimits(provider).map((limit) => statusLimit(limit, nowMs)),
   };
 }
 
-/**
- * The machine-readable twin of the overview: the same providers the dashboard
- * shows, so a script never sees a provider the user switched off or one this
- * machine has no way to read.
- */
+/** The machine-readable twin of the overview. */
 export function buildStatusReport(
   snapshot: UsageSnapshot,
   connections: Record<ProviderId, ProviderConnection>,
@@ -104,7 +117,7 @@ export function buildStatusReport(
   isSampleData: boolean,
 ): StatusReport {
   const nowMs = now.getTime();
-  const shown = PROVIDER_IDS.filter((id) => connections[id].isAvailable && connections[id].isEnabled);
+  const shown = shownProviderIds(connections);
   return {
     schemaVersion: STATUS_SCHEMA_VERSION,
     generatedAt: now.toISOString(),

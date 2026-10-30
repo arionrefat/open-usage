@@ -4,7 +4,7 @@
 
 ## The 30-second version
 
-1. `index.tsx` reads CLI flags and picks a data source: mock (sample data) or real (your local files). A `daemon` first argument goes to `daemon/` instead, and `--json` goes to `status/`; neither draws.
+1. `index.tsx` reads CLI flags and picks a data source: mock (sample data) or real (your local files). A `daemon` first argument goes to `daemon/` instead, and `--json`, `--oneline`, and `--check` go to `status/`; neither draws.
 2. Both data sources implement one interface, `UsageProvider`, and hand the UI a `UsageSnapshot`.
 3. A pure reducer holds all UI state; `derive.ts` turns state + snapshot into render-ready values.
 4. `app.tsx` owns the only timers (poll loop, idle watchdog); screens and components just draw.
@@ -32,6 +32,7 @@ flowchart LR
 | `bun test` | Runs the suite under the top-level `test/` directory. |
 | `bun src/index.tsx daemon start` | Starts the background poller against your real config. |
 | `bun src/index.tsx --json --pretty` | Prints the cached limits as JSON and exits. |
+| `bun src/index.tsx --oneline --check` | Prints the cached limits on one line and exits with a code for how close they are. |
 | `bun run typecheck` | Runs `tsc --noEmit`. |
 
 The main UI entry points accept `--mock`, `--real`, `--no-poll`, `--screen`, `--view`, and `--mode`.
@@ -165,18 +166,31 @@ The cost chart now answers for 30 days only, so each reply is folded into the da
 
 ### Status output (`src/status/`)
 
-`--json` turns the snapshot into a stable, versioned report for scripts, then exits before the renderer exists.
-The schema is documented for users in [docs/SCRIPTING.md](docs/SCRIPTING.md).
+`--json`, `--oneline`, and `--check` turn the snapshot into output for scripts, then exit before the renderer exists.
+The flags and the schema are documented for users in [docs/SCRIPTING.md](docs/SCRIPTING.md).
 
 **`report.ts`**
 `buildStatusReport` is a pure function from snapshot, connections, and time to the `open-usage.v1` report.
+It also holds what the three outputs must agree on: which providers are shown, which limit lines count, and when a reading has been overtaken by its reset.
 It reads `UsageLimit.resetsAtMs` and `windowMinutes` and `ProviderUsage.limitsFetchedAtMs`, which exist for this report: the display strings beside them are formatted for a screen and cannot be parsed back.
 The field names follow CodexBar and caut (`usedPercent`, `remainingPercent`, `windowMinutes`, `resetsAt`), so one script can read all three.
 Touch when: adding a field. A new field keeps `v1`; renaming or removing one needs `v2`.
 
+**`oneline.ts`**
+`formatOneLine` is a pure function that picks what fits on a status bar.
+It reads `limits` rather than `scopes`, because `scopes` only carries session and weekly and a monthly cycle at 91% must not hide behind a quiet week.
+Session and weekly always show, plus whichever other lane is tighter than both.
+Touch when: changing the wording or the choice of lanes.
+
+**`check.ts`**
+`checkExitCode` is a pure function from snapshot to exit code.
+It judges every limit, since a capped model lane stops work as surely as a capped week, and it ignores a reading whose window has since reset.
+Touch when: changing what counts as near a limit.
+
 **`cli.ts`**
-Selects the provider, refuses to print sample figures nobody asked for, and returns `{ exitCode, message }` the way the daemon commands do.
-It never calls `refresh`, because a statusline may run it every few seconds and polling would start the claude or codex CLI each time.
+Selects the provider, refuses to print sample figures nobody asked for, and returns `{ exitCode, stdout, stderr }`, because `--check` prints to stdout whatever code it returns.
+It calls `refresh` only for `--refresh`, because a statusline may run it every few seconds and polling would start the claude or codex CLI each time.
+That call uses the `interval` reason rather than `manual`, so a reading another process took recently answers it and a loop cannot flood a provider.
 Touch when: adding a flag to the scripted output.
 
 ### Notifications (`src/notifications/`)

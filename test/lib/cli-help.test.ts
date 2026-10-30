@@ -35,6 +35,10 @@ describe("helpText", () => {
       "--mock",
       "--json",
       "--pretty",
+      "--oneline",
+      "--color",
+      "--check",
+      "--refresh",
       "--help",
       "--version",
     ]) {

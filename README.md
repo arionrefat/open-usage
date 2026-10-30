@@ -21,7 +21,7 @@ See limits, reset times, token history, and spend in one place.
 - Terminal UI - keyboard and mouse controls, detailed and simplified views, and responsive layouts.
 - Background refresh - keep the cache current with an optional daemon.
 - Limit notifications - get a desktop notification when a limit runs out, and another when it resets.
-- JSON output - `open-usage --json` prints every limit and reset time for scripts, status bars, and agents.
+- Scripting - print limits as one line for a status bar or as JSON, and get an exit code when you are near a limit.
 - Local by default - no account to create, no key to paste, and no telemetry.
 
 ## Install
@@ -74,12 +74,20 @@ The dashboard sends them through your terminal when it supports notifications, a
 To read your limits from a script, a status bar, or a coding agent:
 
 ```bash
-open-usage --json --pretty
+open-usage --oneline
 ```
 
-It prints what open-usage has already cached and exits, without drawing the dashboard or calling any provider.
+```
+claude 5h 27% wk 73% │ codex wk 2% │ go 5h 0% wk 7% mo 91%
+```
+
+- `--json` prints every limit and reset time as JSON.
+- `--check` exits with a code that says how close you are to a limit.
+- `--refresh` fetches limits first, for scripts that run occasionally.
+
+These read what open-usage has already cached and exit, without drawing the dashboard or calling any provider unless you pass `--refresh`.
 Keep the cache current with the daemon or an open dashboard.
-See [Scripting](docs/SCRIPTING.md) for the schema, exit codes, and `jq` and tmux examples.
+See [Scripting](docs/SCRIPTING.md) for the schema, exit codes, and tmux, Waybar, and Claude Code statusline setups.
 
 ## Data and privacy
 
